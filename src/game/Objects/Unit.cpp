@@ -1014,18 +1014,28 @@ uint32 Unit::DealDamage(Unit* pVictim, uint32 damage, CleanDamage const* cleanDa
                 pVictim->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_DIRECT_DAMAGE);
         }
 
-        if (!pVictim->IsPlayer() && addThreat)
+        // Split on what the victim is, and only then on whether threat applies.
+        // Written as "!IsPlayer() && addThreat", the else branch caught every
+        // creature hit without threat as well and handed it to the player-only
+        // code below, which casts pVictim to Player*. Crash of 2026-08-08: a
+        // periodic tick on a creature reached DurabilityPointLossForEquipSlot,
+        // and Object::GetUInt32Value threw on the resulting nonsense - the same
+        // pointer appeared as Player in one frame and Creature in another.
+        if (!pVictim->IsPlayer())
         {
-            float threat = damage * sSpellMgr.GetSpellThreatMultiplier(spellProto);
-
-            if (spell && !spell->m_addThreat)
+            if (addThreat)
             {
-                // empty on purpose.
+                float threat = damage * sSpellMgr.GetSpellThreatMultiplier(spellProto);
+
+                if (spell && !spell->m_addThreat)
+                {
+                    // empty on purpose.
+                }
+                else
+                    pVictim->AddThreat(this, threat, (cleanDamage && cleanDamage->hitOutCome == MELEE_HIT_CRIT), damageSchoolMask, spellProto);
             }
-            else
-                pVictim->AddThreat(this, threat, (cleanDamage && cleanDamage->hitOutCome == MELEE_HIT_CRIT), damageSchoolMask, spellProto);
         }
-        else                                                // victim is a player
+        else                                                // victim really is a player
         {
             // Rage from damage received
             if (this != pVictim && pVictim->GetPowerType() == POWER_RAGE)
