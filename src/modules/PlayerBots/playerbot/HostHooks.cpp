@@ -92,7 +92,26 @@ void Player::UpdatePlayerbotHooks(uint32 diff)
     if (m_playerbotAI)
     {
         SC_PHASE("Player::UpdatePlayerbotHooks/ai.UpdateAI", GetName());
-        m_playerbotAI->UpdateAI(diff);
+        // Containment, not a fix: there's a reproducible heap-corruption crash reachable from
+        // here (PlayerTaxi::AddTaxiDestination -> std::deque::_Growmap, confirmed NOT caused by
+        // reentrancy - a mutex around the deque didn't stop it - and NOT unbounded growth - a
+        // size-bounds bailout never triggered before the crash. The corruption is happening
+        // somewhere upstream that hasn't been isolated yet.) Until the real root cause is found,
+        // catching the SEH access violation here means ONE bot's corrupted tick gets skipped
+        // instead of taking down the entire world server (every real player + all other bots)
+        // with it. The bot itself may be left in a bad state after this and could fault again on
+        // a later tick - that's an acceptable degradation vs. a full process crash every few
+        // minutes under bot load.
+        __try
+        {
+            m_playerbotAI->UpdateAI(diff);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            sLog.outError("[BOT-CRASH-CONTAINED] SEH exception caught updating bot AI for '%s' (guid %u) - "
+                "this bot's tick was skipped instead of crashing the server. Root cause not yet found; "
+                "see HostHooks.cpp comment.", GetName(), GetGUIDLow());
+        }
     }
     if (m_playerbotMgr)
     {

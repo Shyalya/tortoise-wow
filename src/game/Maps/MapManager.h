@@ -201,6 +201,16 @@ class MapManager : public MaNGOS::Singleton<MapManager, MaNGOS::ClassLevelLockab
         GridState* si_GridStates[MAX_GRID_STATE];
         int i_GridStateErrorCount = 0;
 
+        // Grids can be shared across Map instances at continent-instance-array split boundaries
+        // (see GetOrCreateContinentInstances). si_GridStates itself is stateless/const, but the
+        // NGridType/GridInfo data each state's Update() mutates is not safe for concurrent access
+        // from two continent threads at once - this used to be prevented by forcing every
+        // continent to fully rendezvous each tick before any of them could reach grid-state work
+        // (see the old barrier in Map::Update), which serialized far more than necessary and was
+        // the main source of cross-continent tick lag under heavy load. Serializing only the
+        // actual shared operation gives the same safety with none of that cost.
+        std::mutex m_gridStateMutex;
+
     private:
 
         MapManager();

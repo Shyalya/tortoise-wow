@@ -33,6 +33,7 @@
 #include "GridNotifiersImpl.h"
 #include "ObjectGuid.h"
 #include "World.h"
+#include "Log.h"
 
 #include <cmath>
 
@@ -220,7 +221,18 @@ ObjectAccessor::AddCorpse(Corpse *corpse)
     MANGOS_ASSERT(corpse && corpse->GetType() != CORPSE_BONES);
 
     Guard guard(i_corpseGuard);
-    MANGOS_ASSERT(i_player2corpse.find(corpse->GetOwnerGuid()) == i_player2corpse.end());
+    if (i_player2corpse.find(corpse->GetOwnerGuid()) != i_player2corpse.end())
+    {
+        // Stale duplicate row (eg. from LoadCorpses() after an unclean shutdown left an
+        // old corpse un-cleaned-up), or a second death before the previous corpse was
+        // removed/converted to bones. Either way, this used to be a hard assert that
+        // crashed the whole server on a single bad row; skip and keep the one already
+        // tracked instead.
+        sLog.outError("ObjectAccessor::AddCorpse: player guid %u already has a tracked corpse, skipping duplicate.",
+            corpse->GetOwnerGuid().GetCounter());
+        delete corpse;
+        return;
+    }
     i_player2corpse[corpse->GetOwnerGuid()] = corpse;
 
     // build mapid*cellid -> guid_set map

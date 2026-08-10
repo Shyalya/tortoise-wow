@@ -899,31 +899,69 @@ class PlayerTaxi
         bool LoadTaxiDestinationsFromString(std::string const& values, Team team);
         std::string SaveTaxiDestinationsToString() const;
 
+        // m_TaxiDestinations/m_taxiPath were found to be mutated from more than one thread at once
+        // (bots can be ticked both from their owning map's update thread and from
+        // RandomPlayerbotMgr's own tick), which corrupted the deque's internal state and crashed
+        // in std::deque::_Growmap on the next push_back. None of this is perf-critical (taxi
+        // activation happens rarely, not per-tick), so a mutex here is cheap insurance.
         void ClearTaxiDestinations()
         {
+            std::lock_guard<std::mutex> lock(m_destLock);
             m_TaxiDestinations.clear();
             m_taxiPath.clear();
             m_discount = 1.0f;
             m_taxiStartLocation.Clear();
         }
-        void AddTaxiDestination(uint32 dest) { m_TaxiDestinations.push_back(dest); }
+        void AddTaxiDestination(uint32 dest)
+        {
+            std::lock_guard<std::mutex> lock(m_destLock);
+            // Diagnostic + safety net for a reproducible crash in _Growmap on this deque.
+            // No legitimate taxi route should ever approach this many hops - if we see it,
+            // something is appending in a runaway loop rather than corrupting memory, so
+            // log it (visible even without EnableActionLog, this one always logs) and bail
+            // instead of letting the deque grow until the allocator/debugger call it corruption.
+            if (m_TaxiDestinations.size() > 500)
+            {
+                sLog.outError("[BOT-TAXI-DIAG] m_TaxiDestinations runaway growth: size=%zu before push_back(%u), this=%p - clearing instead of growing further.",
+                    m_TaxiDestinations.size(), dest, (void*)this);
+                m_TaxiDestinations.clear();
+                return;
+            }
+            m_TaxiDestinations.push_back(dest);
+        }
         void SetDiscount(float discount) { m_discount = discount; }
-        uint32 GetTaxiSource() const { return m_TaxiDestinations.empty() ? 0 : m_TaxiDestinations.front(); }
-        uint32 GetTaxiDestination() const { return m_TaxiDestinations.size() < 2 ? 0 : m_TaxiDestinations[1]; }
+        uint32 GetTaxiSource() const
+        {
+            std::lock_guard<std::mutex> lock(m_destLock);
+            return m_TaxiDestinations.empty() ? 0 : m_TaxiDestinations.front();
+        }
+        uint32 GetTaxiDestination() const
+        {
+            std::lock_guard<std::mutex> lock(m_destLock);
+            return m_TaxiDestinations.size() < 2 ? 0 : m_TaxiDestinations[1];
+        }
         uint32 GetCurrentTaxiPath() const;
         uint32 GetCurrentTaxiCost() const;
         uint32 NextTaxiDestination()
         {
-            m_TaxiDestinations.pop_front();
+            {
+                std::lock_guard<std::mutex> lock(m_destLock);
+                m_TaxiDestinations.pop_front();
+            }
             return GetTaxiDestination();
         };
         TaxiPathNodeList const& GetTaxiPath() const { return m_taxiPath; };
         void AddTaxiPathNode(TaxiPathNodeEntry const& entry)
         {
+            std::lock_guard<std::mutex> lock(m_destLock);
             m_taxiPath.resize(m_taxiPath.size() + 1);
             m_taxiPath.set(m_taxiPath.size() - 1, &entry);
         }
-        bool empty() const { return m_TaxiDestinations.empty(); }
+        bool empty() const
+        {
+            std::lock_guard<std::mutex> lock(m_destLock);
+            return m_TaxiDestinations.empty();
+        }
 
         friend std::ostringstream& operator<< (std::ostringstream& ss, PlayerTaxi const& taxi);
         WorldLocation m_taxiStartLocation;
@@ -932,6 +970,7 @@ class PlayerTaxi
         TaxiMask m_taximask;
         std::deque<uint32> m_TaxiDestinations;
         TaxiPathNodeList m_taxiPath;
+        mutable std::mutex m_destLock;
 };
 
 std::ostringstream& operator<< (std::ostringstream& ss, PlayerTaxi const& taxi);

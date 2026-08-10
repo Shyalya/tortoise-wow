@@ -96,10 +96,11 @@ void MapManager::DeleteStateMachine()
 
 void MapManager::UpdateGridState(grid_state_t state, Map& map, NGridType& ngrid, GridInfo& ginfo, const uint32 &x, const uint32 &y, const uint32 &t_diff)
 {
-    // TODO: The grid state array itself is static and therefore 100% safe, however, the data
-    // the state classes in it accesses is not, since grids are shared across maps (for example
-    // in instances), so some sort of locking will be necessary later.
-
+    // The grid state array itself is static and therefore 100% safe, but the NGridType/GridInfo
+    // data each state's Update() touches is shared across continent-instance-array boundaries
+    // (see GetOrCreateContinentInstances) and is not safe for two continent threads to mutate
+    // concurrently. This lock is the actual fix for that; see the comment on m_gridStateMutex.
+    std::lock_guard<std::mutex> lock(m_gridStateMutex);
     si_GridStates[state]->Update(map, ngrid, ginfo, x, y, t_diff);
 }
 
@@ -398,7 +399,16 @@ void MapManager::Update(uint32 diff)
 
 
     if (continents.valid())
-        continents.wait();
+    {
+        // Second, independent safety net alongside the per-continent barrier timeout in
+        // Map::Update(): if a continent's workload item is ever dispatched to the pool but
+        // never actually executed (eg. a ThreadPool bookkeeping bug losing track of it), this
+        // future waits forever and the whole world tick - and thus the server - hangs
+        // indefinitely with no diagnostic trace. Bound it so that failure mode becomes a
+        // logged, recoverable stall instead of a silent freeze.
+        if (continents.wait_for(std::chrono::seconds(15)) != std::future_status::ready)
+            sLog.outError("MapManager::Update: continent ThreadPool workload did not complete within 15s - proceeding without waiting further to avoid freezing the world thread. This tick's continent state may be inconsistent.");
+    }
 
     sWorld.GetChannelBroadcaster()->DisableSendingMessages();
     SwitchPlayersInstances();

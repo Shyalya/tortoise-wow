@@ -914,16 +914,17 @@ void Map::Update(uint32 t_diff)
     uint32 additionnalUpdateCounts = 0;
     if (!Instanceable())
     {
-        additionnalWaitTime = WorldTimer::getMSTime();
+        // This used to rendezvous-wait here for every sibling continent to reach the same point
+        // before any of them could proceed to grid-state maintenance below, because
+        // MapManager::UpdateGridState touches data shared across continent-instance-array
+        // boundaries and wasn't safe for concurrent access. That's now protected directly with
+        // a mutex in UpdateGridState itself, so this continent no longer needs to block on its
+        // siblings at all - it can go straight into grid maintenance. The old wait was the
+        // dominant source of cross-continent tick lag under heavy load (each continent could
+        // burn several seconds per tick just waiting for a slower sibling), and it was also the
+        // root cause of a full-server freeze if a sibling never finished at all (mangosd Master.cpp
+        // freeze detector / crash dumps, 2026-08-10).
         sMapMgr.MarkContinentUpdateFinished();
-        while (!sMapMgr.waitContinentUpdateFinishedUntil(start + std::chrono::milliseconds(sWorld.getConfig(CONFIG_UINT32_INTERVAL_MAPUPDATE))))
-        {
-            start = std::chrono::high_resolution_clock::now();
-            UpdateSessionsMovementAndSpellsIfNeeded();
-            UpdatePlayers();
-            ++additionnalUpdateCounts;
-        }
-        additionnalWaitTime = WorldTimer::getMSTimeDiffToNow(additionnalWaitTime);
     }
     // Don't unload grids if it's battleground, since we may have manually added GOs,creatures, those doesn't load from DB at grid re-load !
     // This isn't really bother us, since as soon as we have instanced BG-s, the whole map unloads as the BG gets ended
