@@ -287,8 +287,8 @@ pAuraHandler AuraHandler[TOTAL_AURAS] =
     &Aura::HandlePeriodicTriggerSpellWithValue,              //218 SPELL_AURA_PERIODIC_TRIGGER_SPELL2
     &Aura::HandleUnused,                                    //219 SPELL_AURA_219
     &Aura::HandleNoImmediateEffect,                         //220 SPELL_AURA_MOD_DAMAGE_TAKEN_FROM_CASTER_PET implemented in Unit::MeleeDamageBonusTaken and SpellDamageBonusTaken
-    &Aura::HandleAuraModAttackPower,                        //221 SPELL_AURA_MOD_ATTACK_POWER_AREA
-    &Aura::HandleAuraModAttackPowerPercent,                 //222 SPELL_AURA_MOD_ATTACK_POWER_PERCENT_AREA
+    &Aura::HandleAuraModAttackPowerArea,                    //221 SPELL_AURA_MOD_ATTACK_POWER_AREA
+    &Aura::HandleAuraModAttackPowerPercentArea,             //222 SPELL_AURA_MOD_ATTACK_POWER_PERCENT_AREA
     &Aura::HandleNoImmediateEffect,                         //223 SPELL_AURA_MOD_ITEM_PROC_CHANCE implemented in Player::CastItemCombatSpell
     &Aura::HandleNoImmediateEffect,                         //224 SPELL_AURA_MOD_BLOCK_DAMAGE_PERCENT implemented in Unit::CalculateAbsorbResistBlock
     &Aura::HandleNoImmediateEffect,                         //225 SPELL_AURA_MOD_GATHERING_ITEM_CHANCE
@@ -5142,6 +5142,12 @@ void Aura::HandleAuraModAttackPower(bool apply, bool /*Real*/)
     CheckRangedOverrides(GetTarget(), this, apply, m_modifier.m_amount);
 }
 
+void Aura::HandleAuraModAttackPowerArea(bool apply, bool Real)
+{
+    HandleAuraModAttackPower(apply, Real);
+    GetTarget()->HandleAttackPowerModifier(RANGED_AP_MODS, IsPositive() ? AP_MOD_POSITIVE_FLAT : AP_MOD_NEGATIVE_FLAT, m_modifier.m_amount, apply);
+}
+
 void Aura::HandleAuraModRangedAttackPower(bool apply, bool /*Real*/)
 {
     if ((GetTarget()->GetClassMask() & CLASSMASK_WAND_USERS) != 0)
@@ -5168,6 +5174,12 @@ void Aura::HandleAuraModAttackPowerPercent(bool apply, bool /*Real*/)
 
     // UNIT_FIELD_ATTACK_POWER_MULTIPLIER = multiplier - 1
     GetTarget()->HandleAttackPowerModifier(MELEE_AP_MODS, AP_MOD_PCT, m_modifier.m_amount, apply);
+}
+
+void Aura::HandleAuraModAttackPowerPercentArea(bool apply, bool Real)
+{
+    HandleAuraModAttackPowerPercent(apply, Real);
+    GetTarget()->HandleAttackPowerModifier(RANGED_AP_MODS, AP_MOD_PCT, m_modifier.m_amount, apply);
 }
 
 void Aura::HandleAuraModRangedAttackPowerPercent(bool apply, bool /*Real*/)

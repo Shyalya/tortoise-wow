@@ -400,6 +400,7 @@ class Aura
         void HandleChannelDeathItem(bool Apply, bool Real);
         void HandlePeriodicDamagePCT(bool Apply, bool Real);
         void HandleAuraModAttackPower(bool Apply, bool Real);
+        void HandleAuraModAttackPowerArea(bool Apply, bool Real);
         void HandleAuraTransform(bool Apply, bool Real);
         void HandleModSpellCritChance(bool Apply, bool Real);
         void HandleAuraModIncreaseSwimSpeed(bool Apply, bool Real);
@@ -430,6 +431,7 @@ class Aura
         void HandleAuraModPacify(bool Apply, bool Real);
         void HandleAuraGhost(bool Apply, bool Real);
         void HandleAuraModAttackPowerPercent(bool apply, bool Real);
+        void HandleAuraModAttackPowerPercentArea(bool apply, bool Real);
         void HandleAuraModRangedAttackPowerPercent(bool apply, bool Real);
         void HandleSpiritOfRedemption(bool apply, bool Real);
         void HandleAuraAoeCharm(bool apply, bool real);

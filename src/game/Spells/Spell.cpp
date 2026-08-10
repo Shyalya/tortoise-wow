@@ -5347,6 +5347,9 @@ void Spell::TakeAmmo()
     if (!pCaster)
         return;
 
+    if (m_spellScript && !m_spellScript->OnTakeAmmo(this))
+        return;
+
     // Some ranged attacks dont take any ammo
     switch (m_spellInfo->Id)
     {
@@ -5354,6 +5357,7 @@ void Spell::TakeAmmo()
         case 13099: // Net-o-Matic
         case 13119: // Net-o-Matic
         case 23577: // Expose Weakness
+        case 51514: // Piercing Shots
             return;
     }
             
@@ -5592,7 +5596,8 @@ SpellCastResult Spell::CheckCast(bool strict)
 
         if (strict && m_casterUnit)
         {
-            if (m_casterUnit && m_casterUnit->IsInCombat() && m_spellInfo->IsNonCombatSpell())
+            if (m_casterUnit && m_casterUnit->IsInCombat() && m_spellInfo->IsNonCombatSpell() &&
+                    (!m_spellScript || !m_spellScript->OnCanCastNonCombatSpellInCombat(this)))
                 return SPELL_FAILED_AFFECTING_COMBAT;
 
             // only check at first call, Stealth auras are already removed at second call
@@ -5635,16 +5640,6 @@ SpellCastResult Spell::CheckCast(bool strict)
             if ((!m_caster->m_movementInfo.HasMovementFlag(MOVEFLAG_FALLINGFAR) || m_spellInfo->Effect[EFFECT_INDEX_0] != SPELL_EFFECT_STUCK) &&
                     (IsAutoRepeat() || m_spellInfo->AuraInterruptFlags & AURA_INTERRUPT_FLAG_NOT_SEATED))
                 return SPELL_FAILED_MOVING;
-        }
-
-        //CUSTOM Aspect of the wolf can not use ranged attacks.
-        if (m_caster->ToPlayer()->HasAura(45650))
-        {
-            if (m_spellInfo->IsAutoRepeatRangedSpell() || (m_spellInfo->Attributes & SPELL_ATTR_RANGED))
-            {
-                m_caster->ToPlayer()->GetSession()->SendNotification("Can\'t use that in this Aspect.");
-                return SPELL_FAILED_DONT_REPORT;
-            }
         }
 
         if (!m_IsTriggeredSpell && m_spellInfo->NeedsComboPoints() && Spells::IsExplicitlySelectedUnitTarget(m_spellInfo->EffectImplicitTargetA[0]) &&

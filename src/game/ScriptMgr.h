@@ -1386,8 +1386,10 @@ struct SpellScript
     virtual void OnSuccessfulFinish(Spell* /*spell*/) const {}
     virtual void OnFinish(Spell* /*spell*/, bool /*ok*/) const {}
     virtual SpellCastResult OnCheckCast(Spell* /*spell*/, bool /*strict*/) const { return SPELL_CAST_OK; }
+    virtual bool OnCanCastNonCombatSpellInCombat(Spell* /*spell*/) const { return false; }
     virtual std::optional<uint32> OnCalculatePowerCost(SpellEntry const* /*spellInfo*/, Unit* /*caster*/, Spell* /*spell*/, Item* /*castItem*/) const { return std::nullopt; }
     virtual bool OnTakePower(Spell* /*spell*/) const { return true; }
+    virtual bool OnTakeAmmo(Spell* /*spell*/) const { return true; }
     virtual void OnEffectDamageCalculate(Spell* /*spell*/, SpellEffectIndex /*effIdx*/, float& /*damage*/) const {}
     virtual void OnSpellCritChanceCalculate(Spell* /*spell*/, Unit const* /*victim*/, float& /*critChance*/) const {}
     virtual bool OnEffectHealCalculate(Spell* /*spell*/, SpellEffectIndex /*effIdx*/, int32& /*heal*/) const { return true; }

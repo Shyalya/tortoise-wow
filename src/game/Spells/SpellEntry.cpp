@@ -1,6 +1,7 @@
 #include "SpellEntry.h"
 #include "SharedDefines.h"
 #include "SpellAuraDefines.h"
+#include "SpellAuras.h"
 #include "SpellMgr.h"
 #include "Spell.h"
 #include "ScriptMgr.h"
@@ -101,8 +102,9 @@ SpellSpecific Spells::GetSpellSpecific(uint32 spellId)
             if (spellInfo->Dispel == DISPEL_POISON)
                 return SPELL_STING;
 
-            // only hunter aspects have this (one have generic family), if exclude Auto Shot
-            if (spellInfo->activeIconID == 122 && spellInfo->Id != 75)
+            // only hunter aspects have this (one have generic family), if exclude Auto Shot and Trueshot Aura
+            if (spellInfo->activeIconID == 122 && spellInfo->Id != 75 &&
+                    spellInfo->Id != 19506 && spellInfo->Id != 20905 && spellInfo->Id != 20906)
                 return SPELL_ASPECT;
 
             break;
@@ -823,7 +825,19 @@ int32 SpellEntry::CalculateDuration(WorldObject const* caster, Unit const* targe
         {
             if (Player* modOwner = pUnit->GetSpellModOwner())
             {
+                int32 const durationBeforeSpellMods = duration;
                 modOwner->ApplySpellMod(Id, SPELLMOD_DURATION, duration);
+
+                Unit::AuraList const& overrideClassScripts = modOwner->GetAurasByType(SPELL_AURA_OVERRIDE_CLASS_SCRIPTS);
+                for (Aura const* aura : overrideClassScripts)
+                {
+                    if (aura->GetModifier()->m_miscvalue != 5066 ||
+                        modOwner->HasAura(51578) ||
+                        !aura->isAffectedOnSpell(this))
+                        continue;
+
+                    duration += int32(durationBeforeSpellMods * aura->GetModifier()->m_amount / 100.0f);
+                }
 
                 if (duration < 0)
                     duration = 0;
