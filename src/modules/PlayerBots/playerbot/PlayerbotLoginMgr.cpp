@@ -420,7 +420,7 @@ BotPool PlayerBotLoginMgr::LoadBotsFromDb()
         return botPool;
     }
 
-    LoginSpace space;
+    LoginSpace space{};
 
     do
     {
@@ -564,7 +564,8 @@ void PlayerBotLoginMgr::FillLoginSpace(BotPool* pool, LoginSpace& space, FillSte
     space.currentSpace = GetMaxOnlineBotCount();
     space.totalSpace = GetMaxOnlineBotCount();
 
-    for (uint32 level = 1; level < DEFAULT_MAX_LEVEL + 1; ++level)
+    space.levelBucket[0] = 0;
+    for (uint32 level = 1; level <= PLAYER_STRONG_MAX_LEVEL; ++level)
     {
         space.levelBucket[level] = GetLevelBucketSize(level);
     }
@@ -607,7 +608,7 @@ bool PlayerBotLoginMgr::CriteriaStillValid(const LoginCriterionFailType oldFailT
 
 BotInfos PlayerBotLoginMgr::FillLoginLogoutQueue(BotPool* pool, const RealPlayers& realPlayers)
 {
-    LoginSpace loginSpace;
+    LoginSpace loginSpace{};
     loginSpace.realPlayerInfos = GetPlayerInfos(realPlayers);
     FillLoginSpace(pool, loginSpace, FillStep::NEXT_STEP);
 
@@ -743,16 +744,26 @@ uint32 PlayerBotLoginMgr::GetClassRaceBucketSize(uint8 cls, uint8 race)
 
 uint32 PlayerBotLoginMgr::GetLevelBucketSize(uint32 level) 
 {
+    if (level > PLAYER_STRONG_MAX_LEVEL)
+        return 0;
+
     uint32 prob = sPlayerbotAIConfig.levelProbability[level];
 
     if (prob == 0 || level > GetMaxLevel())
         return 0;
 
     uint32 levelProbabilityTotal = 0;
-    for (uint32 level = 1; level < GetMaxLevel(); ++level)
+    for (uint32 sumLevel = 1; sumLevel < GetMaxLevel(); ++sumLevel)
     {
-        levelProbabilityTotal += sPlayerbotAIConfig.levelProbability[level];
+        levelProbabilityTotal += sPlayerbotAIConfig.levelProbability[sumLevel];
     }
+
+    // The loop above runs zero times when GetMaxLevel() is 1, and the core does
+    // allow MaxPlayerLevel = 1. Every probability being zero has the same
+    // result. Dividing by that is an integer division by zero, which takes the
+    // server down with SIGFPE the moment random levels are switched on.
+    if (!levelProbabilityTotal)
+        return 0;
 
     return GetMaxOnlineBotCount() * sPlayerbotAIConfig.levelProbability[level] / levelProbabilityTotal;
 }

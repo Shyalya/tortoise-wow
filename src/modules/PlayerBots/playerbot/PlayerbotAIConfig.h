@@ -201,7 +201,7 @@ public:
     bool useFixedClassRaceCounts;
     using ClassRacePair = std::pair<uint8, uint8>;
     std::map<ClassRacePair, uint32> fixedClassRaceCounts;
-    uint32 levelProbability[DEFAULT_MAX_LEVEL + 1];
+    uint32 levelProbability[PLAYER_STRONG_MAX_LEVEL + 1];   // see levelBucket in PlayerbotLoginMgr.h
     ClassSpecs classSpecs[MAX_CLASSES];
     GlyphPrioritySpecMap glyphPriorityMap[MAX_CLASSES];
     bool gearProgressionSystemEnabled;

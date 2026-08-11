@@ -449,8 +449,16 @@ WorldPosition WorldPosition::getDisplayLocation() const
 
 AreaTableEntry const* WorldPosition::GetArea() const
 {
-    // Penqle uses areaId not areaFlag.
-    return AreaEntry::GetById(getAreaFlag());
+    // getAreaFlag returns an area *flag*; GetById expects an area *id*. Handing
+    // one to the other returns whatever area happens to carry that number as its
+    // id - a position in the Barrens reported "Silverpine Forest". The warning
+    // was already written into isEnemyHomeZoneFor below, which works around it,
+    // but this function was left as it was and everything else went on using it.
+    //
+    // What it cost: TravelMgr::IsLocationLevelValid measures a travel point
+    // against the level of the area it sits in, so quest turn-ins were being
+    // judged by an unrelated zone's level and discarded.
+    return AreaEntry::GetByAreaFlagAndMap(getAreaFlag(), getMapId());
 }
 
 bool WorldPosition::isEnemyHomeZoneFor(Team team) const

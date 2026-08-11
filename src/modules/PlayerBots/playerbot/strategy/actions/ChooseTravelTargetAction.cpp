@@ -7,6 +7,7 @@
 #include "playerbot/strategy/values/SharedValueContext.h"
 #include "playerbot/strategy/values/GuildValues.h"
 #include "playerbot/strategy/values/FreeMoveValues.h"
+#include "playerbot/RandomPlayerbotMgr.h"
 #include "Guild/GuildMgr.h"
 #include <iomanip>
 
@@ -76,6 +77,14 @@ bool ChooseTravelTargetAction::Execute(Event& event)
     {
         SET_AI_VALUE2(bool, "no active travel destinations", futureTravelPurpose, true);
         ai->TellDebug(ai->GetMaster(), "No target set", "debug travel");
+
+        // TEMPORARY, see the probe in RequestQuestTravelTargetAction. Destinations
+        // came back and none of them was accepted - worth telling apart from "none
+        // were offered", which looks identical from the outside.
+        if (sRandomPlayerbotMgr.IsPinnedBot(bot->GetGUIDLow()))
+            sLog.outBasic("QUESTPROBE: %s got %u destination ranges for '%s' and picked none",
+                bot->GetName(), uint32(destinationList.size()), futureTravelPurpose.c_str());
+
         return false;
     }
 
@@ -1437,6 +1446,74 @@ bool RequestQuestTravelTargetAction::Execute(Event& event)
                     destinationFetches = { destinationFetches.front() };
             }
         }
+    }
+
+    // A destination is picked by distance alone: SetBestTarget walks the
+    // partitions from near to far and takes the first active point in the
+    // nearest one. An objective is close by nature - the bot is standing where
+    // it grinds - while the giver it has to return to is back in town. So
+    // objectives win nearly every time. Measured over 220 minutes with ~1000
+    // bots: 392 objective journeys an hour against 119 turn-ins, while 740
+    // quests an hour were accepted. Five taken for every one handed in, so the
+    // log can only fill; 751 bots sat at the cap and 138 of them held twenty
+    // finished quests they could no longer act on. That also costs them their
+    // gear, quest rewards being the only source of it.
+    //
+    // So once a bot is carrying finished work, the turn-in stops competing on
+    // distance and simply wins. Counted here rather than taken from
+    // getQuestStatusMap().size(), which includes already rewarded entries and
+    // reads above the cap - the probe below saw an average of 22 against a
+    // limit of 20.
+    {
+        uint32 finished = 0, active = 0;
+        for (auto& [questId, questStatus] : bot->getQuestStatusMap())
+        {
+            if (questStatus.m_rewarded)
+                continue;
+
+            active++;
+            if (questStatus.m_status == QUEST_STATUS_COMPLETE)
+                finished++;
+        }
+
+        if (finished >= 5 || active + 2 >= MAX_QUEST_LOG_SIZE)
+        {
+            std::vector<std::tuple<uint32, int32, float>> handInOnly;
+            for (auto& fetch : destinationFetches)
+                if (std::get<0>(fetch) & (uint32)TravelDestinationPurpose::QuestTaker)
+                    handInOnly.push_back(fetch);
+
+            // Only if there is somewhere to hand in. An empty list would fall
+            // through to the QuestGiver fetch below and send a bot that cannot
+            // accept anything off to collect more.
+            if (!handInOnly.empty())
+                destinationFetches = handInOnly;
+        }
+    }
+
+    // TEMPORARY probe. 20529 finished quests sit unhanded-in across the bot
+    // population and 786 bots have a full quest log, yet the log records only a
+    // handful of journeys to a quest taker. The destination is built here, so
+    // this records what was on offer; which one then won is already written to
+    // bot_events.csv by setNewTarget. Limited to the pinned bots, since a
+    // thousand of them would drown the log. Remove once the answer is in.
+    if (sRandomPlayerbotMgr.IsPinnedBot(bot->GetGUIDLow()))
+    {
+        uint32 takers = 0, objectives = 0, givers = 0, readyToHandIn = 0;
+        for (auto& [purpose, questId, range] : destinationFetches)
+        {
+            if (purpose & (uint32)TravelDestinationPurpose::QuestTaker) takers++;
+            else if (purpose & (uint32)TravelDestinationPurpose::QuestGiver) givers++;
+            else objectives++;
+        }
+
+        for (auto& [questId, questStatus] : bot->getQuestStatusMap())
+            if (!questStatus.m_rewarded && questStatus.m_status == QUEST_STATUS_COMPLETE)
+                readyToHandIn++;
+
+        sLog.outBasic("QUESTPROBE: %s has %u finished and unhanded-in, %u quests in the log; offered %u taker, %u objective, %u giver destinations",
+            bot->GetName(), readyToHandIn, uint32(bot->getQuestStatusMap().size()),
+            takers, objectives, givers);
     }
 
     *AI_VALUE(FutureDestinations*, "future travel destinations") = std::async(std::launch::async, [partitions = travelPartitions, travelInfo = PlayerTravelInfo(bot), center, destinationFetches]()

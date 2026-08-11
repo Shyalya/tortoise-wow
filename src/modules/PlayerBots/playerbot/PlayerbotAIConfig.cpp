@@ -1,6 +1,8 @@
 
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/playerbot.h"
+#include <cerrno>
+#include <cstring>
 #include "BotLog.h"
 #include "RandomPlayerbotFactory.h"
 #include "AccountMgr.h"
@@ -95,11 +97,35 @@ bool PlayerbotAIConfig::Initialize()
 {
     sLog.outString("Initializing AI Playerbot by ike3, based on the original Playerbot by blueboy");
 
-    if (!config.SetSource(_D_AIPLAYERBOT_CONFIG, "PlayerBots_"))
+    // The path used to be fixed at build time - SYSCONFDIR "aiplayerbot.conf" -
+    // so a server run from anywhere other than the prefix it was configured with
+    // could not find its bot settings, and the module switched itself off with a
+    // message that names a file but not where it looked for it. Three places are
+    // tried now, most explicit first: a path given in mangosd.conf, then next to
+    // whichever mangosd.conf is actually in use, then the compiled-in default.
+    std::string botConfigFile = sConfig.GetStringDefault("AiPlayerbot.ConfigFile", "");
+
+    if (botConfigFile.empty())
     {
-        sLog.outString("AI Playerbot is Disabled. Unable to open configuration file aiplayerbot.conf");
-        return false;
+        std::string const mainConfig = sConfig.GetFilename();
+        size_t const slash = mainConfig.find_last_of("/\\");
+        if (slash != std::string::npos)
+            botConfigFile = mainConfig.substr(0, slash + 1) + "aiplayerbot.conf";
     }
+
+    if (botConfigFile.empty() || !config.SetSource(botConfigFile, "PlayerBots_"))
+    {
+        if (!config.SetSource(_D_AIPLAYERBOT_CONFIG, "PlayerBots_"))
+        {
+            sLog.outString("AI Playerbot is Disabled. No configuration file at %s%s%s.",
+                botConfigFile.empty() ? "" : botConfigFile.c_str(),
+                botConfigFile.empty() ? "" : " or ",
+                _D_AIPLAYERBOT_CONFIG.c_str());
+            return false;
+        }
+    }
+
+    sLog.outString("Bot configuration read from %s.", config.GetFilename().c_str());
 
     enabled = config.GetBoolDefault("AiPlayerbot.Enabled", false);
     if (!enabled)
@@ -360,7 +386,11 @@ bool PlayerbotAIConfig::Initialize()
     }
     
 
-    for (uint32 level = 1; level <= DEFAULT_MAX_LEVEL; ++level)
+    // There is no level 0, but the array has that slot and GetLevelBucketSize
+    // indexes it with whatever it is handed - so give it a defined value.
+    levelProbability[0] = 0;
+
+    for (uint32 level = 1; level <= PLAYER_STRONG_MAX_LEVEL; ++level)
     {
         levelProbability[level] = config.GetIntDefault("AiPlayerbot.LevelProbability." + std::to_string(level), 100);
     }
@@ -410,7 +440,16 @@ bool PlayerbotAIConfig::Initialize()
                 classRaceProbability[cls][race] = rcProb;
 
             if (!factory.isAvailableRace(cls, race))
+            {
+                // Dropped without a word until now, so an entry naming a
+                // combination that cannot exist looked like it had been accepted
+                // and the bots simply came out as something else.
+                if (rcProb > 0)
+                    sLog.outError("AiPlayerbot.ClassRaceProb.%u.%u is set to %d, but that class cannot be that race. Ignoring it - those bots will be created as another race.",
+                        cls, race, rcProb);
+
                 classRaceProbability[cls][race] = 0;
+            }
             else
                 classRaceProbabilityTotal += classRaceProbability[cls][race];
         }
@@ -445,7 +484,10 @@ bool PlayerbotAIConfig::Initialize()
 		    std::string key = "AiPlayerbot.ClassRaceProb." + std::to_string(cls) + "." + std::to_string(race);
 		    int count = config.GetIntDefault(key, -1);
 
-		    if (count >= 0 && factory.isAvailableRace(cls, race))
+		    if (count >= 0 && !factory.isAvailableRace(cls, race))
+		        sLog.outError("AiPlayerbot.ClassRaceProb.%u.%u asks for %d bots, but that class cannot be that race. Ignoring it.",
+		            cls, race, count);
+		    else if (count >= 0)
 		    {
 		        fixedClassRaceCounts[{cls, race}] = count;
 		    }
@@ -1061,10 +1103,26 @@ bool PlayerbotAIConfig::openLog(std::string fileName, char const* mode, bool has
 
 
     file = fopen((m_logsDir + fileName).c_str(), mode);
-    fileOpen = true;
+
+    // fopen fails whenever the logs directory does not exist yet, which on a
+    // fresh install it usually does not. This used to mark the file open all the
+    // same and return true, so log() fetched a null handle back out of the map
+    // and handed it to fputs. That is a segfault on the very first bot event -
+    // during startup, which makes it read as "the server dies on boot" rather
+    // than "a log file could not be opened".
+    if (!file)
+    {
+        sLog.outError("Could not open bot log file %s%s (%s). Logging to it is off for this run.",
+            m_logsDir.c_str(), fileName.c_str(), strerror(errno));
+
+        logFileIt->second.first = nullptr;
+        logFileIt->second.second = false;
+
+        return false;
+    }
 
     logFileIt->second.first = file;
-    logFileIt->second.second = fileOpen;
+    logFileIt->second.second = true;
 
     return true;
 }
@@ -1081,6 +1139,10 @@ void PlayerbotAIConfig::log(std::string fileName, const char* line)
             return;
 
     FILE* file = logFiles.find(fileName)->second.first;
+    if (!file)
+        return;
+    if (!file)
+        return;
 
     fputs(line, file);
     fputc('\n', file);

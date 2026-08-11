@@ -1020,7 +1020,7 @@ AiPlayerbot.RandomBotNonCombatStrategies = +grind,+loot,+custom::say,+tfish,+wan
 #AiPlayerbot.RandomBotReactStrategies =
 #AiPlayerbot.RandomBotDeadStrategies =
 AiPlayerbot.CombatStrategies = +custom::say,+dps,+dps assist,-threat
-AiPlayerbot.NonCombatStrategies = +grind,+loot,+custom::say,+return,+delayed roll,+tfish,+wander,+rpg craft
+AiPlayerbot.NonCombatStrategies = +grind,+loot,+custom::say,+return,+delayed roll,+tfish,+wander,+rpg craft,+quest
 #AiPlayerbot.ReactStrategies = 
 #AiPlayerbot.DeadStrategies = 
 

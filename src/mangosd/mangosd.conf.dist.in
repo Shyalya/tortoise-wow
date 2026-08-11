@@ -98,6 +98,28 @@ UseProcessors = 0
 
 ProcessPriority = 1
 
+# AiPlayerbot.ConfigFile. Where to read the bot settings from.
+#     Empty means: look next to this file, and if that fails fall back to the
+#     path compiled in at build time. Set it when the two live apart, which is
+#     easy to end up with when the server runs out of its build directory.
+
+AiPlayerbot.ConfigFile = ""
+
+# Malloc.ArenaMax. Caps how many malloc arenas glibc may create. (Linux only)
+#     glibc gives each thread its own arena, up to eight per core - 64 on an
+#     eight core machine. Every arena holds on to what it frees, so a workload
+#     that allocates constantly across many threads scatters its freed memory
+#     and returns little of it. The symptom is a resident size climbing steadily
+#     at a constant player count while nothing leaks.
+#     Measured with a thousand bots: capping at 4 took RSS after nine and a half
+#     hours from 13.4 GB to 9.9 GB, and growth from ~810 MB/h to 483, with no
+#     cost to the world tick. Fewer arenas do mean more contention, so measure
+#     rather than assume.
+#     0 leaves glibc alone. Worth setting on a server with many bots, pointless
+#     on a small one.
+
+Malloc.ArenaMax = 0
+
 # Compression. Compression level for update packages sent to client. (1-9)
 
 Compression = 1
@@ -2213,9 +2235,16 @@ GuildBank.NpcEntriesHorde = 80918
 # Real players always take priority: when one joins the queue, every bot that is
 # not already part of an offer is dropped again. An offer already sent out is
 # left alone rather than breaking a group mid-formation.
+#   LevelRangeBelowHealer
+#                 the same limit for a healer, which can afford to be further
+#                 under the group: it keeps its distance and is not the one
+#                 being hit. Healers are also the scarcer half of the shortage,
+#                 so a tighter bound here costs groups that would otherwise
+#                 have formed.
 LFT.BotFill.Enable = 0
 LFT.BotFill.DelaySeconds = 60
 LFT.BotFill.LevelRangeBelow = 2
+LFT.BotFill.LevelRangeBelowHealer = 4
 LFT.BotFill.LevelRangeAbove = 6
 
 

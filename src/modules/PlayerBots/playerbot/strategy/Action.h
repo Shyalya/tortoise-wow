@@ -30,7 +30,19 @@ namespace ai
         }
 
     public:
-        std::string getName() const { return name; }
+        // By reference, not by value. Engine::MultiplyAndPush calls this for
+        // every action of every trigger that fires, on every tick of every bot,
+        // and hands the result straight to CreateActionNode, which takes a const
+        // reference. Returning a copy made that one call site the largest single
+        // source of allocations on the server - heaptrack counted around 293000
+        // string constructions a second with a thousand bots, and this stack was
+        // the top contributor to them.
+        //
+        // Only safe here because `name` is a member and outlives the call. The
+        // virtual AiObject::getName() must keep returning by value: overrides
+        // such as CustomStrategy::getName() build their name at call time, and a
+        // reference to that would dangle.
+        const std::string& getName() const { return name; }
         float getRelevance() const { return relevance; }
 
     public:

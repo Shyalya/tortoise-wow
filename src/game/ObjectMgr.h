@@ -1644,6 +1644,14 @@ class ObjectMgr
         IdGenerator<uint32> m_GroupIds;
         IdGenerator<uint32> m_PetitionIds;
         uint32              m_NextPetNumber;
+        // GeneratePetNumber reads this counter, asks the cache for the next free
+        // number at or above it, and writes it back - three steps with nothing
+        // between them. Two map threads entering together both saw the same
+        // value and both handed out the same pet number, and the second save hit
+        // "Duplicate entry for key PRIMARY" on character_pet. With a thousand
+        // bots summoning pets from several threads it turned up 34 times in one
+        // nine hour run.
+        std::mutex          m_PetNumberLock;
         std::set<uint32>    m_AuctionsIds;
         uint32              m_NextAuctionId;
 

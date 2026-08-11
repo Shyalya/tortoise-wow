@@ -16,8 +16,13 @@ namespace ai
     public:
         virtual bool Execute(Event& event) override;
         static bool AutoSelectTalents(Player* bot, std::ostringstream* out, BotRoles role = BotRoles::BOT_ROLE_NONE);
-    private:
+
+        // Public because callers need to ask "can this class reach that role at
+        // all" before wiping a bot's talents in the hope that it can.
+        // AutoSelectTalents itself will not tell them: given a role it cannot
+        // satisfy it quietly falls back to every spec of the class and picks one.
         static std::vector<TalentPath*> getPremadePaths(uint8 cls, std::string findName, BotRoles role = BotRoles::BOT_ROLE_NONE);
+    private:
         static std::vector<TalentPath*> getPremadePaths(Player* bot, TalentSpec* oldSpec);
         static TalentPath* getPremadePath(uint8 cls, int id);
         static void listPremadePaths(uint8 cls, std::vector<TalentPath*> paths, std::ostringstream* out);

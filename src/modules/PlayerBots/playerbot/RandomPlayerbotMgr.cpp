@@ -1156,6 +1156,15 @@ uint32 RandomPlayerbotMgr::AddRandomBots()
 
         int32 neededAddBots = currentAllowedBotCount;
 
+    // BOTPROBE - temporary. Bots below level 20 are almost never online (2.4%)
+    // while those at 30-49 are online 96% of the time, and measurement has ruled
+    // out guid order, class, race, the logout event and any level filter. The
+    // only gate left is the classRaceAllowed quota, which lives in memory only.
+    // Counts every row this loop looks at, by level band and by the reason it
+    // was skipped, so the answer comes from one startup instead of another guess.
+    uint32 botProbe[7][7] = {};
+#define BOTPROBE(b, r) do { botProbe[(b)][(r)]++; } while (0)
+
         currentAllowedBotCount = currentAllowedBotCount*2;      
 
         CharacterDatabase.AllowAsyncTransactions();
@@ -1183,7 +1192,20 @@ uint32 RandomPlayerbotMgr::AddRandomBots()
                 }
             }
 
-            for (std::list<uint32>::iterator i = sPlayerbotAIConfig.randomBotAccounts.begin(); i != sPlayerbotAIConfig.randomBotAccounts.end(); i++)
+            // The account list used to be walked in the same order on every pass
+            // while classRaceAllowed is one global quota - so the first accounts
+            // spent it and everything behind them was never reached at all.
+            // Measured with the counters below before this fix: accounts 14-135
+            // were online ~99% of the time, everything from 138 up sat at 4-6%,
+            // and their levels followed, 37 against 11, because only the bots the
+            // loop could reach ever got to play. That also starved the LFT queue
+            // of low level companions. Shuffling per pass gives every account the
+            // same chance of being served first.
+            std::vector<uint32> accountOrder(sPlayerbotAIConfig.randomBotAccounts.begin(),
+                                             sPlayerbotAIConfig.randomBotAccounts.end());
+            std::shuffle(accountOrder.begin(), accountOrder.end(), *GetRandomGenerator());
+
+            for (std::vector<uint32>::iterator i = accountOrder.begin(); i != accountOrder.end(); i++)
             {
                 uint32 accountId = *i;
 
@@ -1233,18 +1255,26 @@ uint32 RandomPlayerbotMgr::AddRandomBots()
                     uint32 race = fields[3].GetUInt32();
                     uint32 cls = fields[4].GetUInt32();
 
+                    uint32 const band = std::min<uint32>(level / 10, 6);
+                    BOTPROBE(band, 0);
+
                     if (GetEventValue(guid, "add"))
                     {
+                        BOTPROBE(band, 1);
                         if (!noCriteria)
                             classRaceAllowed[cls][race]--;
                         continue;
                     }
 
                     if (GetEventValue(guid, "logout"))
+                    {
+                        BOTPROBE(band, 2);
                         continue;
+                    }
 
                     if (GetPlayerBot(guid))
                     {
+                        BOTPROBE(band, 3);
                         if (!noCriteria)
                             classRaceAllowed[cls][race]--;
                         continue;
@@ -1252,14 +1282,19 @@ uint32 RandomPlayerbotMgr::AddRandomBots()
 
                     if (std::find(currentBots.begin(), currentBots.end(), guid) != currentBots.end())
                     {
+                        BOTPROBE(band, 4);
                         if (!noCriteria)
                             classRaceAllowed[cls][race]--;
                         continue;
                     }
 
                     if (classRaceAllowed[cls][race] <= 0)
+                    {
+                        BOTPROBE(band, 5);
                         continue;
+                    }
 
+                    BOTPROBE(band, 6);
                     SetEventValue(guid, "add", 1, urand(sPlayerbotAIConfig.minRandomBotInWorldTime, sPlayerbotAIConfig.maxRandomBotInWorldTime));
                     SetEventValue(guid, "logout", 0, 0);
                     currentBots.push_back(guid);
@@ -1290,7 +1325,27 @@ uint32 RandomPlayerbotMgr::AddRandomBots()
             if (!currentAllowedBotCount)
                 break;
 
-            if (showLoginWarning && neededAddBots > 0)
+            {
+        uint32 gesamt = 0;
+        for (uint32 b = 0; b < 7; ++b)
+            gesamt += botProbe[b][0];
+
+        if (gesamt)
+        {
+            sLog.outBasic("BOTPROBE: band | seen | has-add | logout | in-world | in-list | quota | taken");
+            for (uint32 b = 0; b < 7; ++b)
+            {
+                if (!botProbe[b][0])
+                    continue;
+                sLog.outBasic("BOTPROBE: %2u-%2u | %5u | %7u | %6u | %8u | %7u | %5u | %5u",
+                    b * 10, b * 10 + 9, botProbe[b][0], botProbe[b][1], botProbe[b][2],
+                    botProbe[b][3], botProbe[b][4], botProbe[b][5], botProbe[b][6]);
+            }
+        }
+    }
+#undef BOTPROBE
+
+    if (showLoginWarning && neededAddBots > 0)
             {
                 sLog.outError("Not enough accounts to meet selection criteria. A random selection of bots was activated to fill the server.");
 

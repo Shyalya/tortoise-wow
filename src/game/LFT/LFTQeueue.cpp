@@ -817,7 +817,12 @@ uint8 LFTManager::AllowedRoleMask(Player const* player) const
         case CLASS_PALADIN: return LFT_ROLE_TANK | LFT_ROLE_HEALER | LFT_ROLE_DAMAGE;
         case CLASS_PRIEST:  return LFT_ROLE_HEALER | LFT_ROLE_DAMAGE;
         case CLASS_ROGUE:   return LFT_ROLE_DAMAGE;
-        case CLASS_SHAMAN:  return LFT_ROLE_TANK | LFT_ROLE_HEALER | LFT_ROLE_DAMAGE;
+        // No tank here. There is no shaman tank talent tree in 1.12 and the bot
+        // module has no tank strategy for one, so offering the slot only led to
+        // a shaman being handed the role and respecced into whatever came to
+        // hand - enhancement and restoration both turned up in the log under
+        // "respecced for role 1".
+        case CLASS_SHAMAN:  return LFT_ROLE_HEALER | LFT_ROLE_DAMAGE;
         case CLASS_WARLOCK: return LFT_ROLE_DAMAGE;
         case CLASS_WARRIOR: return LFT_ROLE_TANK | LFT_ROLE_DAMAGE;
         default:            return 0;

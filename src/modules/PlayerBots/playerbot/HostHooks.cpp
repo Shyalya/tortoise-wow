@@ -206,7 +206,16 @@ void Playerbot_SetForcedRole(Player* bot, uint8 role)
     {
         BotRoles const current = AiFactory::GetPlayerRoles(bot);
 
-        if (!(current & role))
+        // And only when the class can actually reach the role. AutoSelectTalents
+        // does not give up if no premade spec matches: it falls back to every
+        // spec of the class and picks one. So a shaman told to tank had its
+        // talents wiped and came back as restoration - worse off than before,
+        // and still not a tank. Ask first, and leave the bot alone if the answer
+        // is no.
+        bool const reachable =
+            !ChangeTalentsAction::getPremadePaths(bot->getClass(), "", (BotRoles)role).empty();
+
+        if (!(current & role) && reachable)
         {
             sRandomPlayerbotMgr.SetValue(bot->GetGUIDLow(), "specNo", 0);
             sRandomPlayerbotMgr.SetValue(bot->GetGUIDLow(), "specLink", 0, "");

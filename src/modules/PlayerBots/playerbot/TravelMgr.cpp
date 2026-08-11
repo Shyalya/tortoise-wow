@@ -2688,8 +2688,23 @@ bool TravelMgr::IsLocationLevelValid(const WorldPosition& position, const Player
     if (!position.isOverworld() && !canFightElite)
         areaLevel += 10;
 
-    if (!areaLevel || (uint32)botLevel < areaLevel) //Skip points that are in a area that is too high level.
-        return false;
+    // Handing a quest in is not a difficulty decision. The bot has already done
+    // the work; whether the giver happens to stand in a neighbourhood rated above
+    // its level says nothing about whether it should walk back. And the gate was
+    // firing for a reason that has nothing to do with level at all: getAreaFlag
+    // returns 0 whenever the vmap for that spot is not loaded, which inside the
+    // asynchronous destination search is most of the time, and an area level of 0
+    // was read here as "too high for you". Measured on a live realm before the
+    // fix: of 350 rejected quest-taker points, 299 had no resolvable area
+    // whatsoever.
+    //
+    // Elite and dungeon turn-ins are still held back by
+    // QuestRelationTravelDestination::IsPossible, which is where that belongs.
+    if (!(purposeFlag & (uint32)TravelDestinationPurpose::QuestTaker))
+    {
+        if (!areaLevel || (uint32)botLevel < areaLevel) //Skip points that are in a area that is too high level.
+            return false;
+    }
 
     // Grind-specific: don't grind in a zone whose overall level is at/below the bot's
     // own floor for acceptable mobs - mirrors the per-mob minLevel window already used
@@ -2724,6 +2739,14 @@ PartitionedTravelList TravelMgr::GetPartitions(const WorldPosition& center, cons
     unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
     std::shuffle(destinations.begin(), destinations.end(), std::default_random_engine(seed));
 
+    // TEMPORARY counters. Quest takers are offered to a bot and nothing comes
+    // back: 79 destinations across ten bots in 42 minutes produced two journeys,
+    // and every failure ended with an empty list. Four things here can discard a
+    // destination and from outside they are indistinguishable. Remove once the
+    // answer is in.
+    uint32 probeTotal = destinations.size(), probeNoPartition = 0, probeNoPoint = 0;
+    uint32 probeRejectLevel = 0, probeRejectDistance = 0, probeFarthest = 0;
+
     for (auto& dest : destinations)
     {
         TravelPoint point(dest, sTravelMgr.nullWorldPosition, 0.0f);
@@ -2731,7 +2754,10 @@ PartitionedTravelList TravelMgr::GetPartitions(const WorldPosition& center, cons
         std::pair<uint32, std::vector<WorldPosition*>> pointRange = dest->GetClosestPartition(center, distancePartitions);
 
         if (!pointRange.first)
+        {
+            probeNoPartition++;
             continue;
+        }
 
         MANGOS_ASSERT(pointRange.second.size());
         std::vector<WorldPosition*> points = pointRange.second;
@@ -2740,19 +2766,34 @@ PartitionedTravelList TravelMgr::GetPartitions(const WorldPosition& center, cons
         for (auto& position : points)
         {
             if (!IsLocationLevelValid(*position, info, purposeFlag))
+            {
+                probeRejectLevel++;
                 continue;
+            }
 
             float distance = position->distance(center);
 
             if (distance > maxDistance)
+            {
+                probeRejectDistance++;
+                if (distance > probeFarthest)
+                    probeFarthest = uint32(distance);
                 continue;
+            }
             
             point = TravelPoint(dest, position, distance);
         }
 
         if (std::get<2>(point) > 0)
             pointMap[pointRange.first].push_back(point);
+        else
+            probeNoPoint++;
     }
+
+    if (pointMap.empty() && probeTotal && (purposeFlag & (uint32)TravelDestinationPurpose::QuestTaker))
+        sLog.outBasic("PARTPROBE: level %u, %u taker destinations, none survived - %u had no partition, %u no usable point; points rejected: %u by level, %u by distance (max allowed %.0f, farthest seen %u)",
+            info.GetLevel(), probeTotal, probeNoPartition, probeNoPoint,
+            probeRejectLevel, probeRejectDistance, maxDistance, probeFarthest);
 
     sTravelMgr.GetPartitionsLock(false);
 

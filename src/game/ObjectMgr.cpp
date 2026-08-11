@@ -6209,6 +6209,8 @@ void ObjectMgr::LoadPetNumber()
 
 uint32 ObjectMgr::GeneratePetNumber()
 {
+    std::lock_guard<std::mutex> guard(m_PetNumberLock);
+
     m_NextPetNumber = sCharacterDatabaseCache.GetNextAvailablePetNumber(m_NextPetNumber);
     return m_NextPetNumber++;
 }

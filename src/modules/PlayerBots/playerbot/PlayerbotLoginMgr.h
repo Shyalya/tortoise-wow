@@ -15,7 +15,11 @@ namespace ai
 		int32 currentSpace;
 		int32 totalSpace;
 		int32 classRaceBucket[MAX_CLASSES][MAX_RACES];
-		int32 levelBucket[DEFAULT_MAX_LEVEL + 1];
+		// Sized by what the core actually allows, not by the Classic cap. mangos
+		// clamps MaxPlayerLevel to [1, PLAYER_STRONG_MAX_LEVEL] (World.cpp), so on
+		// a server configured above 60 the old DEFAULT_MAX_LEVEL + 1 array was
+		// indexed out of bounds by GetLevel() below - a silent write past the end.
+		int32 levelBucket[PLAYER_STRONG_MAX_LEVEL + 1];
 		RealPlayerInfos realPlayerInfos;
 	};
 
