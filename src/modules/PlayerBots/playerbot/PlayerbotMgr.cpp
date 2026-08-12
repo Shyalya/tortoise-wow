@@ -2421,11 +2421,17 @@ void PlayerbotHolder::CreateBot(Player* master, const std::string param, std::li
             ChangeTalentsAction::AutoSelectTalents(newBot, &out, role);
 
             sRandomPlayerbotMgr.SetValue(botGuid, "create levelup", 1);
-            sRandomPlayerbotMgr.SetValue(botGuid, "create group", 1, groupWith);
             sRandomPlayerbotMgr.SetValue(botGuid, "create gear", 1, gear);
         }
         else
             newBot->SetLevel(1);
+
+        // Grouping means something at every level, gear and talents do not, so
+        // this does not belong in the branch above. HandleGroup passes the
+        // master's own level into create, so a level 1 master never reached it
+        // and never got the deferred auto-invite at all.
+        if (!groupWith.empty())
+            sRandomPlayerbotMgr.SetValue(botGuid, "create group", 1, groupWith);
 
         if (!testName.empty())
         {
@@ -2445,6 +2451,33 @@ void PlayerbotHolder::CreateBot(Player* master, const std::string param, std::li
         }
 
         newBot->SaveToDB();
+
+        // Register the new character in the player cache by hand.
+        //
+        // botSession is a throwaway and never has SetPlayer() called on it, so
+        // the `if (_player)` body of LogoutPlayer() below - which is what
+        // normally registers a character - does nothing here. The character
+        // then misses from m_playerNameToGuid, which breaks
+        // `.rndbot add/summon <name>`, and from m_playerCacheData, so
+        // GetPlayerAccountIdByGUID answers 0, AddPlayerBot refuses to log the
+        // bot in, and it retries every tick for as long as the server runs.
+        //
+        // Re-reading the row is not enough on its own for a character created
+        // mid-session: SaveToDB has not necessarily become visible to the next
+        // SELECT yet. So check afterwards, and fall back to the Player object
+        // that is still in memory.
+        {
+            ObjectGuid const cacheGuid(HIGHGUID_PLAYER, botGuid);
+
+            sObjectMgr.LoadPlayerCacheData(botGuid);
+
+            if (!sObjectMgr.GetPlayerAccountIdByGUID(cacheGuid))
+            {
+                if (!sObjectMgr.InsertPlayerInCache(newBot))
+                    sLog.outError("PlayerbotHolder::CreateBot: could not put %s (guid %u) into the player cache - "
+                                  "the bot will not be loginable by name", name.c_str(), botGuid);
+            }
+        }
 
         messages.push_back("Bot created: " + name);
 
