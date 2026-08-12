@@ -36,7 +36,15 @@ namespace ai
     class PetIsDeadValue : public BoolCalculatedValue
     {
     public:
-        PetIsDeadValue(PlayerbotAI* ai, std::string name = "pet dead") : BoolCalculatedValue(ai, name) {}
+        // checkInterval=30: Calculate() falls back to a synchronous character_pet
+        // DB query whenever the bot has no live Pet object. The base class's
+        // default checkInterval (1s) let that query re-fire roughly once a
+        // second, indefinitely, for any bot stuck without a pet (e.g. one whose
+        // pet never resolved after a mass level/gear randomize) - with enough
+        // such bots at once those blocking queries piled up on the world thread
+        // and tripped MaxCoreStuckTime. A bot's pet-ownership state does not
+        // need sub-second freshness, so 30s cuts the query rate ~30x.
+        PetIsDeadValue(PlayerbotAI* ai, std::string name = "pet dead") : BoolCalculatedValue(ai, name, 30) {}
         virtual bool Calculate() override;
     };
 

@@ -2429,23 +2429,22 @@ bool RandomPlayerbotMgr::ProcessBot(Player* player)
     if (player->InBattleGroundQueue())
         return false;
 
-    // only teleport idle bots
-    bool idleBot = false;
-    TravelTarget* target = player->GetPlayerbotAI()->GetAiObjectContext()->GetValue<TravelTarget*>("travel target")->Get();
-    if (target)
-    {
-        if (target->GetTravelState() == TravelState::TRAVEL_STATE_IDLE)
-            idleBot = true;
-    }
-    else
-        idleBot = true;
-
-    if (idleBot)
+    // Level/gear sync used to be gated behind idleBot below, same as the
+    // teleport/strategy logic. With DisableActivityPriorities=1 keeping bots
+    // constantly questing/grinding/traveling, a bot that found something to do
+    // the moment it logged in would have a non-idle travel target essentially
+    // forever, so this check would never run again for it - stalling the
+    // level-60 population SyncLevelWithPlayers is supposed to grow, since a
+    // bot's saved level only ever gets touched here. Only combat is excluded:
+    // Randomize() swaps gear/level/spec and resets AI state, which isn't safe
+    // to do to a bot mid-fight. Everything below this (teleport/strategy
+    // change) stays idle-gated, since repositioning a busy bot is disruptive
+    // in a way re-leveling in place is not.
+    if (!player->IsInCombat())
     {
         uint32 randomize = GetEventValue(bot, "randomize");
         // Randomize() reassigns level/spec - never call it when levels are pinned
-        // (DisableRandomLevels=1). Falls through to the changeStrategy/teleport checks
-        // below so idle bots still get RandomTeleportForLevel()'s zone relocation.
+        // (DisableRandomLevels=1).
         if (!sPlayerbotAIConfig.disableRandomLevels && !randomize)
         {
             bool randomiser = true;
@@ -2466,7 +2465,21 @@ bool RandomPlayerbotMgr::ProcessBot(Player* player)
                 return true;
             }
         }
+    }
 
+    // only teleport idle bots
+    bool idleBot = false;
+    TravelTarget* target = player->GetPlayerbotAI()->GetAiObjectContext()->GetValue<TravelTarget*>("travel target")->Get();
+    if (target)
+    {
+        if (target->GetTravelState() == TravelState::TRAVEL_STATE_IDLE)
+            idleBot = true;
+    }
+    else
+        idleBot = true;
+
+    if (idleBot)
+    {
         // Both branches below teleport the bot - to an inn or to a grind spot -
         // which for a pinned bot means being pulled out of the quest chain it is
         // being watched through. Nothing else about it differs from any other
