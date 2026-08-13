@@ -797,10 +797,21 @@ bool BGJoinAction::JoinQueue(uint32 type)
    // The server itself accepts guid raw value 1337 as a queue-via-command bypass
    // (see WorldSession::HandleBattlemasterJoinOpcode, queuedviaCommand check) -
    // use that instead of requiring a physically loaded Battlemaster Unit.
+   //
+   // Previously this fell back to unit->GetObjectGuid() whenever a real
+   // Battlemaster happened to be cached as "bg master", even though the bot is
+   // rarely actually standing in interaction range of it. A real (non-1337)
+   // guid makes HandleBattlemasterJoinOpcode treat queuedviaCommand as false
+   // and run the same proximity check a real player clicking a Battlemaster
+   // would need to pass - which a bot elsewhere in the world fails silently
+   // (no error, no log), while sRandomPlayerbotMgr.BgBots[] below has already
+   // counted it as queued. That let the bot-count tracker drift ahead of what
+   // the real BattleGroundQueue actually held, so matches that looked ready
+   // to pop by the tracker's count never did. Always use the bypass instead.
    ObjectGuid bmFallbackGuid = ObjectGuid(uint64(1337));
 // in wotlk only arena requires battlemaster guid
 #ifndef MANGOSBOT_TWO
-   ObjectGuid guid = unit ? unit->GetObjectGuid() : bmFallbackGuid;
+   ObjectGuid guid = bmFallbackGuid;
 #else
    ObjectGuid guid = isArena ? unit->GetObjectGuid() : bot->GetObjectGuid();
 #endif
