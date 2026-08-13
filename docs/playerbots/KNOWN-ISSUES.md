@@ -32,6 +32,61 @@ Within ~15 minutes they sit on identical coordinates with identical health.
 actually selects for a frozen bot inside a BG — the freeze is confirmed to be below
 the trigger/strategy layer, inside movement or objective action selection itself.
 
+**2026-08-14 update — sharper evidence, one confirmed sub-bug, root cause still open:**
+Live-observed on commit `d59176f`, a real WSG match (map 489) with ~19 bots + 1 real
+player, ~10+ minutes in.
+
+- **DB position proof:** `SELECT guid,name,position_x,position_y,position_z FROM
+  characters WHERE map=489 AND online=1` showed 8 of 19 bots sitting at exactly
+  identical coordinates (to the thousandth decimal) in two clusters — e.g. Adelani
+  (guid 704), Augustina (967), Janchuna (1982), Periela (471), Rohander (1774) all at
+  `(933.331, 1433.72, 345.536)`; Amelineri (2917), Boastin (3542), Dilena (2923) all
+  at `(1519.53, 1481.87, 352.024)`. These read as each team's BG entry platform —
+  bots frozen from the moment they spawned in, not mid-match.
+- **bot_events.csv proof (new, more precise than `[BGDIAG2]`):** this log records
+  every action a bot's AI *actually executes* (combat, quests, movement, everything).
+  For every affected bot checked (Adelani, Amelineri, Augustina, Rohander), the
+  **last ever entry is their `BGJoinAction` queue confirmation** — after that,
+  crossing into the BG instance, there is **not one further logged action of any
+  kind** for the rest of the match (10+ minutes and counting). This is stronger than
+  the earlier `[BGDIAG2]` finding: it's not just movement that stops, it's every
+  action type — combat included.
+- **Cross-checked against `[BGDIAG2]`:** these same bots still hit `DoNextAction
+  reached, minimal=0 strat=yes` repeatedly during the freeze (confirmed in the live
+  log) — so the AI update loop is technically still running and not in minimal/idle
+  mode. The break is between "trigger evaluated as active" and "an action actually
+  executes and gets logged" — i.e. below `ProcessTriggers`, inside action selection
+  or `Action::Execute()` dispatch itself, specifically once the bot is inside a BG
+  instance.
+- **One confirmed, fixed sub-bug found along the way** (real, but not proven to be
+  the root cause of the above): `BGTactics::atFlag()`,
+  `strategy/actions/BattleGroundTactics.cpp:4469` had
+  `if (!bot->CanInteract(go) && bgType != BATTLEGROUND_WS)` — C++ evaluates the left
+  operand first, so `bot->CanInteract(go)` (and its core-engine
+  `CanInteractWithGameObject` error-log side effect) fired unconditionally every tick
+  for every WSG bot regardless of distance; only the resulting `continue` was
+  conditional on `bgType`. This is what produced 15,000+ `ERROR:CanInteractWithGameObject:
+  ... too far away ...` log lines (confirmed present as far back as the
+  2026-08-12 log, so pre-existing, not introduced by any recent merge). Fixed by
+  reordering to `if (bgType != BATTLEGROUND_WS && !bot->CanInteract(go))`, matching
+  the evident original intent (WSG has its own distance handling further down via
+  `flagRange`/`INTERACTION_DISTANCE`). **Not yet rebuilt/deployed/verified live** —
+  found and patched in source only as of this entry.
+- **Also noted, not confirmed as causal:** `BGTactics::startNewPathFree()`
+  (`BattleGroundTactics.cpp:4385`) computes `currentPoint = closestPoint - 1` where
+  both are `uint32` — if the bot's closest waypoint is index 0, this underflows to
+  `UINT32_MAX`. Traced forward into `moveToObjectiveWp()`: due to unsigned wraparound
+  the very next `currPoint++` brings it back to a small valid index, so this likely
+  self-corrects rather than crashing/hanging — flagged for awareness, not treated as
+  the freeze cause.
+- **What this rules out for the next session:** it's not a movement-specific bug
+  (combat actions are equally silent), and it's not a trigger/strategy-assignment
+  problem (already fixed in `6fdc731`, and `[BGDIAG2]` confirms triggers fire). The
+  next concrete step is instrumenting **action selection/dispatch itself** (what
+  `Engine::DoNextAction` picks, and whether `Action::Execute()` is even being called)
+  specifically for bots with `bot->InBattleGround()==true`, since that's the one
+  variable that flips exactly when the freeze begins.
+
 ### Bots appearing ungeared in battlegrounds
 **Symptom:** user-reported — bots showing up in BGs without proper gear.
 **Investigated 2026-08-13:** no config switch literally named "Create Gear on Level

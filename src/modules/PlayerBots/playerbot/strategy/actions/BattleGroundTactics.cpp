@@ -4466,7 +4466,7 @@ bool BGTactics::atFlag(std::vector<BattleBotPath*> const& vPaths, std::vector<ui
         if (!sServerFacade.isSpawned(go) || go->IsInUse() || go->GetGoState() != GO_STATE_READY)
             continue;
 
-        if (!bot->CanInteract(go) && bgType != BATTLEGROUND_WS)
+        if (bgType != BATTLEGROUND_WS && !bot->CanInteract(go))
             continue;
         
         if (flagRange)
