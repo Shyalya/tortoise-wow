@@ -332,6 +332,12 @@ bool MovementAction::MoveOnTransport(PlayerbotAI* ai, GenericTransport* transpor
     {
         bot->GetMap()->PlayerRelocation(bot, transPos.getX(), transPos.getY(), transPos.getZ(), bot->GetOrientation());
         transport->AddPassenger(bot, true);
+        // Boarding is the one leg of travel nothing recorded. setNewTarget writes an
+        // event for every destination a bot picks - taker, giver, objective - but the
+        // vessel it needs to get there was invisible in the log, so "do bots use boats
+        // at all" could only be argued, never counted. It fires once per boarding, so
+        // it costs nothing next to the rest of bot_events.csv.
+        sPlayerbotAIConfig.logEvent(ai, "BoardTransport", transport->GetName(), std::to_string(transport->GetEntry()));
         bot->SendHeartBeat();
         return true;
     }
@@ -348,6 +354,7 @@ bool MovementAction::MoveOnTransport(PlayerbotAI* ai, GenericTransport* transpor
     else
     {
         transport->AddPassenger(bot, true);
+        sPlayerbotAIConfig.logEvent(ai, "BoardTransport", transport->GetName(), std::to_string(transport->GetEntry()));
 
         ai->StopMoving();
 

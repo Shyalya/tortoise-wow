@@ -461,9 +461,15 @@ class Map : public GridRefManager<NGridType>
         bool HasActiveZones() const { return true; }
         // HasRealPlayers: cmangos checks if any non-bot players are on the map. Stub returns true.
         bool HasRealPlayers() const { return true; }
-        // GetTransports: cmangos has Map::GetTransports returning a set/vector. Stub returns empty vector.
+        // GetTransports: cmangos has Map::GetTransports returning a set/vector.
         // Note: GenericTransport is a typedef in shim; forward-decl as struct avoids "class" keyword conflict.
-        std::vector<class Transport*> GetTransports() const { return {}; }
+        //
+        // This returned an empty vector for as long as it existed, while _transports
+        // right below was filled correctly all along - inserted in Add(Transport*),
+        // erased in Remove(Transport*, bool). Every caller asking the map for a live
+        // boat or zeppelin got nothing back, so no bot has ever boarded one: routed to
+        // a dock, it stands there while the vessel is moored ten yards away.
+        std::vector<class Transport*> GetTransports() const { return { _transports.begin(), _transports.end() }; }
 
         // can't be nullptr for loaded map
         MapPersistentState* GetPersistentState() const { return m_persistentState; }

@@ -81,7 +81,15 @@ namespace
     {
         // Arenas are limited by instance count alone: their team slots are indexed by
         // rating rather than faction, so a per-team number would not mean the same thing.
-        const int32 cap = isArena ? -1 : sPlayerbotAIConfig.GetBgBotTeamCap(bgTypeId);
+        // A configured zero has to reach through even for an arena - that is the
+        // switch which takes a queue away from bots entirely, and Blood Ring needs
+        // it. Being the one uncapped queue, bots drained into it: its matches went
+        // from a 60 minute average to eight hours (longest 24h) while Warsong fell
+        // from 217 matches a day to 12 and Arathi from 168 to 5. Bots that go in do
+        // not come out - sampled five minutes apart they sit on identical
+        // coordinates with identical health, while open world bots move normally.
+        const int32 configured = sPlayerbotAIConfig.GetBgBotTeamCap(bgTypeId);
+        const int32 cap = (isArena && configured != 0) ? -1 : configured;
 
         // Zero switches a battleground off for bots outright, whether or not anyone
         // real is queuing. Sunnyglade Valley is disabled from client patch 1.18.1
@@ -93,7 +101,8 @@ namespace
             return false;
 
         // Nobody real is waiting for this bracket, so one match of it is enough.
-        if (CountRunningBattlegrounds((BattleGroundTypeId)bgTypeId, (BattleGroundBracketId)bracketId) >= 1)
+        if (CountRunningBattlegrounds((BattleGroundTypeId)bgTypeId, (BattleGroundBracketId)bracketId)
+                >= sPlayerbotAIConfig.bgMaxInstancesPerBracket)
             return true;
 
         // And do not let a second one fill up behind the first while it is still
@@ -466,7 +475,12 @@ bool BGJoinAction::shouldJoinBg(BattleGroundQueueTypeId queueTypeId, BattleGroun
         return false;
 
     if (ai->HasRealPlayerMaster())
+    {
+        if (hasPlayers)
+            sLog.outString("[BGDIAG] %s declined q%u bracket %u: has a real player master",
+                    bot->GetName(), queueTypeId, bracketId);
         return false;
+    }
 
 #ifndef MANGOSBOT_ZERO
     if (!hasPlayers && isArena && !hasTeam)
@@ -498,7 +512,12 @@ bool BGJoinAction::shouldJoinBg(BattleGroundQueueTypeId queueTypeId, BattleGroun
 
     if (BotBattlegroundLimitReached(bgTypeId, bracketId, isArena, hasPlayers, BgCount, BracketSize,
                                     TeamId == 0 ? ACount : HCount))
+    {
+        if (hasPlayers)
+            sLog.outString("[BGDIAG] %s declined q%u bracket %u: limit reached (A=%u H=%u)",
+                    bot->GetName(), queueTypeId, bracketId, ACount, HCount);
         return false;
+    }
 
 #ifndef MANGOSBOT_ZERO
     if (isArena)
@@ -582,11 +601,17 @@ bool BGJoinAction::shouldJoinBg(BattleGroundQueueTypeId queueTypeId, BattleGroun
     // do not join if BG queue is full
     if (BgCount >= BracketSize && (ACount >= TeamSize) && (HCount >= TeamSize))
     {
+        if (hasPlayers)
+            sLog.outString("[BGDIAG] %s declined q%u bracket %u: queue full (A=%u H=%u)",
+                    bot->GetName(), queueTypeId, bracketId, ACount, HCount);
         return false;
     }
 
     if (!isArena && ((ACount >= TeamSize && TeamId == 0) || (HCount >= TeamSize && TeamId == 1)))
     {
+        if (hasPlayers)
+            sLog.outString("[BGDIAG] %s declined q%u bracket %u: own side full (A=%u H=%u size=%u)",
+                    bot->GetName(), queueTypeId, bracketId, ACount, HCount, TeamSize);
         return false;
     }
 
@@ -604,6 +629,10 @@ bool BGJoinAction::shouldJoinBg(BattleGroundQueueTypeId queueTypeId, BattleGroun
     {
         return false;
     }
+
+    if (hasPlayers)
+        sLog.outString("[BGDIAG] %s ACCEPTED q%u bracket %u (A=%u H=%u)",
+                bot->GetName(), queueTypeId, bracketId, ACount, HCount);
 
     return true;
 }
@@ -811,6 +840,8 @@ bool BGJoinAction::JoinQueue(uint32 type)
    ObjectGuid bmFallbackGuid = ObjectGuid(uint64(1337));
 // in wotlk only arena requires battlemaster guid
 #ifndef MANGOSBOT_TWO
+   // Measured with a player waiting in bracket 2: 28 bots accepted, 0 entries
+   // reached bg.log before this fix.
    ObjectGuid guid = bmFallbackGuid;
 #else
    ObjectGuid guid = isArena ? unit->GetObjectGuid() : bot->GetObjectGuid();
@@ -1001,7 +1032,12 @@ bool FreeBGJoinAction::shouldJoinBg(BattleGroundQueueTypeId queueTypeId, BattleG
 
     if (BotBattlegroundLimitReached(bgTypeId, bracketId, isArena, hasPlayers, BgCount, BracketSize,
                                     TeamId == 0 ? ACount : HCount))
+    {
+        if (hasPlayers)
+            sLog.outString("[BGDIAG] %s declined q%u bracket %u: limit reached (A=%u H=%u)",
+                    bot->GetName(), queueTypeId, bracketId, ACount, HCount);
         return false;
+    }
 
 #ifndef MANGOSBOT_ZERO
     if (isArena)
@@ -1062,11 +1098,17 @@ bool FreeBGJoinAction::shouldJoinBg(BattleGroundQueueTypeId queueTypeId, BattleG
     // do not join if BG queue is full
     if (BgCount >= BracketSize && (ACount >= TeamSize) && (HCount >= TeamSize))
     {
+        if (hasPlayers)
+            sLog.outString("[BGDIAG] %s declined q%u bracket %u: queue full (A=%u H=%u)",
+                    bot->GetName(), queueTypeId, bracketId, ACount, HCount);
         return false;
     }
 
     if (!isArena && ((ACount >= TeamSize && TeamId == 0) || (HCount >= TeamSize && TeamId == 1)))
     {
+        if (hasPlayers)
+            sLog.outString("[BGDIAG] %s declined q%u bracket %u: own side full (A=%u H=%u size=%u)",
+                    bot->GetName(), queueTypeId, bracketId, ACount, HCount, TeamSize);
         return false;
     }
 

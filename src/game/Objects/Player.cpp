@@ -20110,6 +20110,30 @@ void Player::CleanupFlagsOnTaxiPathFinished()
     RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_DISABLE_MOVE | UNIT_FLAG_TAXI_FLIGHT);
 }
 
+void Player::OnTaxiFlightEject(bool /*force*/)
+{
+    if (!IsTaxiFlying())
+        return;
+
+    // Order matters here. FlightPathMovementGenerator::Finalize calls
+    // TaxiStepFinished(), which starts the *next* leg whenever the itinerary still
+    // holds one - emptying it first is what turns "carry on" into "get off". The same
+    // clear is also what lets Finalize run the full landing cleanup, since it only
+    // stops movement, puts hostile references back online and settles PvP once
+    // GetTaxi() is empty.
+    m_taxi.ClearTaxiDestinations();
+
+    // ClearType finalises the flight generator wherever it sits on the stack rather
+    // than assuming it is on top, and Finalize then does
+    // CleanupFlagsOnTaxiPathFinished for us.
+    GetMotionMaster()->ClearType(FLIGHT_MOTION_TYPE);
+
+    // If the flight state outlived that, there was no flight generator to finalise.
+    // Clear the flags by hand rather than leave anyone marked as flying for good.
+    if (IsTaxiFlying())
+        CleanupFlagsOnTaxiPathFinished();
+}
+
 UnitMountResult Player::Mount(uint32 mount, uint32 spellId)
 {
     if (!mount)

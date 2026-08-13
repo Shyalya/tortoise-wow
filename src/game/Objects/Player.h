@@ -2524,8 +2524,13 @@ class Player final: public Unit
         void setCinematic(uint32 /*cinematic*/) {}
         // TakeQuestSourceItem: cmangos quest helper. Stub no-op.
         void TakeQuestSourceItem(uint32 /*quest_id*/, bool /*sendUpdate*/ = true) {}
-        // OnTaxiFlightEject: cmangos handler called when bot is forced off taxi.
-        void OnTaxiFlightEject(bool /*force*/ = false) {}
+        // OnTaxiFlightEject: cmangos handler called when a bot is forced off a taxi.
+        // Was a no-op stub, which meant MovementAction::UseTaxi could never end the
+        // flight it calls this to end, so a bot already in the air could not start its
+        // next hop. Out of line in Player.cpp - it needs the MotionMaster generator
+        // types. Every caller in tree passes force = true; the argument is kept for
+        // signature compatibility and has no meaning here.
+        void OnTaxiFlightEject(bool force = false);
         // GetMountInfo: cmangos returns the bot's saved mount data with Name field. Stub returns nullptr.
         struct MountInfoStub { std::string Name; };
         MountInfoStub const* GetMountInfo() const { return nullptr; }

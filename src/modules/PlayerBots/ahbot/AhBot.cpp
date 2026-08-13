@@ -108,6 +108,11 @@ void AhBot::Update()
     if (sWorld.IsStopped())
         return;
 
+    // Carry out whatever the bot thread decided on last pass. This has to come
+    // before the nextAICheckTime early-out below, or queued work would only run
+    // once every check interval instead of on the next tick.
+    RunQueuedWork();
+
     time_t now = time(0);
 
     if (now < nextAICheckTime)
@@ -189,27 +194,27 @@ void AhBot::ForceUpdate()
 
 struct SortByPricePredicate
 {
-    bool operator()(AuctionEntry* const & a, AuctionEntry* const & b) const
+    bool operator()(AuctionSnapshot const & a, AuctionSnapshot const & b) const
     {
-        if (a->startbid == b->startbid)
-            return a->buyout < b->buyout;
+        if (a.startbid == b.startbid)
+            return a.buyout < b.buyout;
 
-        return a->startbid < b->startbid;
+        return a.startbid < b.startbid;
     }
 };
 
-std::vector<AuctionEntry*> AhBot::LoadAuctions(const AuctionHouseObject::AuctionEntryMap& auctionEntryMap,
+std::vector<AuctionSnapshot> AhBot::LoadAuctions(const std::vector<AuctionSnapshot>& auctionEntryMap,
         Category*& category, int& auction)
 {
-    std::vector<AuctionEntry*> entries;
-    for (AuctionHouseObject::AuctionEntryMap::const_iterator itr = auctionEntryMap.begin();
+    std::vector<AuctionSnapshot> entries;
+    for (std::vector<AuctionSnapshot>::const_iterator itr = auctionEntryMap.begin();
             itr != auctionEntryMap.end(); ++itr)
     {
-        AuctionEntry *entry = itr->second;
-        if (IsBotAuction(entry->owner) || IsBotAuction(entry->bidder))
+        const AuctionSnapshot& entry = *itr;
+        if (IsBotAuction(entry.owner) || IsBotAuction(entry.bidder))
             continue;
 
-        Item *item = sAuctionMgr.GetAItem(entry->itemGuidLow);
+        Item *item = sAuctionMgr.GetAItem(entry.itemGuidLow);
         if (!item)
             continue;
 
@@ -230,25 +235,25 @@ std::vector<AuctionEntry*> AhBot::LoadAuctions(const AuctionHouseObject::Auction
     return entries;
 }
 
-void AhBot::FindMinPrice(const AuctionHouseObject::AuctionEntryMap& auctionEntryMap, AuctionEntry*& entry, Item*& item, uint32* minBid,
+void AhBot::FindMinPrice(const std::vector<AuctionSnapshot>& auctionEntryMap, const AuctionSnapshot& entry, Item*& item, uint32* minBid,
         uint32* minBuyout)
 {
     *minBid = 0;
     *minBuyout = 0;
-    for (AuctionHouseObject::AuctionEntryMap::const_iterator itr = auctionEntryMap.begin();
+    for (std::vector<AuctionSnapshot>::const_iterator itr = auctionEntryMap.begin();
             itr != auctionEntryMap.end(); ++itr)
     {
-        AuctionEntry *other = itr->second;
-        if (other->owner == entry->owner)
+        const AuctionSnapshot& other = *itr;
+        if (other.owner == entry.owner)
             continue;
 
-        Item *otherItem = sAuctionMgr.GetAItem(other->itemGuidLow);
+        Item *otherItem = sAuctionMgr.GetAItem(other.itemGuidLow);
         if (!otherItem || !otherItem->GetCount() || !otherItem->GetProto() || otherItem->GetProto()->ItemId != item->GetProto()->ItemId)
             continue;
 
-        uint32 startbid = other->startbid / otherItem->GetCount() * item->GetCount();
-        uint32 bid = other->bid / otherItem->GetCount() * item->GetCount();
-        uint32 buyout = other->buyout / otherItem->GetCount() * item->GetCount();
+        uint32 startbid = other.startbid / otherItem->GetCount() * item->GetCount();
+        uint32 bid = other.bid / otherItem->GetCount() * item->GetCount();
+        uint32 buyout = other.buyout / otherItem->GetCount() * item->GetCount();
 
         if (!bid && startbid && (!*minBid || *minBid > startbid))
             *minBid = startbid;
@@ -385,17 +390,17 @@ int AhBot::Answer(int auction, Category* category, ItemBag* inAuctionItems)
 
     int answered = 0;
     AuctionHouseObject* auctionHouse = sAuctionMgr.GetAuctionsMap(ahEntry);
-    const AuctionHouseObject::AuctionEntryMap& auctionEntryMap = *auctionHouse->GetAuctions();
+    std::vector<AuctionSnapshot> auctionEntryMap = auctionHouse->GetAuctionsSnapshot();
     int64 availableMoney = GetAvailableMoney(auctionIds[auction]);
 
-    std::vector<AuctionEntry*> entries = LoadAuctions(auctionEntryMap, category, auction);
+    std::vector<AuctionSnapshot> entries = LoadAuctions(auctionEntryMap, category, auction);
     sLog.outDetail("[AhBot] Answer AH %u category %s: scanning %zu entries, money=%ld",
             auctionIds[auction], category->GetName().c_str(), entries.size(), availableMoney);
 
-    for (std::vector<AuctionEntry*>::iterator itr = entries.begin(); itr != entries.end(); ++itr)
+    for (std::vector<AuctionSnapshot>::const_iterator itr = entries.begin(); itr != entries.end(); ++itr)
     {
-        AuctionEntry *entry = *itr;
-        uint32 owner = entry->owner;
+        const AuctionSnapshot& snap = *itr;
+        uint32 owner = snap.owner;
         if (owner == sAhBotConfig.guid)
             continue;
 
@@ -403,28 +408,28 @@ int AhBot::Answer(int auction, Category* category, ItemBag* inAuctionItems)
         if (!account)
         {
             sLog.outDetail("[AhBot] Skipping entry %u (owner guid=%u): account lookup failed — owner not in DB?",
-                    entry->Id, owner);
+                    snap.Id, owner);
             continue;
         }
         if (sPlayerbotAIConfig.IsInRandomAccountList(account))
         {
             sLog.outDetail("[AhBot] Skipping entry %u (owner guid=%u account=%u): owner is a bot account",
-                    entry->Id, owner, account);
+                    snap.Id, owner, account);
             continue;
         }
 
-        Item *item = sAuctionMgr.GetAItem(entry->itemGuidLow);
+        Item *item = sAuctionMgr.GetAItem(snap.itemGuidLow);
         if (!item || !item->GetCount())
         {
             sLog.outString("[AhBot] Skipping entry %u from real player (guid=%u account=%u): item not found in aitem map",
-                    entry->Id, owner, account);
+                    snap.Id, owner, account);
             continue;
         }
 
         const ItemPrototype* proto = item->GetProto();
         sLog.outString("[AhBot] Evaluating %s (x%d) entry=%u from real player (guid=%u account=%u) AH=%u startbid=%u buyout=%u",
-                proto->Name1.c_str(), item->GetCount(), entry->Id, owner, account, auctionIds[auction],
-                entry->startbid, entry->buyout);
+                proto->Name1.c_str(), item->GetCount(), snap.Id, owner, account, auctionIds[auction],
+                snap.startbid, snap.buyout);
 
         std::vector<uint32> items = availableItems.Get(category);
         if (std::find(items.begin(), items.end(), proto->ItemId) == items.end())
@@ -464,9 +469,9 @@ int AhBot::Answer(int auction, Category* category, ItemBag* inAuctionItems)
         uint32 bidPrice = item->GetCount() * price;
         uint32 buyoutPrice = item->GetCount() * urand(price, 4 * price / 3);
 
-        uint32 curPrice = entry->bid;
-        if (!curPrice) curPrice = entry->startbid;
-        if (!curPrice) curPrice = entry->buyout;
+        uint32 curPrice = snap.bid;
+        if (!curPrice) curPrice = snap.startbid;
+        if (!curPrice) curPrice = snap.buyout;
 
         uint32 bidder = GetRandomBidder(auctionIds[auction]);
         if (!bidder)
@@ -479,7 +484,7 @@ int AhBot::Answer(int auction, Category* category, ItemBag* inAuctionItems)
         {
             sLog.outString("[AhBot] SKIP %s (x%d): listing price %u > bot max price %u (price/unit=%u)",
                     proto->Name1.c_str(), item->GetCount(), curPrice, buyoutPrice, price);
-            CheckSendMail(bidder, buyoutPrice, entry);
+            CheckSendMail(bidder, buyoutPrice, snap);
             continue;
         }
 
@@ -491,25 +496,25 @@ int AhBot::Answer(int auction, Category* category, ItemBag* inAuctionItems)
         }
 
         uint32 minBid = 0, minBuyout = 0;
-        FindMinPrice(auctionEntryMap, entry, item, &minBid, &minBuyout);
+        FindMinPrice(auctionEntryMap, snap, item, &minBid, &minBuyout);
 
-        if (minBid && entry->bid && minBid < entry->bid)
+        if (minBid && snap.bid && minBid < snap.bid)
         {
             sLog.outString("[AhBot] SKIP %s (x%d): current bid %u > cheaper listing %u (minBid)",
-                    proto->Name1.c_str(), item->GetCount(), entry->bid, minBid);
+                    proto->Name1.c_str(), item->GetCount(), snap.bid, minBid);
             continue;
         }
 
-        if (minBid && entry->startbid && minBid < entry->startbid)
+        if (minBid && snap.startbid && minBid < snap.startbid)
         {
             sLog.outString("[AhBot] SKIP %s (x%d): startbid %u > cheaper listing %u (minBid)",
-                    proto->Name1.c_str(), item->GetCount(), entry->startbid, minBid);
-            CheckSendMail(bidder, minBid, entry);
+                    proto->Name1.c_str(), item->GetCount(), snap.startbid, minBid);
+            CheckSendMail(bidder, minBid, snap);
             continue;
         }
 
         double priceLevel = (double)curPrice / (double)buyoutPrice;
-        uint32 buytime = GetBuyTime(entry->Id, proto->ItemId, auctionIds[auction], category, priceLevel);
+        uint32 buytime = GetBuyTime(snap.Id, proto->ItemId, auctionIds[auction], category, priceLevel);
         if (time(0) < buytime)
         {
             sLog.outString("[AhBot] SKIP %s (x%d): buy delay not expired, will act in %ld seconds",
@@ -517,42 +522,26 @@ int AhBot::Answer(int auction, Category* category, ItemBag* inAuctionItems)
             continue;
         }
 
-        entry->bidder = bidder;
-        entry->bid = curPrice + urand(1, 1 + bidPrice / 10);
+        // Do not complete the purchase here. This runs on the bot thread, and
+        // paying the seller reaches into mail, their session and possibly their
+        // live Player object. Record the decision; the world thread executes it
+        // from AhBot::Update().
+        PendingPurchase pending;
+        pending.auctionId   = snap.Id;
+        pending.bidder      = bidder;
+        pending.bidAmount   = curPrice + urand(1, 1 + bidPrice / 10);
+        pending.unitPrice   = price;
+        pending.minBuyout   = minBuyout;
+        pending.houseIndex  = auction;
+        {
+            std::lock_guard<std::mutex> g(queuedWorkMutex);
+            queuedPurchases.push_back(pending);
+        }
+
         availableMoney -= curPrice;
 
-        updateMarketPrice(item->GetProto()->ItemId, entry->buyout / item->GetCount(), auctionIds[auction]);
-
-        if ((entry->buyout && (entry->bid >= entry->buyout || 100 * (entry->buyout - entry->bid) / price < 25)) &&
-                !(minBuyout && entry->buyout && minBuyout < entry->buyout))
-        {
-            entry->bid = entry->buyout;
-            sLog.outString("[AhBot] Bought: %dx %s on AH %u for %u (bidder guid=%u)",
-                    item->GetCount(), item->GetProto()->Name1.c_str(), auctionIds[auction], entry->buyout, bidder);
-        }
-        else
-        {
-            sLog.outString("[AhBot] Bought (at bid): %dx %s on AH %u for %u (bidder guid=%u)",
-                    item->GetCount(), item->GetProto()->Name1.c_str(), auctionIds[auction], entry->bid, bidder);
-        }
-
-        // Pay the seller immediately and finalize the auction.
-        // If the item is an upgrade for the bidder bot, equip it directly in the DB.
-        // Otherwise discard it — letting items go through the normal mail/login path
-        // causes inventory corruption when bot inventories are full.
-        uint32 itemGuidLow = entry->itemGuidLow;
-        sAuctionMgr.SendAuctionSuccessfulMail(entry);
-        if (!TryEquipItem(entry->bidder, itemGuidLow, proto))
-            CharacterDatabase.PExecute("DELETE FROM item_instance WHERE guid='%u'", itemGuidLow);
-        sAuctionMgr.RemoveAItem(itemGuidLow);
-        delete item;
-        AddToHistory(entry, AHBOT_WON_BID);
-        entry->DeleteFromDB();
-        auctionHouse->RemoveAuction(entry);
-        delete entry;
-
-        CharacterDatabase.PExecute("DELETE FROM ahbot_history WHERE item = '%u' AND won = 4 AND auction_house = '%u' ",
-                proto->ItemId, factions[auctionIds[auction]]);
+        sLog.outString("[AhBot] Queued buy: %dx %s on AH %u for %u (bidder guid=%u)",
+                item->GetCount(), proto->Name1.c_str(), auctionIds[auction], pending.bidAmount, bidder);
 
         answered++;
     }
@@ -886,19 +875,21 @@ void AhBot::Expire(int auction)
 
     AuctionHouseObject* auctionHouse = sAuctionMgr.GetAuctionsMap(ahEntry);
 
-    AuctionHouseObject::AuctionEntryMap const& auctions = *auctionHouse->GetAuctions();
-    AuctionHouseObject::AuctionEntryMap::const_iterator itr = auctions.begin();
-
+    // This one writes expireTime, so it needs the live entries rather than a
+    // snapshot. Each iteration is a cheap set lookup, so just hold the lock
+    // across the whole loop.
     int count = 0;
-    while (itr != auctions.end())
     {
-        if (IsBotAuction(itr->second->owner))
+        AuctionHouseObject::Guard g(auctionHouse->GetLock());
+        AuctionHouseObject::AuctionEntryMapBounds bounds = auctionHouse->GetAuctionsBounds_locked();
+        for (AuctionHouseObject::AuctionEntryMap::iterator itr = bounds.first; itr != bounds.second; ++itr)
         {
-            itr->second->expireTime = sWorld.GetGameTime();
-            count++;
+            if (IsBotAuction(itr->second->owner))
+            {
+                itr->second->expireTime = sWorld.GetGameTime();
+                count++;
+            }
         }
-
-        ++itr;
     }
 
     sLog.outString("%d auctions marked as expired in auction %d", count, auctionIds[auction]);
@@ -914,9 +905,8 @@ void AhBot::PrintStats(int auction)
         return;
 
     AuctionHouseObject* auctionHouse = sAuctionMgr.GetAuctionsMap(ahEntry);
-    AuctionHouseObject::AuctionEntryMap const& auctions = *auctionHouse->GetAuctions();
 
-    sLog.outString("%lu auctions available on auction house %d", auctions.size(), auctionIds[auction]);
+    sLog.outString("%u auctions available on auction house %d", auctionHouse->GetCount(), auctionIds[auction]);
 }
 
 void AhBot::AddToHistory(AuctionEntry* entry, uint32 won)
@@ -1021,14 +1011,13 @@ uint32 AhBot::GetAvailableMoney(uint32 auctionHouse)
         result += (now - lastBuyTime) / 3600 / 24 * sAhBotConfig.alwaysAvailableMoney;
     }
 
-    AuctionHouseObject::AuctionEntryMap const& auctionEntryMap = *sAuctionMgr.GetAuctionsMap(ahEntry)->GetAuctions();
-    for (AuctionHouseObject::AuctionEntryMap::const_iterator itr = auctionEntryMap.begin(); itr != auctionEntryMap.end(); ++itr)
+    std::vector<AuctionSnapshot> auctionEntryMap = sAuctionMgr.GetAuctionsMap(ahEntry)->GetAuctionsSnapshot();
+    for (std::vector<AuctionSnapshot>::const_iterator itr = auctionEntryMap.begin(); itr != auctionEntryMap.end(); ++itr)
     {
-        AuctionEntry *entry = itr->second;
-        if (!IsBotAuction(entry->bidder))
+        if (!IsBotAuction(itr->bidder))
             continue;
 
-        result -= entry->bid;
+        result -= itr->bid;
     }
 
     result += (data[AHBOT_WON_PLAYER] - data[AHBOT_WON_SELF]);
@@ -1278,56 +1267,153 @@ bool AhBot::IsUsedBySkill(const ItemPrototype* proto, uint32 skillId)
     return false;
 }
 
-void AhBot::CheckSendMail(uint32 bidder, uint32 price, AuctionEntry *entry)
+void AhBot::CheckSendMail(uint32 bidder, uint32 price, const AuctionSnapshot& entry)
 {
     if (!sAhBotConfig.sendmail)
         return;
 
-    time_t entryTime = GetTime("entry", entry->Id, entry->auctionHouseEntry->houseId, AHBOT_SENDMAIL);
+    time_t entryTime = GetTime("entry", entry.Id, entry.houseId, AHBOT_SENDMAIL);
     if (entryTime > time(0))
         return;
 
-    const AuctionHouseEntry* ahEntry = sAuctionHouseStore.LookupEntry(entry->auctionHouseEntry->houseId);
+    const AuctionHouseEntry* ahEntry = sAuctionHouseStore.LookupEntry(entry.houseId);
     if (!ahEntry)
         return;
 
     AuctionHouseObject* auctionHouse = sAuctionMgr.GetAuctionsMap(ahEntry);
-    const AuctionHouseObject::AuctionEntryMap& auctionEntryMap = *auctionHouse->GetAuctions();
-    for (AuctionHouseObject::AuctionEntryMap::const_iterator itr = auctionEntryMap.begin(); itr != auctionEntryMap.end(); ++itr)
+    std::vector<AuctionSnapshot> auctionEntryMap = auctionHouse->GetAuctionsSnapshot();
+    for (std::vector<AuctionSnapshot>::const_iterator itr = auctionEntryMap.begin(); itr != auctionEntryMap.end(); ++itr)
     {
-        AuctionEntry *otherEntry = itr->second;
-        if (otherEntry->owner == entry->owner && otherEntry->Id != entry->Id && otherEntry->itemTemplate == entry->itemTemplate)
+        const AuctionSnapshot& otherEntry = *itr;
+        if (otherEntry.owner == entry.owner && otherEntry.Id != entry.Id && otherEntry.itemTemplate == entry.itemTemplate)
         {
-            time_t otherEntryTime = GetTime("entry", otherEntry->Id, entry->auctionHouseEntry->houseId, AHBOT_SENDMAIL);
+            time_t otherEntryTime = GetTime("entry", otherEntry.Id, entry.houseId, AHBOT_SENDMAIL);
             if (otherEntryTime > time(0))
                 return;
         }
     }
 
+    // Sending resolves the receiver through ObjectAccessor and can reach their
+    // live Player, so hand it to the world thread rather than doing it here.
+    PendingProposition proposition;
+    proposition.auctionId   = entry.Id;
+    proposition.owner       = entry.owner;
+    proposition.itemGuidLow = entry.itemGuidLow;
+    proposition.bidder      = bidder;
+    proposition.price       = price;
+    proposition.houseId     = entry.houseId;
+    proposition.expireTime  = entry.expireTime;
+
+    std::lock_guard<std::mutex> g(queuedWorkMutex);
+    queuedPropositions.push_back(proposition);
+}
+
+void AhBot::RunQueuedWork()
+{
+    std::vector<PendingPurchase> purchases;
+    std::vector<PendingProposition> propositions;
+    {
+        std::lock_guard<std::mutex> g(queuedWorkMutex);
+        if (queuedPurchases.empty() && queuedPropositions.empty())
+            return;
+        purchases.swap(queuedPurchases);
+        propositions.swap(queuedPropositions);
+    }
+
+    for (std::vector<PendingPurchase>::const_iterator i = purchases.begin(); i != purchases.end(); ++i)
+        ExecutePurchase(*i);
+
+    for (std::vector<PendingProposition>::const_iterator i = propositions.begin(); i != propositions.end(); ++i)
+        ExecuteProposition(*i);
+}
+
+void AhBot::ExecutePurchase(const PendingPurchase& p)
+{
+    const AuctionHouseEntry* ahEntry = sAuctionHouseStore.LookupEntry(auctionIds[p.houseIndex]);
+    if (!ahEntry)
+        return;
+
+    AuctionHouseObject* auctionHouse = sAuctionMgr.GetAuctionsMap(ahEntry);
+    if (!auctionHouse)
+        return;
+
+    // The seller may have cancelled, or the auction may have expired or sold,
+    // between the bot deciding and us getting here.
+    AuctionEntry* entry = auctionHouse->GetAuction(p.auctionId);
+    if (!entry)
+        return;
+
+    Item* item = sAuctionMgr.GetAItem(entry->itemGuidLow);
+    if (!item || !item->GetCount())
+        return;
+
+    ItemPrototype const* proto = item->GetProto();
+    if (!proto)
+        return;
+
+    entry->bidder = p.bidder;
+    entry->bid = p.bidAmount;
+
+    if ((entry->buyout && (entry->bid >= entry->buyout || 100 * (entry->buyout - entry->bid) / std::max(p.unitPrice, 1u) < 25)) &&
+            !(p.minBuyout && entry->buyout && p.minBuyout < entry->buyout))
+    {
+        entry->bid = entry->buyout;
+        sLog.outString("[AhBot] Bought: %dx %s on AH %u for %u (bidder guid=%u)",
+                item->GetCount(), proto->Name1.c_str(), auctionIds[p.houseIndex], entry->buyout, p.bidder);
+    }
+    else
+    {
+        sLog.outString("[AhBot] Bought (at bid): %dx %s on AH %u for %u (bidder guid=%u)",
+                item->GetCount(), proto->Name1.c_str(), auctionIds[p.houseIndex], entry->bid, p.bidder);
+    }
+
+    updateMarketPrice(proto->ItemId, entry->buyout / item->GetCount(), auctionIds[p.houseIndex]);
+
+    // Pay the seller immediately and finalize the auction.
+    // If the item is an upgrade for the bidder bot, equip it directly in the DB.
+    // Otherwise discard it - letting items go through the normal mail/login path
+    // causes inventory corruption when bot inventories are full.
+    uint32 itemGuidLow = entry->itemGuidLow;
+    sAuctionMgr.SendAuctionSuccessfulMail(entry);
+    if (!TryEquipItem(entry->bidder, itemGuidLow, proto))
+        CharacterDatabase.PExecute("DELETE FROM item_instance WHERE guid='%u'", itemGuidLow);
+    sAuctionMgr.RemoveAItem(itemGuidLow);
+    delete item;
+    AddToHistory(entry, AHBOT_WON_BID);
+    entry->DeleteFromDB();
+    auctionHouse->RemoveAuction(entry);
+    delete entry;
+
+    CharacterDatabase.PExecute("DELETE FROM ahbot_history WHERE item = '%u' AND won = 4 AND auction_house = '%u' ",
+            proto->ItemId, factions[auctionIds[p.houseIndex]]);
+}
+
+void AhBot::ExecuteProposition(const PendingProposition& p)
+{
+    Item* item = sAuctionMgr.GetAItem(p.itemGuidLow);
+    if (!item || !item->GetProto())
+        return;
+
+    std::string name;
+    if (!sObjectMgr.GetPlayerNameByGUID(ObjectGuid(HIGHGUID_PLAYER, p.bidder), name))
+        return;
+
     std::ostringstream body;
     body << "Hello,\n";
     body << "\n";
-    Item *item = sAuctionMgr.GetAItem(entry->itemGuidLow);
-    if (!item)
-        return;
     body << "I see you posted " << ChatHelper::formatItem(item, item->GetCount());
     body << " to the AH and I really need that at the moment. Could you lower your price at least to ";
-    body << ChatHelper::formatMoney(PricingStrategy::RoundPrice(price)) << "? I'll buy it then.\n";
+    body << ChatHelper::formatMoney(PricingStrategy::RoundPrice(p.price)) << "? I'll buy it then.\n";
     body << "\n";
     body << "Regards,\n";
-
-    std::string name;
-    if (!sObjectMgr.GetPlayerNameByGUID(ObjectGuid(HIGHGUID_PLAYER, bidder), name))
-        return;
-
     body << name << "\n";
 
     std::ostringstream title; title << "AH Proposition: " << item->GetProto()->Name1.c_str();
     MailDraft draft(title.str(), body.str());
-    ObjectGuid receiverGuid(HIGHGUID_PLAYER, entry->owner);
-    draft.SendMailTo(MailReceiver(receiverGuid), MailSender(MAIL_NORMAL, bidder));
+    ObjectGuid receiverGuid(HIGHGUID_PLAYER, p.owner);
+    draft.SendMailTo(MailReceiver(receiverGuid), MailSender(MAIL_NORMAL, p.bidder));
 
-    SetTime("entry", entry->Id, entry->auctionHouseEntry->houseId, AHBOT_SENDMAIL, entry->expireTime);
+    SetTime("entry", p.auctionId, p.houseId, AHBOT_SENDMAIL, p.expireTime);
 }
 
 void AhBot::Dump()

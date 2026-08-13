@@ -73,6 +73,16 @@ bool BgActiveTrigger::IsActive()
 {
     if (bot->InBattleGround())
     {
+        // [BGDIAG2] temporary: is this trigger evaluated at all, and what does
+        // the battleground think its own state is?
+        if (urand(0, 200) == 0)
+        {
+            BattleGround* diagBg = bot->GetBattleGround();
+            sLog.outString("[BGDIAG2] %s active-trigger: bg=%s status=%d",
+                    bot->GetName(), diagBg ? "yes" : "NULL",
+                    diagBg ? (int)diagBg->GetStatus() : -1);
+        }
+
         if (bot->GetBattleGround() && bot->GetBattleGround()->GetStatus() == STATUS_IN_PROGRESS)
             return true;
     }

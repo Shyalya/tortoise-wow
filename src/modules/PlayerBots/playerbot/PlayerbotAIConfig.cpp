@@ -263,6 +263,10 @@ bool PlayerbotAIConfig::Initialize()
     maxRandomBotReviveTime = config.GetIntDefault("AiPlayerbot.MaxRandomReviveTime", 300);
     enableRandomTeleports = config.GetBoolDefault("AiPlayerbot.EnableRandomTeleports", true);
 
+    // While nobody real is waiting, bots keep at most this many instances of one
+    // battleground type and bracket running. Was hardcoded to 1.
+    bgMaxInstancesPerBracket = config.GetIntDefault("AiPlayerbot.BgMaxInstancesPerBracket", 1);
+
     // "bgTypeId:botsPerTeam", comma separated. 1 Alterac, 2 Warsong, 3 Arathi,
     // 4 arena, 5 Sunnyglade on this realm - check battleground_template before
     // copying these numbers anywhere else.

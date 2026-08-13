@@ -400,7 +400,10 @@ namespace ai
         void generateNpcNodes();                  //Creates node at innkeepers, flightmasters, spirithealers and bosses.
         void generateStartNodes();                //Create node at lvl1 players spawn.
         void generateAreaTriggerNodes();          //Create node at area trigger (dungeon portals/teleports) and also link the entry and exit.
-        void makeDockNode(TravelNode* node, WorldPosition pos, std::string dockName); //Create helper node to enter/exit transport.
+        //Create helper node to enter/exit transport. transportEntry is the vehicle's
+        //gameobject entry and becomes the link's pathObject; passing 0 leaves the hop
+        //unresolvable and forces a whole-map gameobject scan at boarding time.
+        void makeDockNode(TravelNode* node, WorldPosition pos, std::string dockName, uint32 transportEntry);
         void generateTransportNodes();            //Create node at transport (boats/zepelins/elevators) and also create the path they move.
         void generateZoneMeanNodes();             //Create node at zone mean (the avg location of all objects and creatures of a certain area/zone)
         void generatePortalNodes();               //Create node at static portal (ie. dalaran->ironforge) and the desination of teleport spell (ie. teleport to ironforge)

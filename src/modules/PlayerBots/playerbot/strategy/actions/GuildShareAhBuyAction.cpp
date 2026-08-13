@@ -228,7 +228,11 @@ bool GuildShareAhBuyAction::Execute(Event& event)
     AuctionCandidate bestCandidate = { nullptr, 0, 0, 0, false };
     uint32 bestPricePerItem = std::numeric_limits<uint32>::max();
 
-    AuctionHouseObject::AuctionEntryMapBounds bounds = auctionHouse->GetAuctionsBounds();
+    // Runs on the world thread, but the ahbot thread adds and removes auctions
+    // from underneath us, so the iteration needs the lock. It is a short scan
+    // of map lookups only - no DB, no mail - so holding it is cheap.
+    AuctionHouseObject::Guard ahGuard(auctionHouse->GetLock());
+    AuctionHouseObject::AuctionEntryMapBounds bounds = auctionHouse->GetAuctionsBounds_locked();
     for (auto itr = bounds.first; itr != bounds.second; ++itr)
     {
         AuctionEntry* auction = itr->second;

@@ -2164,6 +2164,13 @@ void PlayerbotAI::DoNextAction(bool min)
 
     bool minimal = !AllowActivity();
 
+    // [BGDIAG2] temporary: bots enter a battleground and then log no events at
+    // all. Sampled instead of throttled so it needs no extra state.
+    if (bot->InBattleGround() && urand(0, 400) == 0)
+        sLog.outString("[BGDIAG2] %s map %u: DoNextAction reached, minimal=%d strat=%s",
+                bot->GetName(), bot->GetMapId(), minimal ? 1 : 0,
+                HasStrategy("battleground", BotState::BOT_STATE_NON_COMBAT) ? "yes" : "no");
+
     SC_PHASE("DoNextAction.engineDoNextAction", bot ? bot->GetName() : "(null)");
     currentEngine->DoNextAction(NULL, 0, (minimal || min), bot->IsTaxiFlying());
     SC_PHASE("DoNextAction.afterEngine", bot ? bot->GetName() : "(null)");

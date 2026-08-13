@@ -54,6 +54,7 @@ bool IsPlayerHardcore(uint32 lowGuid)
 
 bool AuctionHouseObject::RemoveAuction(AuctionEntry* entry)
 {
+    Guard g(m_auctionsLock);
     // Clean up multimaps before final erasure
     auto bounds = OrderedAuctionMap.equal_range(entry->buyout);
     for (AuctionMultiMap::iterator itr = bounds.first; itr != bounds.second; ++itr)
@@ -83,6 +84,7 @@ bool AuctionHouseObject::RemoveAuction(AuctionEntry* entry)
 
 void AuctionHouseObject::RemoveAllAuctions(Player* player)
 {
+    Guard g(m_auctionsLock);
     std::vector<AuctionEntry*> deletableEntries;
     auto bounds = AccountAuctionMap.equal_range(player->GetSession()->GetAccountId());
     for (auto itr = bounds.first; itr != bounds.second; ++itr)
@@ -103,10 +105,41 @@ void AuctionHouseObject::RemoveAllAuctions(Player* player)
 
 void AuctionHouseObject::AddAuction(AuctionEntry *ah)
 {
+    Guard g(m_auctionsLock);
     MANGOS_ASSERT(ah);
     AuctionsMap[ah->Id] = ah;
     OrderedAuctionMap.emplace(std::pair<uint32, AuctionEntry*>(ah->buyout, ah));
     AccountAuctionMap.emplace(std::pair<uint32, AuctionEntry*>(ah->ownerAccount, ah));
+}
+
+std::vector<AuctionSnapshot> AuctionHouseObject::GetAuctionsSnapshot() const
+{
+    Guard g(m_auctionsLock);
+
+    std::vector<AuctionSnapshot> out;
+    out.reserve(AuctionsMap.size());
+    for (const auto& itr : AuctionsMap)
+    {
+        AuctionEntry const* e = itr.second;
+        if (!e)
+            continue;
+
+        AuctionSnapshot s;
+        s.Id            = e->Id;
+        s.itemGuidLow   = e->itemGuidLow;
+        s.itemTemplate  = e->itemTemplate;
+        s.owner         = e->owner;
+        s.ownerAccount  = e->ownerAccount;
+        s.startbid      = e->startbid;
+        s.bid           = e->bid;
+        s.buyout        = e->buyout;
+        s.bidder        = e->bidder;
+        s.houseId       = e->auctionHouseEntry ? e->auctionHouseEntry->houseId : 0;
+        s.itemCount     = e->itemCount;
+        s.expireTime    = e->expireTime;
+        out.push_back(s);
+    }
+    return out;
 }
 
 AuctionHouseMgr::AuctionHouseMgr()
@@ -539,6 +572,7 @@ void AuctionHouseMgr::LoadAuctions()
 
 void AuctionHouseMgr::AddAItem(Item* it)
 {
+    std::lock_guard<std::mutex> g(m_itemsLock);
     MANGOS_ASSERT(it);
     MANGOS_ASSERT(mAitems.find(it->GetGUIDLow()) == mAitems.end());
     mAitems[it->GetGUIDLow()] = it;
@@ -546,6 +580,7 @@ void AuctionHouseMgr::AddAItem(Item* it)
 
 bool AuctionHouseMgr::RemoveAItem(uint32 id)
 {
+    std::lock_guard<std::mutex> g(m_itemsLock);
     ItemMap::iterator i = mAitems.find(id);
     if (i == mAitems.end())
         return false;
@@ -678,6 +713,7 @@ AuctionHouseEntry const* AuctionHouseMgr::GetAuctionHouseEntry(uint32 factionTem
 
 void AuctionHouseObject::Update()
 {
+    Guard g(m_auctionsLock);
     time_t curTime = sWorld.GetGameTime();
     ///- Handle expired auctions
     AuctionEntryMap::iterator next;
@@ -733,6 +769,7 @@ void AuctionHouseObject::Update()
 
 void AuctionHouseObject::BuildListBidderItems(WorldPacket& data, Player* player, uint32 listfrom, uint32& count, uint32& totalcount)
 {
+    Guard g(m_auctionsLock);
     for (const auto& itr : AuctionsMap)
     {
         AuctionEntry* auctionEntry = itr.second;
@@ -749,6 +786,7 @@ void AuctionHouseObject::BuildListBidderItems(WorldPacket& data, Player* player,
 
 void AuctionHouseObject::BuildListOwnerItems(WorldPacket& data, Player* player, uint32 listfrom, uint32& count, uint32& totalcount)
 {
+    Guard g(m_auctionsLock);
     auto bounds = AccountAuctionMap.equal_range(player->GetSession()->GetAccountId());
     for (auto itr = bounds.first; itr != bounds.second; ++itr)
     {
@@ -767,6 +805,7 @@ void AuctionHouseObject::BuildListAuctionItems(WorldPacket& data, Player* player
         AuctionHouseClientQuery const& query,
         uint32& count, uint32& totalcount)
 {
+    Guard g(m_auctionsLock);
     // Happening often, and easy to deal with
     if (query.auctionMainCategory == 0xffffffff && query.auctionSubCategory == 0xffffffff && query.auctionSlotID == 0xffffffff &&
         query.quality == 0xffffffff && query.levelmin == 0x00 && query.levelmax == 0x00 && query.usable == 0x00 && query.wsearchedname.empty())

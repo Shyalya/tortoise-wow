@@ -295,7 +295,19 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
     combatEngine->addStrategies("mount", NULL);
     combatEngine->addStrategy("avoid mobs");
 
-    if (!player->InBattleGround())
+    // A battleground is precisely where "pvp" is needed: it is the strategy
+    // whose "enemy player near" trigger lets the bot take an enemy player as a
+    // target at all, and ChooseTargetAction asks for it by name. Excluding it
+    // here left bots standing on their spawn with no way to acquire anyone, and
+    // took "default" - the baseline combat behaviour - with it. Measured before
+    // this change: ten bots held identical coordinates for six minutes inside a
+    // running match, and no [BATTLEGROUND] honor had been recorded since 08-10.
+    // "duel" is the one that genuinely has no business in a battleground.
+    if (player->InBattleGround())
+    {
+        combatEngine->addStrategies("racials", "default", "pvp", NULL);
+    }
+    else
     {
         combatEngine->addStrategies("racials", "default", "duel", "pvp", NULL);
     }

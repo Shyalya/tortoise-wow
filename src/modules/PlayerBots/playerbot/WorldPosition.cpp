@@ -570,8 +570,14 @@ std::set<GenericTransport*> WorldPosition::getTransports(uint32 entry)
 
     if (transports.empty() || !entry) //Elevators&rams
     {
+        // gopair->first is a bare spawn id, not an ObjectGuid. Handing it over
+        // straight compiled - ObjectGuid has a converting constructor from uint64 -
+        // but produced a guid whose high bits are 0 instead of HIGHGUID_GAMEOBJECT,
+        // so GetGameObject could never match it and this branch always came back
+        // empty. Built properly it needs the entry too, which is gopair->second.id.
         for (auto gopair : getGameObjectsNear(0.0f, entry))
-            if (GameObject* go = getMap(getFirstInstanceId())->GetGameObject(gopair->first))
+            if (GameObject* go = getMap(getFirstInstanceId())->GetGameObject(
+                    ObjectGuid(HIGHGUID_GAMEOBJECT, gopair->second.id, gopair->first)))
                 if (GenericTransport* transport = dynamic_cast<GenericTransport*>(go))
                     transports.insert(transport);
     }
