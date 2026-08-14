@@ -21,3 +21,5 @@ env.md
 build.log
 racechange.log
 *.log
+logs/bot_events.csv
+logs/deaths.csv
