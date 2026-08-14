@@ -2714,7 +2714,19 @@ bool BGTactics::Execute(Event& event)
 #endif
 
     // disable buffin during BG to save mana
-    if (bg->GetStatus() == STATUS_IN_PROGRESS)
+    //
+    // Only fire this when "buff" is actually still present. ChangeStrategy()
+    // routes to Engine::Init() on this exact non-combat engine - the one
+    // currently mid-iteration through its own action queue right here in
+    // BGTactics::Execute() - and Init() starts with Reset(), which drains
+    // and deletes every queued action. Calling this unconditionally on every
+    // tick silently wiped the rest of the queue (move to objective, select
+    // objective, etc.) out from under the very loop that was iterating it,
+    // the instant any BGTactics action ran - so a bot whose first action
+    // that tick (eg. check flag) failed had nothing left to fall back to,
+    // every tick, forever. Gating on HasStrategy makes the wipe a one-time
+    // cost instead of a per-tick one.
+    if (bg->GetStatus() == STATUS_IN_PROGRESS && ai->HasStrategy("buff", BotState::BOT_STATE_NON_COMBAT))
         ai->ChangeStrategy("-buff", BotState::BOT_STATE_NON_COMBAT);
 
     std::vector<BattleBotPath*> const* vPaths;

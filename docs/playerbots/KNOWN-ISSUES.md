@@ -12,7 +12,9 @@ confirmed live, not just compiled clean.
 
 ## OPEN
 
-### Bots freeze inside battlegrounds
+### ~~Bots freeze inside battlegrounds~~ — FIXED 2026-08-14, see FIXED table below
+Full investigation narrative kept here since it's the reference trail for how the
+root cause was actually found (several ruled-out theories, then the real one).
 **Symptom:** bots that successfully queue and enter a BG stop running AI entirely.
 Within ~15 minutes they sit on identical coordinates with identical health.
 **Status:** root cause not found. Ruled out so far (each with live evidence):
@@ -87,6 +89,28 @@ player, ~10+ minutes in.
   specifically for bots with `bot->InBattleGround()==true`, since that's the one
   variable that flips exactly when the freeze begins.
 
+**ROOT CAUSE FOUND AND FIXED, 2026-08-14 (moved to FIXED section below).** Added
+temporary `[BGDIAG3]` instrumentation directly inside `Engine::DoNextAction()`'s
+action-processing loop (queue size before/after `PushDefaultActions`, per-basket
+useful/possible/executed verdicts, queue size at the end of every iteration). Live
+trace on a real WSG/AB match showed the exact mechanism: `queue.Size()` would drop
+from a healthy N (8-9 items) straight to 0 in a single iteration, immediately after
+`check flag` (backed by `BGTactics::atFlag()`/`BGTactics::Execute()`) ran - even
+though other actions failing in the same loop (`check objective`, `emote`) did not
+wipe the queue. Root cause: `BGTactics::Execute()` - the single function backing
+every BG action name (`check flag`, `check objective`, `move to objective`, `select
+objective`, `protect fc`, `use buff`, `move to start`) - unconditionally calls
+`ai->ChangeStrategy("-buff", BotState::BOT_STATE_NON_COMBAT)` on **every
+invocation**, with no check for whether "buff" is already removed. `ChangeStrategy`
+routes to `Engine::ChangeStrategy()` on the exact non-combat engine that is
+*currently mid-iteration through its own action queue, from inside this very call*,
+and ends by calling `Init()`, which starts with `Reset()` - a `while` loop that
+drains and deletes every item in `queue`. So every tick, the first BGTactics action
+that runs wipes out every other queued action (the movement/objective fallbacks a
+failed `check flag` should fall through to) before it even evaluates whether the
+flag is in range - and since the same trigger keeps re-firing the same high-relevance
+`check flag` basket every tick, this repeated indefinitely.
+
 ### Bots appearing ungeared in battlegrounds
 **Symptom:** user-reported — bots showing up in BGs without proper gear.
 **Investigated 2026-08-13:** no config switch literally named "Create Gear on Level
@@ -129,6 +153,7 @@ subclass, not the one-line registration used for the other trigger-tiering wins.
 
 | Fix | Commit | Verified live? |
 |---|---|---|
+| **Bots froze completely inside battlegrounds.** `BGTactics::Execute()` (backs every BG action name) unconditionally called `ai->ChangeStrategy("-buff", BOT_STATE_NON_COMBAT)` every invocation with no idempotency check — this re-entrantly called `Engine::Init()`→`Reset()` on the *same* non-combat engine currently mid-iteration through its own action queue, draining every other queued action (movement/objective fallbacks) out from under the loop the instant any BG action ran. Gated the call on `HasStrategy("buff", ...)` so it only fires once. | pending commit (see `strategy/actions/BattleGroundTactics.cpp:2716-2729`) | **Yes** — post-deploy: bot DB positions went from identical-to-the-thousandth frozen clusters to fully unique/spread coordinates; `bot_events.csv` went from zero logged actions for the whole match to continuous `CheckMountStateAction` position changes and multiple real `AutoReleaseSpiritAction` combat deaths |
 | BG queue join used real Battlemaster guid when cached, failing a silent proximity check and drifting the bot-count tracker ahead of the real queue | `74f8c95` (superseded local `5d87e53`) | Yes — 28→194 queue joins in 11min, both brackets filled |
 | `AiFactory::AddDefaultCombatStrategies` had an inverted `InBattleGround()` check, so bots got zero combat strategies while actually in a BG | `6fdc731` | Yes (fix confirmed correct; did not resolve the separate freeze bug) |
 | Blood Ring arena had no way to cap bots out (per-team cap ignored for arenas) — bots drained into it, its matches never ended, starving WSG/AB of bot pop (217→12 WSG matches/day) | `04fe310` | Not yet independently re-measured post-merge |
