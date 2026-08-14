@@ -130,22 +130,10 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
     bool actionExecuted = false;
     ActionBasket* basket = NULL;
 
-    // [BGDIAG3] temporary: [BGDIAG2] confirmed DoNextAction is reached with
-    // minimal=0/strat=yes for frozen BG bots, but bot_events.csv shows zero
-    // actions ever execute after BG entry. This traces every basket this
-    // engine considers on a sampled tick, to see whether the queue is empty,
-    // every action is useless/impossible, or something executes but never
-    // logs. Remove once the cause is found.
-    bool bgDiag3 = ai && ai->GetBot() && ai->GetBot()->InBattleGround() && urand(0, 20) == 0;
-
     time_t currentTime = time(0);
     aiObjectContext->Update();
     ProcessTriggers(minimal);
     PushDefaultActions();
-
-    if (bgDiag3)
-        sLog.outString("[BGDIAG3] %s map %u: after PushDefaultActions, queue.Size()=%u",
-                ai->GetBot()->GetName(), ai->GetBot()->GetMapId(), queue.Size());
 
     std::vector<Action*> modifiedActions;
 
@@ -168,10 +156,6 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
             std::string actionName = (action ? action->getName() : "unknown");
             if (!event.getSource().empty())
                 actionName += " <" + event.getSource() + ">";
-
-            if (bgDiag3)
-                sLog.outString("[BGDIAG3] %s: considering '%s' relevance=%.3f",
-                        ai->GetBot()->GetName(), actionName.c_str(), relevance);
 
             auto pmo1 = sPerformanceMonitor.start(PERF_MON_ACTION, actionName, ai);
 
@@ -214,10 +198,6 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
                     pmo2.reset();
                 }
 
-                if (bgDiag3)
-                    sLog.outString("[BGDIAG3] %s: '%s' isUseful=%d isStunned=%d",
-                            ai->GetBot()->GetName(), actionName.c_str(), isUseful ? 1 : 0, isStunned ? 1 : 0);
-
                 if (isUseful)
                 {
                     if (std::find(modifiedActions.begin(), modifiedActions.end(), action) == modifiedActions.end())
@@ -258,19 +238,11 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
                     bool isPossible = action->isPossible();
                     pmo3.reset();
 
-                    if (bgDiag3)
-                        sLog.outString("[BGDIAG3] %s: '%s' isPossible=%d relevance=%.3f",
-                                ai->GetBot()->GetName(), actionName.c_str(), isPossible ? 1 : 0, relevance);
-
                     if (isPossible && relevance)
                     {
                         auto pmo4 = sPerformanceMonitor.start(PERF_MON_ACTION, "Execute", ai);
                         actionExecuted = ListenAndExecute(action, event);
                         pmo4.reset();
-
-                        if (bgDiag3)
-                            sLog.outString("[BGDIAG3] %s: '%s' Execute() returned %d",
-                                    ai->GetBot()->GetName(), actionName.c_str(), actionExecuted ? 1 : 0);
 
 #ifdef PLAYERBOT_ELUNA
                         // used by eluna
@@ -348,26 +320,10 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
                     LogAction("A:%s - USELESS", action->getName().c_str());
                 }
             }
-            if (bgDiag3)
-            {
-                ActionBasket* nextPeek = queue.Peek();
-                sLog.outString("[BGDIAG3] %s: end of iteration %d/%d, queue.Size()=%u, next='%s'",
-                        ai->GetBot()->GetName(), iterations, iterationsPerTick, queue.Size(),
-                        nextPeek ? "non-null" : "null");
-            }
             delete actionNode;
-        }
-        else if (bgDiag3)
-        {
-            sLog.outString("[BGDIAG3] %s: basket was null this iteration, queue.Size()=%u",
-                    ai->GetBot()->GetName(), queue.Size());
         }
     }
     while (basket && ++iterations <= iterationsPerTick);
-
-    if (bgDiag3)
-        sLog.outString("[BGDIAG3] %s: loop ended, iterations=%d iterationsPerTick=%d final queue.Size()=%u",
-                ai->GetBot()->GetName(), iterations, iterationsPerTick, queue.Size());
 
     /*
     if (!basket)
