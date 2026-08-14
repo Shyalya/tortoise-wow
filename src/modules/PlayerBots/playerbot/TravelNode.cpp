@@ -2359,7 +2359,7 @@ void TravelNodeMap::generatePortalNodes()
     }
 }
 
-void TravelNodeMap::makeDockNode(TravelNode* node, WorldPosition pos, std::string dockName, uint32 transportEntry)
+void TravelNodeMap::makeDockNode(TravelNode* node, WorldPosition pos, std::string dockName)
 {
     pos.loadMapAndVMap(0);
     WorldPosition exitPos = pos;
@@ -2372,13 +2372,7 @@ void TravelNodeMap::makeDockNode(TravelNode* node, WorldPosition pos, std::strin
         {
             exitNode = sTravelNodeMap.addNode(exitPos, node->getName() + dockName, true, false);
 
-            //The path is part of the transport. pathObject used to be hardcoded to 0,
-            //which left the dock hop unable to say which vehicle it meant: UseTransport
-            //was then called with entry 0 and fell into getTransports(0), scanning every
-            //gameobject spawn on the map instead of resolving the one vehicle. The Deeprun
-            //Tram fails exactly there - the bot reaches the platform fine and only the last
-            //step cannot decide which of the six cars to board.
-            TravelNodePath travelPath(exitPos.distance(pos), 0.1f, (uint8)TravelNodePathType::transport, transportEntry, true);
+            TravelNodePath travelPath(exitPos.distance(pos), 0.1f, (uint8)TravelNodePathType::transport, 0, true); //The path is part of the transport.
             travelPath.setComplete(true);
             travelPath.setPath({ exitPos, pos });
             exitNode->setPathTo(node, travelPath, true);
@@ -2457,7 +2451,7 @@ void TravelNodeMap::generateTransportNodes()
                                 if (data->displayId == 455) //Undervator
                                     exitPos.setZ(exitPos.getZ() - 0.46f);
 
-                                makeDockNode(node, exitPos, "entry", entry);
+                                makeDockNode(node, exitPos, "entry");
 
                                 if (!prevNode)
                                 {
@@ -2509,7 +2503,7 @@ void TravelNodeMap::generateTransportNodes()
                                     if (data->displayId == 455) //Undervator
                                         exitPos.setZ(exitPos.getZ() - 0.46f);
 
-                                    makeDockNode(node, exitPos, "entry", entry);
+                                    makeDockNode(node, exitPos, "entry");
 
                                     if (node != prevNode) {
                                         if (p.second->TimeSeg < timeStart)
@@ -2559,7 +2553,7 @@ void TravelNodeMap::generateTransportNodes()
                         else if (data->displayId == 7087) //Moonspray
                             exitPos.setZ(exitPos.getZ() + 4.88f);
 
-                        makeDockNode(node, exitPos, "dock", entry);
+                        makeDockNode(node, exitPos, "dock");
 
                         if (!prevNode)
                         {

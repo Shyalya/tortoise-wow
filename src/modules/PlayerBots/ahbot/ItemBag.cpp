@@ -201,14 +201,11 @@ void InAuctionItemsBag::Load()
     if(!ahEntry)
         return;
 
-    // This loop is where the bot spends ~50 of its ~55 seconds per auction
-    // house, so it is also where it used to sit right on top of the world
-    // thread's inserts and deletes. Work off a snapshot instead - the copy
-    // costs a few milliseconds under the lock and then owes the world nothing.
-    std::vector<AuctionSnapshot> auctions = sAuctionMgr.GetAuctionsMap(ahEntry)->GetAuctionsSnapshot();
-    for (std::vector<AuctionSnapshot>::const_iterator itr = auctions.begin(); itr != auctions.end(); ++itr)
+    AuctionHouseObject* auctionHouse = sAuctionMgr.GetAuctionsMap(ahEntry);
+    AuctionHouseObject::AuctionEntryMap const& auctionEntryMap = *auctionHouse->GetAuctions();
+    for (AuctionHouseObject::AuctionEntryMap::const_iterator itr = auctionEntryMap.begin(); itr != auctionEntryMap.end(); ++itr)
     {
-        ItemPrototype const* proto = sObjectMgr.GetItemPrototype(itr->itemTemplate);
+        ItemPrototype const* proto = sObjectMgr.GetItemPrototype(itr->second->itemTemplate);
         if (!proto)
             continue;
 

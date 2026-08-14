@@ -2714,23 +2714,7 @@ bool BGTactics::Execute(Event& event)
 #endif
 
     // disable buffin during BG to save mana
-    //
-    // Only when "buff" is actually still there. ChangeStrategy routes to
-    // Engine::Init() on this very non-combat engine - the one whose action
-    // queue is being iterated right now, from inside this call - and Init()
-    // begins with Reset(), which drains and deletes every queued action.
-    // Unconditionally, that meant the first BGTactics action of each tick
-    // (usually "check flag" at relevance 70) wiped every remaining action out
-    // from under the loop before even testing whether the flag was in reach:
-    // queue.Size() went 8 -> 0 in one iteration. Nothing survived to fall back
-    // on, every tick, forever - which is why bots stood on their spawn for a
-    // whole match while the AI itself kept running. The wipe is a one-time
-    // cost now instead of a per-tick one.
-    //
-    // Note this only became fatal with d886c5c, which added the closing Init()
-    // to Engine::ChangeStrategy; before that the call here was harmless.
-    // Diagnosis and fix: Melhart9, Shyalya/tortoise-wow#1.
-    if (bg->GetStatus() == STATUS_IN_PROGRESS && ai->HasStrategy("buff", BotState::BOT_STATE_NON_COMBAT))
+    if (bg->GetStatus() == STATUS_IN_PROGRESS)
         ai->ChangeStrategy("-buff", BotState::BOT_STATE_NON_COMBAT);
 
     std::vector<BattleBotPath*> const* vPaths;
@@ -4482,11 +4466,7 @@ bool BGTactics::atFlag(std::vector<BattleBotPath*> const& vPaths, std::vector<ui
         if (!sServerFacade.isSpawned(go) || go->IsInUse() || go->GetGoState() != GO_STATE_READY)
             continue;
 
-        // Test the cheap side first: CanInteract logs a core error when the bot
-        // is out of range, so with the operands the other way round every
-        // Warsong bot produced one per tick regardless of distance - 15000+ a
-        // session - while only the continue was ever gated on bgType.
-        if (bgType != BATTLEGROUND_WS && !bot->CanInteract(go))
+        if (!bot->CanInteract(go) && bgType != BATTLEGROUND_WS)
             continue;
         
         if (flagRange)

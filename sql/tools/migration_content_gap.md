@@ -51,35 +51,3 @@ the client: areas, and eventually spells, that one side knows and the other does
 not. That is the same mismatch that makes a trainer take money without the
 ability appearing. Database and client data belong updated together or not at
 all.
-
-## 20260715141903_world.sql was applied by halves (found 2026-08-12)
-
-Reported downstream as "the Crossroads innkeeper has nothing to sell". Boorand
-Plainswind (3934) was fine here, but tracing it turned up that the migration
-had only partly landed on this database.
-
-The file does three things. Only the first had run:
-
-| statement | state before | rows |
-|---|---|---|
-| `INSERT INTO npc_vendor` | applied | 12 per vendor |
-| `UPDATE creature_template SET vendor_id = 0` | **missing** | 24 entries |
-| `DELETE FROM npc_vendor_template` | **missing** | 4 templates, 37 rows |
-
-Harmless in this direction: every affected NPC had both its own rows and the
-template, so both gossip options showed wares - the same ones twice. The other
-half is what hurts. A database that got the UPDATE and DELETE but not the
-INSERT ends up with `vendor_id = 0` and no rows of its own, and then both
-"browse your goods" (VENDOR_MENU_NORMAL, reads npc_vendor) and "browse your
-seasonal fare" (VENDOR_MENU_TEMPLATE, reads npc_vendor_template) come back
-empty. That is exactly the reported symptom, and it would hit all 24, not just
-the one innkeeper.
-
-Completed on 2026-08-12: 24 vendor_id cleared, 37 template rows removed.
-Backup of the previous state in db_backups/vendor_migration_rest_20260812_182520.sql.gz,
-which also carries the UPDATE statements needed to put the ids back.
-
-Worth remembering: the `migrations` row for this file says applied, with hash
-`manual`, dated 2026-07-24. It was right about the file having been run and
-wrong about the file having finished - the same trap this document already
-describes for missing content.

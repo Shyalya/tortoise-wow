@@ -19,7 +19,6 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-#include <atomic>
 #include <unordered_map>
 #include <cmath>
 #include <iostream>
@@ -411,37 +410,10 @@ bool PlayerTaxi::LoadTaxiDestinationsFromString(std::string const& values, Team 
     return sObjectMgr.GetTaxiMountDisplayId(GetTaxiSource(), team, true) != 0;
 }
 
-void PlayerTaxi::ReportOutOfRangeTaxiNode(uint32 nodeidx, uint8 field) const
-{
-    // Which caller passes an out-of-range node is still unknown - all six call
-    // sites read as either in-range or already guarded, and TaxiNodes.dbc tops
-    // out far below the limit. So say what came in. Sparingly: if this turns
-    // out to sit in a retry loop, it must not drown the log.
-    static std::atomic<uint32> seen{0};
-    uint32 const n = ++seen;
-    if (n <= 20 || (n % 1000) == 0)
-        sLog.outError("PlayerTaxi::SetTaximaskNode: node %u out of range (field %u, mask holds %u) - "
-                      "ignored, occurrence %u. Before the bounds check this wrote past m_taximask "
-                      "into m_TaxiDestinations.",
-                      nodeidx, uint32(field), uint32(m_taximask.size()), n);
-}
-
 std::string PlayerTaxi::SaveTaxiDestinationsToString() const
 {
     if (m_TaxiDestinations.size() < 2)
         return "";
-
-    // Canary, not a fix. A real flight path is a handful of hops, so a count
-    // like this means the deque's own bookkeeping has been overwritten - and
-    // indexing it below would fault. Bail and say so instead. If this ever
-    // fires, something is writing past its neighbour again; the bounds check
-    // in SetTaximaskNode was the known way for that to happen.
-    if (m_TaxiDestinations.size() > 500)
-    {
-        sLog.outError("PlayerTaxi::SaveTaxiDestinationsToString: implausible destination count %zu - "
-                      "treating the deque as corrupt and saving nothing.", m_TaxiDestinations.size());
-        return "";
-    }
 
     std::ostringstream ss;
 
@@ -20136,30 +20108,6 @@ void Player::CleanupFlagsOnTaxiPathFinished()
 
     Unmount();
     RemoveFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_DISABLE_MOVE | UNIT_FLAG_TAXI_FLIGHT);
-}
-
-void Player::OnTaxiFlightEject(bool /*force*/)
-{
-    if (!IsTaxiFlying())
-        return;
-
-    // Order matters here. FlightPathMovementGenerator::Finalize calls
-    // TaxiStepFinished(), which starts the *next* leg whenever the itinerary still
-    // holds one - emptying it first is what turns "carry on" into "get off". The same
-    // clear is also what lets Finalize run the full landing cleanup, since it only
-    // stops movement, puts hostile references back online and settles PvP once
-    // GetTaxi() is empty.
-    m_taxi.ClearTaxiDestinations();
-
-    // ClearType finalises the flight generator wherever it sits on the stack rather
-    // than assuming it is on top, and Finalize then does
-    // CleanupFlagsOnTaxiPathFinished for us.
-    GetMotionMaster()->ClearType(FLIGHT_MOTION_TYPE);
-
-    // If the flight state outlived that, there was no flight generator to finalise.
-    // Clear the flags by hand rather than leave anyone marked as flying for good.
-    if (IsTaxiFlying())
-        CleanupFlagsOnTaxiPathFinished();
 }
 
 UnitMountResult Player::Mount(uint32 mount, uint32 spellId)

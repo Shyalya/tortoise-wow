@@ -192,21 +192,29 @@ if(WIN32)
   # and two of them, filesystem and thread, are compiled rather than
   # header-only. Windows linked neither, which would have failed at link time
   # once the headers were finally found.
-  find_package(Boost 1.70 REQUIRED COMPONENTS thread filesystem system)
+  # NOTE: Boost >= 1.88 folded `system` into the header-only core, so it is no
+  # longer a separately-findable component. The module only touches
+  # boost::system::error_code / system_error, which are header-only now, so we
+  # drop `system` from the component list. If you build against an older Boost
+  # (pre-1.88) that still ships a compiled libboost_system, add it back.
+  find_package(Boost 1.70 REQUIRED COMPONENTS thread filesystem)
   target_link_libraries(${LIBRARY_NAME}
     PRIVATE zlib
     PRIVATE ws2_32
     PRIVATE Boost::thread
     PRIVATE Boost::filesystem
-    PRIVATE Boost::system
   )
 else()
-  find_package(Boost 1.70 REQUIRED COMPONENTS thread filesystem system)
+  # NOTE: Boost >= 1.88 folded `system` into the header-only core, so it is no
+  # longer a separately-findable component. The module only touches
+  # boost::system::error_code / system_error, which are header-only now, so we
+  # drop `system` from the component list. If you build against an older Boost
+  # (pre-1.88) that still ships a compiled libboost_system, add it back.
+  find_package(Boost 1.70 REQUIRED COMPONENTS thread filesystem)
   target_link_libraries(${LIBRARY_NAME}
     PRIVATE ZLIB::ZLIB
     PRIVATE Boost::thread
     PRIVATE Boost::filesystem
-    PRIVATE Boost::system
   )
 endif()
 

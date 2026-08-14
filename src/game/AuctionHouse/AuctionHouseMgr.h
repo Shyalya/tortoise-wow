@@ -24,7 +24,6 @@
 
 #include <vector>
 #include <memory>
-#include <mutex>
 
 #include "Common.h"
 #include "SharedDefines.h"
@@ -116,36 +115,6 @@ struct AuctionHouseClientQuery
     std::vector<uint32> outbiddedAuctionIds;
 };
 
-// A by-value copy of the auction fields the auction-house bot reads.
-//
-// AhBot runs its check on a detached thread of its own (ahbot/AhBot.cpp uses
-// boost::thread) and a single pass takes ~50 seconds per auction house. All
-// through that pass the world thread keeps adding, removing and - down in
-// AuctionHouseObject::Update - *deleting* AuctionEntry objects. Walking the
-// live map from the bot thread therefore dies in _Rb_tree_increment whenever a
-// rebalance happens mid-iteration, and any AuctionEntry* the bot holds on to
-// across the pass is a use-after-free waiting for its moment.
-//
-// So the bot never sees the live map. It takes a snapshot - copied under the
-// lock in a few milliseconds - and works off that for as long as it likes.
-// When it finally wants to act on an entry it looks the id up again under the
-// lock and re-checks that the auction is still there.
-struct AuctionSnapshot
-{
-    uint32 Id;
-    uint32 itemGuidLow;
-    uint32 itemTemplate;
-    uint32 owner;
-    uint32 ownerAccount;
-    uint32 startbid;
-    uint32 bid;
-    uint32 buyout;
-    uint32 bidder;
-    uint32 houseId;
-    uint32 itemCount;
-    time_t expireTime;
-};
-
 //this class is used as auctionhouse instance
 class AuctionHouseObject
 {
@@ -153,37 +122,26 @@ class AuctionHouseObject
         AuctionHouseObject() {}
         ~AuctionHouseObject()
         {
-            Guard g(m_auctionsLock);
             for (const auto& itr : AuctionsMap)
                 delete itr.second;
         }
 
         typedef std::map<uint32, AuctionEntry*> AuctionEntryMap;
         typedef std::multimap<uint32, AuctionEntry*> AuctionMultiMap;
+        // bot uses bounds-style iteration.
         typedef std::pair<AuctionEntryMap::iterator, AuctionEntryMap::iterator> AuctionEntryMapBounds;
+        AuctionEntryMapBounds GetAuctionsBounds() { return { AuctionsMap.begin(), AuctionsMap.end() }; }
 
-        // Guards all three maps below. Recursive because Update() and
-        // RemoveAllAuctions() both call RemoveAuction() while already holding
-        // it. Lock order where both are taken: this one before
-        // AuctionHouseMgr::m_itemsLock, never the other way round.
-        typedef std::lock_guard<std::recursive_mutex> Guard;
-        std::recursive_mutex& GetLock() const { return m_auctionsLock; }
+        uint32 GetCount() { return AuctionsMap.size(); }
 
-        // Raw iterators into the live map: only valid while GetLock() is held
-        // for the whole loop. Fine for the short world-thread scans that can
-        // afford to hold it - the bot thread must use GetAuctionsSnapshot()
-        // instead, see the comment on AuctionSnapshot above.
-        AuctionEntryMapBounds GetAuctionsBounds_locked() { return { AuctionsMap.begin(), AuctionsMap.end() }; }
-
-        std::vector<AuctionSnapshot> GetAuctionsSnapshot() const;
-
-        uint32 GetCount() { Guard g(m_auctionsLock); return AuctionsMap.size(); }
+        AuctionEntryMap *GetAuctions() { return &AuctionsMap; }
+        // bot expects const ref via GetAuctions on a const AuctionHouseObject.
+        AuctionEntryMap const& GetAuctionsRef() const { return AuctionsMap; }
 
         void AddAuction(AuctionEntry *ah);
 
         AuctionEntry* GetAuction(uint32 id) const
         {
-            Guard g(m_auctionsLock);
             AuctionEntryMap::const_iterator itr = AuctionsMap.find( id );
             return itr != AuctionsMap.end() ? itr->second : nullptr;
         }
@@ -199,9 +157,8 @@ class AuctionHouseObject
         void BuildListAuctionItems(WorldPacket& data, Player* player,
                 AuctionHouseClientQuery const& query,
             uint32& count, uint32& totalcount);
-        uint32 GetAccountAuctionCount(uint32 accountId) { Guard g(m_auctionsLock); return AccountAuctionMap.count(accountId); }
+        uint32 GetAccountAuctionCount(uint32 accountId) { return AccountAuctionMap.count(accountId); }
     private:
-        mutable std::recursive_mutex m_auctionsLock;
         // Map BUYOUT prices to entry for pre-sorted results. We maintain it in
         // a map rather than build the list on query for performance reasons.
         // Similarly, maintain a map of account ID -> auction entry
@@ -224,7 +181,6 @@ class AuctionHouseMgr
 
         Item* GetAItem(uint32 id)
         {
-            std::lock_guard<std::mutex> g(m_itemsLock);
             ItemMap::const_iterator itr = mAitems.find(id);
             if (itr != mAitems.end())
             {
@@ -260,7 +216,6 @@ class AuctionHouseMgr
         std::unordered_map<uint32, AuctionHouseObject*> m_mAuctionHouses;
         std::vector<std::unique_ptr<AuctionHouseObject>> m_vRealAuctionHouses;
 
-        mutable std::mutex  m_itemsLock;
         ItemMap             mAitems;
 };
 

@@ -81,15 +81,7 @@ namespace
     {
         // Arenas are limited by instance count alone: their team slots are indexed by
         // rating rather than faction, so a per-team number would not mean the same thing.
-        // A configured zero has to reach through even for an arena - that is the
-        // switch which takes a queue away from bots entirely, and Blood Ring needs
-        // it. Being the one uncapped queue, bots drained into it: its matches went
-        // from a 60 minute average to eight hours (longest 24h) while Warsong fell
-        // from 217 matches a day to 12 and Arathi from 168 to 5. Bots that go in do
-        // not come out - sampled five minutes apart they sit on identical
-        // coordinates with identical health, while open world bots move normally.
-        const int32 configured = sPlayerbotAIConfig.GetBgBotTeamCap(bgTypeId);
-        const int32 cap = (isArena && configured != 0) ? -1 : configured;
+        const int32 cap = isArena ? -1 : sPlayerbotAIConfig.GetBgBotTeamCap(bgTypeId);
 
         // Zero switches a battleground off for bots outright, whether or not anyone
         // real is queuing. Sunnyglade Valley is disabled from client patch 1.18.1
@@ -101,8 +93,7 @@ namespace
             return false;
 
         // Nobody real is waiting for this bracket, so one match of it is enough.
-        if (CountRunningBattlegrounds((BattleGroundTypeId)bgTypeId, (BattleGroundBracketId)bracketId)
-                >= sPlayerbotAIConfig.bgMaxInstancesPerBracket)
+        if (CountRunningBattlegrounds((BattleGroundTypeId)bgTypeId, (BattleGroundBracketId)bracketId) >= 1)
             return true;
 
         // And do not let a second one fill up behind the first while it is still
@@ -809,15 +800,7 @@ bool BGJoinAction::JoinQueue(uint32 type)
    ObjectGuid bmFallbackGuid = ObjectGuid(uint64(1337));
 // in wotlk only arena requires battlemaster guid
 #ifndef MANGOSBOT_TWO
-   // Always the bypass, never the cached Battlemaster's own guid. A bot only
-   // needs one to be loaded nearby for "bg master" to hold a real guid, and
-   // sending that makes WorldSession::HandleBattlemasterJoinOpcode treat the
-   // request as a real click: it then runs GetNPCIfCanInteractWith, which a bot
-   // standing anywhere else fails. That path returns silently - no error, no
-   // log line - while shouldJoinBg has already counted the bot as queued.
-   // Measured with a player waiting in bracket 2: 28 bots accepted, 0 entries
-   // reached bg.log.
-   ObjectGuid guid = bmFallbackGuid;
+   ObjectGuid guid = unit ? unit->GetObjectGuid() : bmFallbackGuid;
 #else
    ObjectGuid guid = isArena ? unit->GetObjectGuid() : bot->GetObjectGuid();
 #endif

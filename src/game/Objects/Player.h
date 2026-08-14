@@ -876,21 +876,6 @@ class PlayerTaxi
         {
             uint8  field   = uint8((nodeidx - 1) / 32);
             uint32 submask = 1 << ((nodeidx - 1) % 32);
-            // Both siblings above and below already bound this; only the one
-            // that writes did not. m_taximask holds 8 words, so anything past
-            // node 256 lands outside it - and what sits immediately after it in
-            // this class is m_TaxiDestinations, whose internal pointers then get
-            // overwritten. nodeidx 0 is worse still: (0 - 1) / 32 is unsigned,
-            // truncated to uint8, which gives field 255. The corrupted deque
-            // then faults on the character's next periodic save, which is why
-            // such a crash points at SaveTaxiDestinationsToString and never at
-            // the taxi code that caused it.
-            if (field >= m_taximask.size())
-            {
-                ReportOutOfRangeTaxiNode(nodeidx, field);
-                return false;
-            }
-
             if ((m_taximask[field] & submask) != submask)
             {
                 m_taximask[field] |= submask;
@@ -929,12 +914,6 @@ class PlayerTaxi
         uint32 GetCurrentTaxiCost() const;
         uint32 NextTaxiDestination()
         {
-            // pop_front on an empty deque is undefined; both callers
-            // (FlightPathMovementGenerator::Update and
-            // Player::ContinueTaxiFlight) call this without checking.
-            if (m_TaxiDestinations.empty())
-                return 0;
-
             m_TaxiDestinations.pop_front();
             return GetTaxiDestination();
         };
@@ -950,9 +929,6 @@ class PlayerTaxi
         WorldLocation m_taxiStartLocation;
     private:
         float m_discount;
-        // Out of line: this header has no logger.
-        void ReportOutOfRangeTaxiNode(uint32 nodeidx, uint8 field) const;
-
         TaxiMask m_taximask;
         std::deque<uint32> m_TaxiDestinations;
         TaxiPathNodeList m_taxiPath;
@@ -2509,13 +2485,8 @@ class Player final: public Unit
         void setCinematic(uint32 /*cinematic*/) {}
         // TakeQuestSourceItem: cmangos quest helper. Stub no-op.
         void TakeQuestSourceItem(uint32 /*quest_id*/, bool /*sendUpdate*/ = true) {}
-        // OnTaxiFlightEject: cmangos handler called when a bot is forced off a taxi.
-        // Was a no-op stub, which meant MovementAction::UseTaxi could never end the
-        // flight it calls this to end, so a bot already in the air could not start its
-        // next hop. Out of line in Player.cpp - it needs the MotionMaster generator
-        // types. Every caller in tree passes force = true; the argument is kept for
-        // signature compatibility and has no meaning here.
-        void OnTaxiFlightEject(bool force = false);
+        // OnTaxiFlightEject: cmangos handler called when bot is forced off taxi.
+        void OnTaxiFlightEject(bool /*force*/ = false) {}
         // GetMountInfo: cmangos returns the bot's saved mount data with Name field. Stub returns nullptr.
         struct MountInfoStub { std::string Name; };
         MountInfoStub const* GetMountInfo() const { return nullptr; }

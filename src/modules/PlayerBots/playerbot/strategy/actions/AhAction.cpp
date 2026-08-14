@@ -170,18 +170,14 @@ bool AhBidAction::ExecuteCommand(Player* requester, std::string text, Unit* auct
     if (!auctionHouse)
         return false;
 
-    // The ahbot thread adds, removes and deletes auctions while this runs, so
-    // never carry a raw AuctionEntry* across the scan. Work from a snapshot and
-    // keep auction ids around instead; GetAuction() resolves them under the
-    // lock when a live entry is actually needed.
-    std::vector<AuctionSnapshot> map = auctionHouse->GetAuctionsSnapshot();
+    AuctionHouseObject::AuctionEntryMap const& map = *auctionHouse->GetAuctions();
 
     if (map.empty())
         return false;
 
     AuctionEntry* auction = nullptr;
 
-    std::vector<std::pair<uint32, uint32>> auctionPowers;
+    std::vector<std::pair<AuctionEntry*, uint32>> auctionPowers;
 
     if (text == "vendor")
     {
@@ -209,12 +205,17 @@ bool AhBidAction::ExecuteCommand(Player* requester, std::string text, Unit* auct
 
         for (uint32 i = 0; i < checkNumAuctions; i++)
         {
-            const uint32 auctionId = map[urand(0, map.size()-1)].Id;
+            auto curAuction = std::next(std::begin(map), urand(0, map.size()-1));
 
-            if (std::find_if(auctionPowers.begin(), auctionPowers.end(), [auctionId](std::pair<uint32, uint32> i){return i.first == auctionId;}) != auctionPowers.end())
+            auction = curAuction->second;
+
+            if (!auction)
                 continue;
 
-            auction = auctionHouse->GetAuction(auctionId);
+            if (std::find_if(auctionPowers.begin(), auctionPowers.end(), [auction](std::pair<AuctionEntry*, uint32> i){return i.first == auction;}) != auctionPowers.end())
+                continue;
+
+            auction = auctionHouse->GetAuction(auction->Id);
 
             if (!auction)
                 continue;
@@ -263,16 +264,21 @@ bool AhBidAction::ExecuteCommand(Player* requester, std::string text, Unit* auct
             power *= 1000;
             power /= (totalCost +1);
 
-            auctionPowers.push_back(std::make_pair(auction->Id, power));
+            auctionPowers.push_back(std::make_pair(auction, power));
         }
 
-        std::sort(auctionPowers.begin(), auctionPowers.end(), [](std::pair<uint32, uint32> i, std::pair<uint32, uint32> j) {return i > j; });
+        std::sort(auctionPowers.begin(), auctionPowers.end(), [](std::pair<AuctionEntry*, uint32> i, std::pair<AuctionEntry*, uint32> j) {return i > j; });
 
         bool bidItems = false;
 
         for (auto auctionPower : auctionPowers)
         {
-            auction = auctionHouse->GetAuction(auctionPower.first);
+            auction = auctionPower.first;
+
+            if (!auction)
+                continue;
+
+            auction = auctionHouse->GetAuction(auction->Id);
 
             if (!auction)
                 continue;
@@ -346,10 +352,12 @@ bool AhBidAction::ExecuteCommand(Player* requester, std::string text, Unit* auct
 
     for (auto curAuction : map)
     {
-        if (curAuction.owner == bot->GetGUIDLow())
+        auction = curAuction.second;
+
+        if (auction->owner == bot->GetGUIDLow())
             continue;
 
-        ItemPrototype const* proto = sObjectMgr.GetItemPrototype(curAuction.itemTemplate);
+        ItemPrototype const* proto = sObjectMgr.GetItemPrototype(auction->itemTemplate);
 
         if (!proto)
             continue;
@@ -360,30 +368,24 @@ bool AhBidAction::ExecuteCommand(Player* requester, std::string text, Unit* auct
         if (!strstri(proto->Name1, text.c_str()))
             continue;
 
-        if (price && curAuction.bid + 5 > price)
+        if (price && auction->bid + 5 > price)
             continue;
 
-        uint32 cost = std::min(curAuction.buyout, uint32(std::max(curAuction.bid, curAuction.startbid) * frand(1.05f, 1.25f)));
+        uint32 cost = std::min(auction->buyout, uint32(std::max(auction->bid, auction->startbid) * frand(1.05f, 1.25f)));
 
-        if (!cost)
-            continue;
-
-        uint32 power = curAuction.itemCount;
+        uint32 power = auction->itemCount;
         power *= 1000;
         power /= cost;
 
-        auctionPowers.push_back(std::make_pair(curAuction.Id, power));
+        auctionPowers.push_back(std::make_pair(auction, power));
     }
 
     if (auctionPowers.empty())
         return false;
 
-    std::sort(auctionPowers.begin(), auctionPowers.end(), [](std::pair<uint32, uint32> i, std::pair<uint32, uint32> j) {return i > j; });
+    std::sort(auctionPowers.begin(), auctionPowers.end(), [](std::pair<AuctionEntry*, uint32> i, std::pair<AuctionEntry*, uint32> j) {return i > j; });
 
-    auction = auctionHouse->GetAuction(auctionPowers.begin()->first);
-
-    if (!auction)
-        return false;
+    auction = auctionPowers.begin()->first;
 
     uint32 cost = std::min(auction->buyout, uint32(std::max(auction->bid, auction->startbid) * frand(1.05f, 1.25f)));
 

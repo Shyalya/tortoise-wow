@@ -113,11 +113,8 @@ AiPlayerbot.DeleteRandomBotArenaTeams = 0
 AiPlayerbot.RandomBotMaps = 0,1,530,571
 
 # Min and max intervals for random teleports, in seconds (default: 2hrs and 48hrs)
-# The comment above was right and the values below were not: they had drifted to
-# 24hrs and 7 days, so a bot stayed put for up to a week. tbc and wotlk both ship
-# 2hrs/48hrs; vanilla now does too.
-AiPlayerbot.RandomBotTeleportTeleportMinInterval = 7200
-AiPlayerbot.RandomBotTeleportTeleportMaxInterval = 172800
+AiPlayerbot.RandomBotTeleportTeleportMinInterval = 86400
+AiPlayerbot.RandomBotTeleportTeleportMaxInterval = 604800
 
 # Change random bot has lower gear
 AiPlayerbot.RandomGearLoweringChance = 0.15
@@ -204,27 +201,7 @@ AiPlayerbot.RandomBotShowCloak = 1
 
 # Disable random levels for randombots
 # Every bots started on the specified level and level up by killing mobs.
-#
-# This is a bet on uptime, so choose deliberately:
-#
-#   0  Every bot is rolled a level on creation, which spreads the population
-#      across the world immediately. What tbc and wotlk ship, and the right
-#      choice for a realm that is started and stopped rather than left running.
-#
-#   1  Bots all begin at randombotStartingLevel and have to work their way up,
-#      which only happens while the realm is actually running. On a realm that
-#      runs continuously this produces a genuine level curve over a few weeks.
-#      On one that does not, every bot stays at the starting level forever - and
-#      because RandomTeleportForLevel draws from the tele cache bucket for the
-#      bot's own level, and the level-1 bucket holds only 247 points, all of
-#      them in starting zones, the whole population ends up crowded into six
-#      zones. Raising randombotStartingLevel does not help: every bot then
-#      shares one level and therefore one set of zones. You get a different
-#      crowd, not a spread.
-#
-# Changing this on a running realm is not free either - Randomize() reassigns
-# levels, so a realm that already grew an organic curve would lose it.
-AiPlayerbot.DisableRandomLevels = 0
+AiPlayerbot.DisableRandomLevels = 1
 
 # Set randombots starting level here if "AiPlayerbot.DisableRandomLevels" enabled
 # Recommended: 5+

@@ -4457,18 +4457,14 @@ void RandomPlayerbotMgr::MirrorAh()
             continue;
         visited.push_back(auctionHouse);
 
-        // Pure copy loop, no DB and no mail, so simply hold the auction lock
-        // across it rather than snapshotting - otherwise the ahbot thread can
-        // delete entries while we are copying them.
-        AuctionHouseObject::Guard ahGuard(auctionHouse->GetLock());
-        AuctionHouseObject::AuctionEntryMapBounds bounds = auctionHouse->GetAuctionsBounds_locked();
+        AuctionHouseObject::AuctionEntryMap const& map = *auctionHouse->GetAuctions();
 
-        for (auto itr = bounds.first; itr != bounds.second; ++itr)
+        for (auto& auction : map)
         {
-            if (!itr->second)
+            if (!auction.second)
                 continue;
 
-            AuctionEntry auctionEntry = *itr->second;
+            AuctionEntry auctionEntry = *auction.second;
 
             if (!auctionEntry.buyout)
                 continue;

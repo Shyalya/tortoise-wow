@@ -222,10 +222,6 @@ public:
     // -1 when the type is not listed at all, otherwise the configured number.
     // Zero is meaningful: it switches the battleground off for bots entirely,
     // which is what a map disabled by the client patch needs.
-    // How many battleground instances of one type and bracket bots may keep
-    // running at once while nobody real is waiting. Was hardcoded to 1, which
-    // took Warsong from 400 matches a day down to 12.
-    uint32 bgMaxInstancesPerBracket;
     int32 GetBgBotTeamCap(uint32 bgTypeId) const
     {
         auto it = bgBotTeamCap.find(bgTypeId);

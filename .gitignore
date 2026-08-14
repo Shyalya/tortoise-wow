@@ -6,7 +6,18 @@
 *.exe
 /src/shared/revision.h
 
-# Local backup copies made before editing (never meant to be committed)
-*.bak
-*.bak.*
-*.bak-*
+# Local environment / credentials — never commit
+env.md
+.env
+.env.*
+
+# Local server runtime (confs, logs, pids, extracted data)
+/run/
+/build/
+/TurtleWow-Server/
+/client/
+
+# Build/log artifacts
+build.log
+racechange.log
+*.log
