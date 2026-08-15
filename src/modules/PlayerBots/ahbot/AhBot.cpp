@@ -1337,6 +1337,21 @@ void AhBot::ExecutePurchase(const PendingPurchase& p)
     if (!auctionHouse)
         return;
 
+    // Hold the auctions lock for the whole read-act-remove sequence below, not
+    // just the initial lookup. GetAuction()/RemoveAuction() only lock for their
+    // own instant (the mutex is recursive specifically so callers can wrap a
+    // larger critical section around them, per the comment on m_auctionsLock) -
+    // entry is a raw pointer into the live map, and everything from here
+    // through RemoveAuction()+delete needs to be atomic with respect to the
+    // world thread's own packet handlers and AhBot::Update()'s background scan,
+    // both of which can also touch this same entry. This is what the class
+    // comment already documents as the intended pattern ("re-resolve the id
+    // under the lock and re-check that the entry is still there") - this
+    // function just never actually did it, leaving entry->bidder/bid writes,
+    // SendAuctionSuccessfulMail, RemoveAuction and delete entry all racing
+    // against concurrent access to the same AuctionsMap/AuctionEntry.
+    AuctionHouseObject::Guard g(auctionHouse->GetLock());
+
     // The seller may have cancelled, or the auction may have expired or sold,
     // between the bot deciding and us getting here.
     AuctionEntry* entry = auctionHouse->GetAuction(p.auctionId);
