@@ -21,9 +21,11 @@ env.md
 build.log
 racechange.log
 *.log
+*.csv
 logs/bot_events.csv
 logs/*.csv
 .codegraph/codegraph.db
 commands.md
 logs/bot_events.csv
-logs/deaths.csv
+*logs/deaths.csv
+gm_commands.md
