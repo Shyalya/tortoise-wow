@@ -435,6 +435,31 @@ bool LootItem::AllowedForPlayer(Player const* player, WorldObject const* lootTar
     return true;
 }
 
+bool Loot::CanLoot(Player* player) const
+{
+    if (!player)
+        return false;
+    if (gold > 0)
+        return true;
+    for (LootItem const& item : items)
+    {
+        if (!item.is_looted && item.AllowedForPlayer(player, m_lootTarget))
+            return true;
+    }
+    // Quest drops never appear in the shared items vector: Loot::FillQuestLoot stores
+    // them in m_questItems and records per-player copies in m_playerQuestItems. A corpse
+    // whose only loot is a quest drop therefore looked empty to a player who legitimately
+    // has a copy waiting (bots refused to loot quest-only corpses - "Looting is not
+    // possible"). Check the player's own quest entries as well.
+    uint32 plguid = player->GetGUIDLow();
+    QuestItemMap::const_iterator qit = m_playerQuestItems.find(plguid);
+    if (qit != m_playerQuestItems.end() && qit->second)
+        for (QuestItemList::const_iterator it = qit->second->begin(); it != qit->second->end(); ++it)
+            if (!it->is_looted)
+                return true;
+    return false;
+}
+
 // Check for group wide item compatibility
 bool LootStoreItem::AllowedForTeam(Loot const& loot) const
 {
