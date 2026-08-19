@@ -322,19 +322,8 @@ struct Loot
     // true, which let bots try to loot corpses tapped/owned by another player (e.g. the human
     // master's round-robin kill): the bot would kneel on an empty corpse and get stuck.
     // LootItem::AllowedForPlayer already encodes round-robin / FFA / quest / condition rules.
-    bool CanLoot(Player* player) const
-    {
-        if (!player)
-            return false;
-        if (gold > 0)
-            return true;
-        for (LootItem const& item : items)
-        {
-            if (!item.is_looted && item.AllowedForPlayer(player, m_lootTarget))
-                return true;
-        }
-        return false;
-    }
+    // Defined in LootMgr.cpp (needs the complete Player type for the per-player quest check).
+    bool CanLoot(Player* player) const;
     // Release: cmangos clears loot reservation. Stub no-op.
     void Release(Player* /*player*/) {}
     // GetLootItemsListFor: cmangos returns/populates per-player loot items list.
