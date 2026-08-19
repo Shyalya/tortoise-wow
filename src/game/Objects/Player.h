@@ -3344,6 +3344,12 @@ void RemoveItemsSetItem(Player*player,ItemPrototype const* proto);
 // to suppress network send. Real players (no AI) return false. Implementation in HostHooks.cpp.
 bool Player_DispatchBotOutgoingPacket(Player* player, class WorldPacket const& packet);
 
+// incoming-packet interceptor for bot-owning players.
+// WorldSession::ProcessPackets calls this after the player's own handler ran; the packet is
+// forwarded to PlayerbotMgr::HandleMasterIncomingPacket so the player's bots can mirror it
+// (quest accepts, gossip, quest shares, ...). Never suppresses the packet; no-op for bots.
+void Player_DispatchMasterIncomingPacket(Player* player, class WorldPacket const& packet);
+
 // chat-message dispatcher for bots.
 // WorldSession::HandleMessagechatOpcode calls this after validating the master's chat input,
 // so each bot under the master's PlayerbotMgr (and matching random bots) gets the message

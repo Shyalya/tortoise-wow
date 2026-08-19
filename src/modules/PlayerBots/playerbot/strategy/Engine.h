@@ -111,6 +111,10 @@ namespace ai
     private:
         void LogAction(const char* format, ...);
         void LogValues();
+        // Ordered join of the currently attached strategy names. A strategy
+        // change that leaves this unchanged is a no-op and must not call
+        // Init(), because Init() -> Reset() empties the action queue.
+        std::string StrategySignature() const;
 
     protected:
 	    Queue queue;

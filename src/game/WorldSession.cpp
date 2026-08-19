@@ -488,7 +488,13 @@ void WorldSession::ProcessPackets(PacketFilter& updater)
                             LogUnexpectedOpcode(packet, "the player has not logged in yet");
                     }
                     else if (_player->IsInWorld())
+                    {
                         ExecuteOpcode(opHandle, packet);
+
+                        // Mirror the player's action packets to any bots they control
+                        // (quest accepts, gossip, quest shares, ...). No-op without bots.
+                        Player_DispatchMasterIncomingPacket(_player, *packet);
+                    }
 
                     // lag can cause STATUS_LOGGEDIN opcodes to arrive after the player started a transfer
                     break;

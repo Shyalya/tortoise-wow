@@ -133,6 +133,16 @@ bool Player_DispatchBotOutgoingPacket(Player* player, WorldPacket const& packet)
     return true;
 }
 
+// Incoming-packet interceptor (called from WorldSession::ProcessPackets). Feeds the
+// player's action packets to PlayerbotMgr::HandleMasterIncomingPacket so his bots can
+// mirror quest accepts, gossip, quest shares, etc. Never suppresses the packet.
+void Player_DispatchMasterIncomingPacket(Player* player, WorldPacket const& packet)
+{
+    if (!player) return;
+    if (PlayerbotMgr* mgr = player->GetPlayerbotMgr())
+        mgr->HandleMasterIncomingPacket(packet);
+}
+
 // Chat dispatcher: feeds the master's chat to every bot that listens. Without
 // this, in-party "+heal" / "stay" / "co" commands don't reach any bot. Bots
 // owned by the master and matching random bots both get the message.

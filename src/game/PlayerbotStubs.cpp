@@ -25,6 +25,7 @@ void World::InitPlayerbotsAtStartup()         {}
 void World::FinalizePlayerbotsPostPlayerInfo() {}
 
 bool Player_DispatchBotOutgoingPacket(Player*, WorldPacket const&) { return false; }
+void Player_DispatchMasterIncomingPacket(Player*, WorldPacket const&) {}
 void Player_DispatchBotChatCommand(Player*, uint32, std::string const&, uint32, std::string const&) {}
 void Playerbot_SetForcedRole(Player*, uint8) {}
 uint8 Playerbot_GetAllowedRoles(Player*) { return 0; }

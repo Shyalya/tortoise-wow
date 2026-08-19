@@ -506,6 +506,8 @@ bool Engine::CanExecuteAction(const std::string& name, bool isUseful, bool isPos
 
 void Engine::addStrategy(const std::string& name)
 {
+    std::string const signatureBefore = StrategySignature();
+
     // The second argument means "rebuild now", and initMode means the opposite
     // - hold rebuilds back until the bulk change is done - so passing one as
     // the other had it exactly backwards. Neither removal needs its own
@@ -526,7 +528,10 @@ void Engine::addStrategy(const std::string& name)
         strategy->OnStrategyAdded(state);
     }
 
-    if(!initMode)
+    // Init() empties the action queue, so only pay it when the strategy set
+    // actually moved. Re-adding a strategy the engine already carries used to
+    // wipe the queue for nothing.
+    if (!initMode && StrategySignature() != signatureBefore)
     {
         Init();
     }
@@ -839,6 +844,8 @@ void Engine::ChangeStrategy(const std::string& names)
     // only the set left at the end matters. Hold the rebuilds back for the
     // whole list and do one afterwards - the same thing
     // PlayerbotAI::ResetStrategies does around its bulk change.
+    std::string const signatureBefore = StrategySignature();
+
     bool const wasInitMode = initMode;
     initMode = true;
 
@@ -868,8 +875,32 @@ void Engine::ChangeStrategy(const std::string& names)
     initMode = wasInitMode;
 
     // Caller is in a bulk change of its own - it will rebuild when it is done.
-    if (!initMode)
+    //
+    // The signature guard is what keeps a no-op change cheap. Init() calls
+    // Reset(), which drains `queue` outright - so a ChangeStrategy issued from
+    // inside an action's Execute() destroys every basket DoNextAction has not
+    // popped yet, and the do-while at :326 exits on a null Peek(). BGTactics
+    // fires exactly that: `ai->ChangeStrategy("-buff", BOT_STATE_NON_COMBAT)`
+    // (BattleGroundTactics.cpp:2716-2718) on every tick of a battleground in
+    // progress, whether or not "buff" is still attached. In WSG that ran on the
+    // relevance-70 `bg check flag` action and killed the rest of the tick, so
+    // `bg move to objective` at relevance 1.0 was queued 23,908 times and
+    // popped none.
+    if (!initMode && StrategySignature() != signatureBefore)
         Init();
+}
+
+std::string Engine::StrategySignature() const
+{
+    // strategies is an ordered map, so equal sets give equal strings.
+    std::string signature;
+    for (std::map<std::string, Strategy*>::const_iterator i = strategies.begin(); i != strategies.end(); ++i)
+    {
+        signature += i->first;
+        signature += "|";
+    }
+
+    return signature;
 }
 
 void Engine::PrintStrategies(Player* requester, const std::string& engineType)
