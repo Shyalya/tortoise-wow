@@ -933,6 +933,7 @@ class WorldSession
         void HandleMessagechatOpcode(WorldPacket& recvPacket);
 
         bool HandleTurtleAddonMessages(uint32 lang, uint32 type, std::string& msg);
+        ObjectGuid GetCurrentGossipGUID() const { return m_currentGossipGUID; }
 
         void HandleTextEmoteOpcode(WorldPacket& recvPacket);
         void HandleChatIgnoredOpcode(WorldPacket& recvPacket);
@@ -1016,6 +1017,7 @@ class WorldSession
         void moveItems(Item* myItems[], Item* hisItems[]);
         bool CanUseBank(ObjectGuid bankerGUID = ObjectGuid()) const;
         ObjectGuid m_currentBankerGUID;
+        ObjectGuid m_currentGossipGUID;
 
         bool VerifyMovementInfo(MovementInfo const& movementInfo) const;
         void HandleMoverRelocation(Unit* pMover, MovementInfo& movementInfo);
