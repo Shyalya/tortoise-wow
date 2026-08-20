@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "dgSpecHash": "NfwGoDpFTRs=",
+  "success": true,
+  "projectFilePath": "/home/sam/tortoise-wow/tools/checkegglogs/checkegglogs.csproj",
+  "expectedPackageFiles": [
+    "/home/sam/.nuget/packages/microsoft.extensions.logging.abstractions/7.0.1/microsoft.extensions.logging.abstractions.7.0.1.nupkg.sha512",
+    "/home/sam/.nuget/packages/mysqlconnector/2.3.6/mysqlconnector.2.3.6.nupkg.sha512",
+    "/home/sam/.nuget/packages/microsoft.aspnetcore.app.ref/8.0.30/microsoft.aspnetcore.app.ref.8.0.30.nupkg.sha512",
+    "/home/sam/.nuget/packages/microsoft.netcore.app.host.linux-x64/8.0.30/microsoft.netcore.app.host.linux-x64.8.0.30.nupkg.sha512"
+  ],
+  "logs": []
+}

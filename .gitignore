@@ -29,3 +29,10 @@ commands.md
 logs/bot_events.csv
 *logs/deaths.csv
 gm_commands.md
+tools/checkegglogs/obj/checkegglogs.csproj.nuget.dgspec.json
+.gitignore
+tools/checkegglogs/obj/checkegglogs.csproj.nuget.g.targets
+.gitignore
+.gitignore
+.gitignore
+
