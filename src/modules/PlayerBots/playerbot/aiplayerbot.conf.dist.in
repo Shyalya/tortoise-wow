@@ -1038,12 +1038,12 @@ AiPlayerbot.FleeingEnabled = 1
 #AiPlayerbot.MediumMana = 40
 
 # Random bot default strategies (applied after defaults)
-AiPlayerbot.RandomBotCombatStrategies = +dps,+dps assist,-threat
-AiPlayerbot.RandomBotNonCombatStrategies = +grind,+loot,+custom::say,+tfish,+wander,+rpg craft
+AiPlayerbot.RandomBotCombatStrategies = +dps,+dps assist,-threat,+dungeon
+AiPlayerbot.RandomBotNonCombatStrategies = +grind,+loot,+custom::say,+tfish,+wander,+rpg craft,+dungeon
 #AiPlayerbot.RandomBotReactStrategies =
 #AiPlayerbot.RandomBotDeadStrategies =
-AiPlayerbot.CombatStrategies = +custom::say,+dps,+dps assist,-threat
-AiPlayerbot.NonCombatStrategies = +grind,+loot,+custom::say,+return,+delayed roll,+tfish,+wander,+rpg craft,+quest
+AiPlayerbot.CombatStrategies = +custom::say,+dps,+dps assist,-threat,+dungeon
+AiPlayerbot.NonCombatStrategies = +grind,+loot,+custom::say,+return,+delayed roll,+tfish,+wander,+rpg craft,+quest,+dungeon
 #AiPlayerbot.ReactStrategies = 
 #AiPlayerbot.DeadStrategies = 
 

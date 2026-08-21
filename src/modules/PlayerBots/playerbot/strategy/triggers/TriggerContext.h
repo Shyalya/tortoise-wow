@@ -17,6 +17,7 @@
 #include "DungeonTriggers.h"
 #include "OnyxiasLairDungeonTriggers.h"
 #include "MoltenCoreDungeonTriggers.h"
+#include "BossAuraTriggers.h"
 #include "BlackwingLairDungeonTriggers.h"
 #include "KarazhanDungeonTriggers.h"
 #include "NaxxramasDungeonTriggers.h"
@@ -320,6 +321,28 @@ namespace ai
 
             creators["mc rune in sight"] = [](PlayerbotAI* ai) { return new MCRuneInSightTrigger(ai); };
             creators["mc rune close"] = [](PlayerbotAI* ai) { return new MCRuneCloseTrigger(ai); };
+
+            creators["mc lucifron shadow resistance"] = [](PlayerbotAI* ai) { return new BossShadowResistanceTrigger(ai, "lucifron"); };
+            creators["mc magmadar fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceTrigger(ai, "magmadar"); };
+            creators["mc gehennas shadow resistance"] = [](PlayerbotAI* ai) { return new BossShadowResistanceTrigger(ai, "gehennas"); };
+            creators["mc garr fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceTrigger(ai, "garr"); };
+            creators["mc garr mark boss"] = [](PlayerbotAI* ai) { return new McGarrMarkBossTrigger(ai); };
+            creators["mc garr is main tank"] = [](PlayerbotAI* ai) { return new McGarrIsMainTankTrigger(ai); };
+            creators["mc garr is assist tank"] = [](PlayerbotAI* ai) { return new McGarrIsAssistTankTrigger(ai); };
+            creators["mc garr dps focus garr"] = [](PlayerbotAI* ai) { return new McGarrDpsFocusGarrTrigger(ai); };
+            creators["mc garr mark firesworn"] = [](PlayerbotAI* ai) { return new McGarrMarkFireswornTrigger(ai); };
+            creators["mc baron geddon fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceTrigger(ai, "baron geddon"); };
+            creators["mc living bomb debuff"] = [](PlayerbotAI* ai) { return new McLivingBombDebuffTrigger(ai); };
+            creators["mc baron geddon inferno"] = [](PlayerbotAI* ai) { return new McBaronGeddonInfernoTrigger(ai); };
+            creators["mc shazzrah ranged"] = [](PlayerbotAI* ai) { return new McShazzrahRangedTrigger(ai); };
+            creators["mc sulfuron harbinger fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceTrigger(ai, "sulfuron harbinger"); };
+            creators["mc golemagg fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceTrigger(ai, "golemagg the incinerator"); };
+            creators["mc golemagg mark boss"] = [](PlayerbotAI* ai) { return new McGolemaggMarkBossTrigger(ai); };
+            creators["mc golemagg is main tank"] = [](PlayerbotAI* ai) { return new McGolemaggIsMainTankTrigger(ai); };
+            creators["mc golemagg is assist tank"] = [](PlayerbotAI* ai) { return new McGolemaggIsAssistTankTrigger(ai); };
+            creators["mc majordomo shadow resistance"] = [](PlayerbotAI* ai) { return new BossShadowResistanceTrigger(ai, "majordomo executus"); };
+            creators["mc ragnaros fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceTrigger(ai, "ragnaros"); };
+            creators["mc core hound mark"] = [](PlayerbotAI* ai) { return new McCoreHoundMarkTrigger(ai); };
 
             creators["suppression device need stealth"] = [](PlayerbotAI* ai) { return new SuppressionDeviceNeedStealthTrigger(ai); };
             creators["suppression device in sight"] = [](PlayerbotAI* ai) { return new SuppressionDeviceInSightTrigger(ai); };

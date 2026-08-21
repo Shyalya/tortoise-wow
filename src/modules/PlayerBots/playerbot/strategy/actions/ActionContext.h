@@ -75,6 +75,7 @@
 
 #include "OnyxiasLairDungeonActions.h"
 #include "MoltenCoreDungeonActions.h"
+#include "BossAuraActions.h"
 #include "BlackwingLairDungeonActions.h"
 #include "KarazhanDungeonActions.h"
 #include "NaxxramasDungeonActions.h"
@@ -378,6 +379,28 @@ namespace ai
             creators["move to mc rune"] = [](PlayerbotAI* ai) { return new MoveToMCRuneAction(ai); };
             creators["douse mc rune aqual"] = [](PlayerbotAI* ai) { return new DouseMCRuneActionAqual(ai); };
             creators["douse mc rune eternal"] = [](PlayerbotAI* ai) { return new DouseMCRuneActionEternal(ai); };
+
+            creators["mc lucifron shadow resistance"] = [](PlayerbotAI* ai) { return new BossShadowResistanceAction(ai, "lucifron"); };
+            creators["mc magmadar fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceAction(ai, "magmadar"); };
+            creators["mc gehennas shadow resistance"] = [](PlayerbotAI* ai) { return new BossShadowResistanceAction(ai, "gehennas"); };
+            creators["mc garr fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceAction(ai, "garr"); };
+            creators["mc garr mark boss"] = [](PlayerbotAI* ai) { return new McGarrMarkBossAction(ai); };
+            creators["mc garr main tank attack garr"] = [](PlayerbotAI* ai) { return new McGarrMainTankAttackGarrAction(ai); };
+            creators["mc garr assist tank attack firesworn"] = [](PlayerbotAI* ai) { return new McGarrAssistTankAttackFireswornAction(ai); };
+            creators["mc garr dps attack garr"] = [](PlayerbotAI* ai) { return new McGarrDpsAttackGarrAction(ai); };
+            creators["mc garr mark firesworn"] = [](PlayerbotAI* ai) { return new McGarrMarkFireswornAction(ai); };
+            creators["mc baron geddon fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceAction(ai, "baron geddon"); };
+            creators["mc move from group"] = [](PlayerbotAI* ai) { return new McMoveFromGroupAction(ai); };
+            creators["mc move from baron geddon"] = [](PlayerbotAI* ai) { return new McMoveFromBaronGeddonAction(ai); };
+            creators["mc shazzrah move away"] = [](PlayerbotAI* ai) { return new McShazzrahMoveAwayAction(ai); };
+            creators["mc sulfuron harbinger fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceAction(ai, "sulfuron harbinger"); };
+            creators["mc golemagg fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceAction(ai, "golemagg the incinerator"); };
+            creators["mc golemagg mark boss"] = [](PlayerbotAI* ai) { return new McGolemaggMarkBossAction(ai); };
+            creators["mc golemagg main tank attack golemagg"] = [](PlayerbotAI* ai) { return new McGolemaggMainTankAttackGolemaggAction(ai); };
+            creators["mc golemagg assist tank attack core rager"] = [](PlayerbotAI* ai) { return new McGolemaggAssistTankAttackCoreRagerAction(ai); };
+            creators["mc majordomo shadow resistance"] = [](PlayerbotAI* ai) { return new BossShadowResistanceAction(ai, "majordomo executus"); };
+            creators["mc ragnaros fire resistance"] = [](PlayerbotAI* ai) { return new BossFireResistanceAction(ai, "ragnaros"); };
+            creators["mc core hound mark"] = [](PlayerbotAI* ai) { return new McCoreHoundMarkAction(ai); };
 
             creators["move to suppression device"] = [](PlayerbotAI* ai) { return new MoveToSuppressionDeviceAction(ai); };
             creators["stealth for suppression device"] = [](PlayerbotAI* ai) { return new StealthForSuppressionDeviceAction(ai); };

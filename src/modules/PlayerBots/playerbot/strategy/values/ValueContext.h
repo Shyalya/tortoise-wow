@@ -163,6 +163,7 @@ namespace ai
             creators["grind target"] = [](PlayerbotAI* ai) { return new GrindTargetValue(ai); };
             creators["rti target"] = [](PlayerbotAI* ai) { return new RtiTargetValue(ai); };
             creators["rti cc target"] = [](PlayerbotAI* ai) { return new RtiCcTargetValue(ai); };
+            creators["find target"] = [](PlayerbotAI* ai) { return new FindTargetValue(ai); };
             creators["duel target"] = [](PlayerbotAI* ai) { return new DuelTargetValue(ai); };
             creators["party member to dispel"] = [](PlayerbotAI* ai) { return new PartyMemberToDispel(ai); };
             creators["party member to protect"] = [](PlayerbotAI* ai) { return new PartyMemberToProtect(ai); };

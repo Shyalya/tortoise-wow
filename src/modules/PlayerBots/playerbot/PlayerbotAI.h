@@ -396,8 +396,13 @@ public:
     void Reset(bool full = false);
     static bool IsTank(Player* player, bool inGroup = true);
     static bool IsHeal(Player* player, bool inGroup = true);
+    static bool IsDps(Player* player, bool inGroup = true);
+    static bool IsMainTank(Player* player);
+    static bool IsAssistTank(Player* player);
+    static bool IsAssistTankOfIndex(Player* player, uint8 index, bool ignoreDeadPlayers = false);
     bool IsRanged(Player* player, bool inGroup = true);
     bool IsMelee(Player* player, bool inGroup = true);
+    void ApplyInstanceStrategies(uint32 mapId, bool tellMaster = false);
     Creature* GetCreature(ObjectGuid guid) const;
     Creature* GetAnyTypeCreature(ObjectGuid guid) const;
     Unit* GetUnit(ObjectGuid guid);

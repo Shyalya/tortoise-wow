@@ -224,3 +224,49 @@ std::list<ObjectGuid> FriendlyManualTargetsValue::LazyGet()
 {
     return Get();
 }
+
+Unit* FindTargetValue::Calculate()
+{
+    if (qualifier.empty())
+        return nullptr;
+
+    auto matchName = [&](Unit* unit) -> bool
+    {
+        if (!unit || !unit->IsAlive() || unit->IsFriendlyTo(bot))
+            return false;
+
+        std::wstring wnamepart;
+        if (!Utf8toWStr(unit->GetName(), wnamepart))
+            return false;
+        wstrToLower(wnamepart);
+        return !qualifier.empty() && qualifier.length() == wnamepart.length() && Utf8FitTo(qualifier, wnamepart);
+    };
+
+    std::list<ObjectGuid> possible = AI_VALUE(std::list<ObjectGuid>, "possible targets no los");
+    for (ObjectGuid const& guid : possible)
+    {
+        Unit* unit = ai->GetUnit(guid);
+        if (matchName(unit))
+            return unit;
+    }
+
+    std::list<ObjectGuid> attackers = AI_VALUE(std::list<ObjectGuid>, "possible attack targets");
+    for (ObjectGuid const& guid : attackers)
+    {
+        Unit* unit = ai->GetUnit(guid);
+        if (matchName(unit))
+            return unit;
+    }
+
+    for (HostileReference* ref = sServerFacade.GetHostileRefManager(bot).getFirst(); ref; ref = ref->next())
+    {
+        ThreatManager* threatManager = ref->getSource();
+        if (!threatManager)
+            continue;
+        Unit* unit = threatManager->getOwner();
+        if (matchName(unit))
+            return unit;
+    }
+
+    return nullptr;
+}

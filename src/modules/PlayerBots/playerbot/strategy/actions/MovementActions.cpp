@@ -13,6 +13,7 @@
 #include "Movement/TargetedMovementGenerator.h"
 #include "playerbot/TravelMgr.h"
 #include "Transports/Transport.h"
+#include <cfloat>
 #ifdef MANGOSBOT_TWO
 #include "Entities/Vehicle.h"
 #endif
@@ -3042,6 +3043,60 @@ bool MovementAction::Flee(Unit *target)
     }
 
     return succeeded;
+}
+
+bool MovementAction::MoveAway(Unit* target, float distance)
+{
+    if (!target || !ai->CanMove())
+        return false;
+
+    float angle = target->GetAngle(bot) + M_PI_F;
+    float x = bot->GetPositionX() + cos(angle) * distance;
+    float y = bot->GetPositionY() + sin(angle) * distance;
+    float z = bot->GetPositionZ();
+    bot->UpdateAllowedPositionZ(x, y, z);
+    return MoveTo(bot->GetMapId(), x, y, z, false, false, false, true);
+}
+
+bool MovementAction::MoveFromGroup(float distance)
+{
+    Group* group = bot->GetGroup();
+    if (!group)
+        return false;
+
+    uint32 mapId = bot->GetMapId();
+    float closestDist = FLT_MAX;
+    float avgX = 0.0f;
+    float avgY = 0.0f;
+    uint32 count = 0;
+
+    for (GroupReference* gref = group->GetFirstMember(); gref; gref = gref->next())
+    {
+        Player* player = gref->getSource();
+        if (!player || player == bot || !player->IsAlive() || player->GetMapId() != mapId)
+            continue;
+
+        float dist = bot->GetDistance2d(player);
+        if (closestDist > dist)
+            closestDist = dist;
+
+        avgX += player->GetPositionX();
+        avgY += player->GetPositionY();
+        ++count;
+    }
+
+    if (!count || closestDist >= distance)
+        return false;
+
+    avgX /= count;
+    avgY /= count;
+    float angle = bot->GetAngle(avgX, avgY) + M_PI_F;
+    float moveDist = distance - closestDist;
+    float x = bot->GetPositionX() + cos(angle) * moveDist;
+    float y = bot->GetPositionY() + sin(angle) * moveDist;
+    float z = bot->GetPositionZ();
+    bot->UpdateAllowedPositionZ(x, y, z);
+    return MoveTo(bot->GetMapId(), x, y, z, false, false, false, true);
 }
 
 void MovementAction::ClearIdleState()

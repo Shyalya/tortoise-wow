@@ -1,6 +1,7 @@
 #pragma once
 #include "playerbot/strategy//AiObject.h"
 #include "playerbot/strategy/Value.h"
+#include "playerbot/strategy/NamedObjectContext.h"
 #include "playerbot/TravelMgr.h"
 
 namespace ai
@@ -168,5 +169,13 @@ namespace ai
     {
     public:
         BuffTargetsValue(PlayerbotAI* ai) : FriendlyManualTargetsValue(ai) {}
+    };
+
+    // Find a hostile unit by creature name (used by raid fight strategies).
+    class FindTargetValue : public UnitCalculatedValue, public Qualified
+    {
+    public:
+        FindTargetValue(PlayerbotAI* ai) : UnitCalculatedValue(ai, "find target", 1), Qualified() {}
+        Unit* Calculate() override;
     };
 }

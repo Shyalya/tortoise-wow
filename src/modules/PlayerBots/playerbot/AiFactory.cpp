@@ -294,6 +294,7 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
 
     combatEngine->addStrategies("mount", NULL);
     combatEngine->addStrategy("avoid mobs");
+    combatEngine->addStrategy("dungeon");
 
     // A battleground is precisely where "pvp" is needed: it is the strategy
     // whose "enemy player near" trigger lets the bot take an enemy player as a
@@ -940,6 +941,7 @@ void AiFactory::AddDefaultNonCombatStrategies(Player* player, PlayerbotAI* const
 
     nonCombatEngine->addStrategies("wbuff", NULL);
     nonCombatEngine->addStrategy("avoid mobs");
+    nonCombatEngine->addStrategy("dungeon");
 
     if(sPlayerbotAIConfig.llmEnabled == 2)
         nonCombatEngine->addStrategy("ai chat");

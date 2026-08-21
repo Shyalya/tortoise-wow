@@ -1340,6 +1340,8 @@ void PlayerbotAI::HandleTeleportAck()
         bot->SendHeartBeat();
 
     Reset();
+    if (bot->IsInWorld())
+        ApplyInstanceStrategies(bot->GetMapId());
 }
 
 void PlayerbotAI::Reset(bool full)
@@ -2633,6 +2635,9 @@ void PlayerbotAI::ResetStrategies(bool autoLoad)
         engines[i]->initMode = false;
         engines[i]->Init();
     }
+
+    if (bot->IsInWorld())
+        ApplyInstanceStrategies(bot->GetMapId());
 }
 
 bool PlayerbotAI::IsRanged(Player* player, bool inGroup)
@@ -2693,6 +2698,120 @@ bool PlayerbotAI::IsHeal(Player* player, bool inGroup)
     BotRoles botRoles = AiFactory::GetPlayerRoles(player);
 
     return (botRoles & BOT_ROLE_HEALER) != 0;
+}
+
+bool PlayerbotAI::IsDps(Player* player, bool inGroup)
+{
+    PlayerbotAI* botAi = player->GetPlayerbotAI();
+    if (botAi)
+    {
+        bool isDps = botAi->ContainsStrategy(STRATEGY_TYPE_DPS);
+        if (inGroup || isDps)
+            return isDps;
+    }
+
+    return !IsTank(player, inGroup) && !IsHeal(player, inGroup);
+}
+
+bool PlayerbotAI::IsMainTank(Player* player)
+{
+    if (!player)
+        return false;
+
+    Group* group = player->GetGroup();
+    if (!group)
+        return IsTank(player);
+
+    ObjectGuid mainTankGuid = group->GetMainTankGuid();
+    if (mainTankGuid)
+        return player->GetObjectGuid() == mainTankGuid;
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->getSource();
+        if (member && IsTank(member) && member->IsAlive())
+            return player == member;
+    }
+
+    return IsTank(player);
+}
+
+bool PlayerbotAI::IsAssistTank(Player* player)
+{
+    if (!IsTank(player))
+        return false;
+
+    Group* group = player->GetGroup();
+    if (!group)
+        return false;
+
+    return !IsMainTank(player);
+}
+
+bool PlayerbotAI::IsAssistTankOfIndex(Player* player, uint8 index, bool ignoreDeadPlayers)
+{
+    if (!IsTank(player))
+        return false;
+
+    Group* group = player->GetGroup();
+    if (!group)
+        return false;
+
+    if (IsMainTank(player))
+        return false;
+
+    if (ignoreDeadPlayers && !player->IsAlive())
+        return false;
+
+    ObjectGuid mainTankGuid = group->GetMainTankGuid();
+    uint8 totalAssistants = 0;
+    uint8 assistantsBeforePlayer = 0;
+    uint8 nonAssistantsBeforePlayer = 0;
+    bool playerFound = false;
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->getSource();
+        if (!member || (ignoreDeadPlayers && !member->IsAlive()) || !IsTank(member))
+            continue;
+
+        if (mainTankGuid && member->GetObjectGuid() == mainTankGuid)
+            continue;
+        if (!mainTankGuid && IsMainTank(member))
+            continue;
+
+        bool isAssistant = group->IsAssistant(member->GetObjectGuid());
+        if (isAssistant)
+            ++totalAssistants;
+
+        if (member == player)
+            playerFound = true;
+        else if (!playerFound)
+        {
+            if (isAssistant)
+                ++assistantsBeforePlayer;
+            else
+                ++nonAssistantsBeforePlayer;
+        }
+    }
+
+    if (!playerFound)
+        return false;
+
+    uint8 playerIndex = group->IsAssistant(player->GetObjectGuid())
+        ? assistantsBeforePlayer
+        : (totalAssistants + nonAssistantsBeforePlayer);
+
+    return playerIndex == index;
+}
+
+void PlayerbotAI::ApplyInstanceStrategies(uint32 mapId, bool /*tellMaster*/)
+{
+    // Clear known instance fight strategies, then re-enable for current map.
+    ChangeStrategy("-molten core,-magmadar", BotState::BOT_STATE_ALL);
+
+    if (mapId == 409)
+        ChangeStrategy("+molten core", BotState::BOT_STATE_ALL);
 }
 
 namespace MaNGOS
