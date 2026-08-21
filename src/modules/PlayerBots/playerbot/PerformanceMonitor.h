@@ -26,10 +26,12 @@ enum PerformanceMetric
     PERF_MON_TOTAL
 };
 
+#include <string_view>
+
 class PerformanceMonitorOperation
 {
 public:
-    PerformanceMonitorOperation(PerformanceData& data, std::string name, PerformanceStack* stack);
+    PerformanceMonitorOperation(PerformanceData& data, std::string_view name, PerformanceStack* stack);
     ~PerformanceMonitorOperation();
 
 private:
@@ -77,8 +79,12 @@ class PerformanceMonitor
         }
 
     public:
-        std::unique_ptr<PerformanceMonitorOperation> start(PerformanceMetric metric, std::string name, PerformanceStack* stack = nullptr, uint32 mapId = 0, uint32 instanceId = 0);
-        std::unique_ptr<PerformanceMonitorOperation> start(PerformanceMetric metric, std::string name, PlayerbotAI* ai);
+        // name is a view: every call site passes a literal, and the body below
+        // bails immediately when the monitor is off. Taking it by value meant
+        // building - and throwing away - a heap string per call, on every tick
+        // of every bot, for a function that had already decided to do nothing.
+        std::unique_ptr<PerformanceMonitorOperation> start(PerformanceMetric metric, std::string_view name, PerformanceStack* stack = nullptr, uint32 mapId = 0, uint32 instanceId = 0);
+        std::unique_ptr<PerformanceMonitorOperation> start(PerformanceMetric metric, std::string_view name, PlayerbotAI* ai);
         void PrintStats(bool perTick = false,  bool fullStack = false, bool showMap = false);
         void Reset();
         void Init(uint32 mapId, uint32 instanceId);

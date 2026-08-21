@@ -46,6 +46,7 @@ class Config
     bool SetSource(std::string const& file, std::string const& /*prefix*/) { return SetSource(file.c_str()); }
     bool SetSource(const char* file, std::string const& /*prefix*/) { return SetSource(file); }
     bool Reload();
+    bool LoadModulesConfigs();
 
     std::string GetStringDefault(const char* name, const char* def);
     // cmangos's 1-arg form (default = "").
@@ -76,6 +77,9 @@ class Config
 
         std::string mFilename;
         ACE_Configuration_Heap* mConf;
+
+        std::vector<std::string> GetModuleConfigFiles() const;
+        std::string GetConfigDirectory() const;
 
         using LockType = std::mutex;
         using GuardType = std::unique_lock<LockType>;

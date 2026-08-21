@@ -96,7 +96,7 @@ bool FindCorpseAction::Execute(Event& event)
     if (master && !manualCorpseRun)
     {
         float masterTargetDist = AI_VALUE2(float, "distance", "master target");
-        if (!master->GetPlayerbotAI() && sServerFacade.IsDistanceLessThan(masterTargetDist, sPlayerbotAIConfig.farDistance))
+        if (!GetBotAI(master) && sServerFacade.IsDistanceLessThan(masterTargetDist, sPlayerbotAIConfig.farDistance))
         {
             sLog.outDetail("[BOT CORPSE] %s: find corpse - BLOCKED: real-player master within farDistance (dist=%.1f < %.1f). Waiting for master to resurrect. Say 'corpse run' to override.",
                 bot->GetName(), masterTargetDist, sPlayerbotAIConfig.farDistance);
@@ -109,7 +109,7 @@ bool FindCorpseAction::Execute(Event& event)
     float corpseDist = botPos.distance(corpsePos);
 
     //If player fell through terrain move corpse to player position.
-    if (bot->isRealPlayer() && botPos.getMapId() == moveToPos.getMapId())
+    if (IsRealPlayer(bot) && botPos.getMapId() == moveToPos.getMapId())
     {
         //Try to correct the position upward.
         if (!moveToPos.ClosestCorrectPoint(5.0f, 500.0f, bot->GetInstanceId()))
@@ -229,7 +229,7 @@ bool FindCorpseAction::Execute(Event& event)
                 bot->GetName(), (long long)deadTime, delay);
             bot->GetMotionMaster()->Clear();
             bot->TeleportTo(moveToPos.getMapId(), moveToPos.getX(), moveToPos.getY(), moveToPos.getZ(), 0);
-            if (bot->isRealPlayer())
+            if (IsRealPlayer(bot))
                 bot->SendHeartBeat();
         }
         else
@@ -386,7 +386,7 @@ bool SpiritHealerAction::Execute(Event& event)
     {
         bot->GetMotionMaster()->Clear();
         bot->TeleportTo(grave.getMapId(), grave.getX(), grave.getY(), grave.getZ(), 0);
-        if (bot->isRealPlayer())
+        if (IsRealPlayer(bot))
             bot->SendHeartBeat();
         return true;
     }

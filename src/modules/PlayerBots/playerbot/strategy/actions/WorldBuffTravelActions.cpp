@@ -150,7 +150,7 @@ static bool SummonPlayerToSummoner(Player* summoner, Player* target, PlayerbotAI
     float x, y, z;
     summoner->GetPosition(x, y, z);
 
-    if (target->isRealPlayer())
+    if (IsRealPlayer(target))
     {
         target->SetSummonPoint(summoner->GetMapId(), x, y, z);
 
@@ -286,7 +286,7 @@ bool WorldBuffTravelApplyAction::TrySummonFarAwayMembers(WorldBuffTravelStep ste
             continue;
 
         bool needsSummonByStep = false;
-        PlayerbotAI* memberAI = member->GetPlayerbotAI();
+        PlayerbotAI* memberAI = GetBotAI(member);
         if (memberAI)
         {
             uint8 memberStep = memberAI->GetAiObjectContext()->GetValue<uint8>("world buff travel step")->Get();
@@ -308,7 +308,7 @@ bool WorldBuffTravelApplyAction::TrySummonFarAwayMembers(WorldBuffTravelStep ste
             continue;
         }
 
-        if (member->isRealPlayer())
+        if (IsRealPlayer(member))
             realPlayersToSummon.push_back(member);
         else
             botsToSummon.push_back(member);
@@ -331,7 +331,7 @@ bool WorldBuffTravelApplyAction::TrySummonFarAwayMembers(WorldBuffTravelStep ste
             ai->TellPlayer(GetMaster(), "Summoning " + std::string(toSummon->GetName()) + " to the group!");
 
             // Sync the summoned member's step to the warlock's step
-            PlayerbotAI* memberAI = toSummon->GetPlayerbotAI();
+            PlayerbotAI* memberAI = GetBotAI(toSummon);
             if (memberAI)
             {
                 memberAI->GetAiObjectContext()->GetValue<uint8>("world buff travel step")->Set(warlockStep);

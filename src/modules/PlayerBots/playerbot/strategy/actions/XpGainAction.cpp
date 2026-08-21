@@ -77,7 +77,7 @@ bool XpGainAction::Execute(Event& event)
     uint32 levelAfter = bot->GetLevel();
 
     if (levelAfter > levelBefore && levelAfter >= 5 &&
-        sRandomPlayerbotMgr.IsRandomBot(bot) && !bot->GetPlayerbotAI()->HasRealPlayerMaster())
+        sRandomPlayerbotMgr.IsRandomBot(bot) && !GetBotAI(bot)->HasRealPlayerMaster())
     {
         sLog.outBasic("Bot #%d <%s> levelled %d->%d (Execute hook), triggering gear update",
             bot->GetGUIDLow(), bot->GetName(), levelBefore, levelAfter);

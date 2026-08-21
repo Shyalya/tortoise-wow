@@ -121,7 +121,7 @@ bool PossibleAttackTargetsValue::HasBreakableCC(Unit* target, Player* player)
         return true;
     }
 
-    PlayerbotAI* ai = player->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(player);
     if (ai)
     {
         if (ai->HasAura("sap", target))
@@ -172,7 +172,7 @@ bool PossibleAttackTargetsValue::IsImmuneToDamage(Unit* target, Player* player)
     }
 
     // Immune to damage
-    PlayerbotAI* ai = player->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(player);
     if (!ai)
         return false;
 
@@ -222,7 +222,7 @@ bool PossibleAttackTargetsValue::IsTapped(Unit* target, Player* player)
 {
     if (player)
     {
-        PlayerbotAI* ai = player->GetPlayerbotAI();
+        PlayerbotAI* ai = GetBotAI(player);
 
         if (ai && ai->HasAura("tame beast", target))
             return false;
@@ -232,7 +232,7 @@ bool PossibleAttackTargetsValue::IsTapped(Unit* target, Player* player)
         {
             Unit* victim = creature->GetVictim();
             Player* master = ai ? ai->GetMaster() : nullptr;
-            PlayerbotAI* ai = player->GetPlayerbotAI();
+            PlayerbotAI* ai = GetBotAI(player);
 
              if (!victim) //Target is not attacking anything.
                 return true;
@@ -281,13 +281,13 @@ bool PossibleAttackTargetsValue::IsValid(Unit* target, Player* player, float ran
     if (target->GetObjectGuid().IsPlayer())
         return true;
 
-    if (player->GetPlayerbotAI() && (target->GetObjectGuid() == PAI_VALUE(ObjectGuid, "attack target")))
+    if (GetBotAI(player) && (target->GetObjectGuid() == PAI_VALUE(ObjectGuid, "attack target")))
         return true;
 
     if(!HasIgnoreCCRti(target, player) && (HasBreakableCC(target, player) || HasUnBreakableCC(target, player)))
         return true;
 
-    if (player->GetPlayerbotAI() && !player->GetPlayerbotAI()->HasActivePlayerMaster()&& PAI_VALUE(Unit*, "rti target") == target)
+    if (GetBotAI(player) && !GetBotAI(player)->HasActivePlayerMaster()&& PAI_VALUE(Unit*, "rti target") == target)
         return true;
 
     return false;
@@ -346,7 +346,7 @@ bool PossibleAttackTargetsValue::IsPossibleTarget(Unit* target, Player* player, 
 
 bool PossibleAddsValue::Calculate()
 {
-    PlayerbotAI *ai = bot->GetPlayerbotAI();
+    PlayerbotAI *ai = GetBotAI(bot);
     std::list<ObjectGuid> possible = ai->GetAiObjectContext()->GetValue<std::list<ObjectGuid>>("possible targets no los")->Get();
     std::list<ObjectGuid> attackers = ai->GetAiObjectContext()->GetValue<std::list<ObjectGuid>>("possible attack targets")->Get();
 

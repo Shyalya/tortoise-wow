@@ -544,7 +544,7 @@ bool RpgAIChatAction::RequestNewLines()
 
     WorldSession* session = bot->GetSession();
 
-    bool debug = bot->GetPlayerbotAI()->HasStrategy("debug llm", BotState::BOT_STATE_NON_COMBAT);
+    bool debug = GetBotAI(bot)->HasStrategy("debug llm", BotState::BOT_STATE_NON_COMBAT);
 
     uint32 lang = bot->GetTeam() == ALLIANCE ? LANG_COMMON : LANG_ORCISH;
 
@@ -802,7 +802,7 @@ bool RpgEnchantAction::Execute(Event& event)
 
         ai->TellDebug(ai->GetMaster(), "enchanting" + param.str(), "debug rpg");
 
-        if (player->isRealPlayer() && !player->GetTradeData()) //Start the trade from the other side to open the window
+        if (IsRealPlayer(player) && !player->GetTradeData()) //Start the trade from the other side to open the window
         {
             ai->TellDebug(ai->GetMaster(), "open trade window", "debug rpg");
             WorldPacket packet(CMSG_INITIATE_TRADE);
@@ -813,7 +813,7 @@ bool RpgEnchantAction::Execute(Event& event)
         if (!player->GetTradeData() || !player->GetTradeData()->HasItem(item->GetObjectGuid()))
         {
             ai->TellDebug(ai->GetMaster(), "starting trade", "debug rpg");
-            player->GetPlayerbotAI()->DoSpecificAction("trade", Event("rpg action", param.str().c_str()), true);
+            GetBotAI(player)->DoSpecificAction("trade", Event("rpg action", param.str().c_str()), true);
         }
 
         bool isTrading = bot->GetTradeData();

@@ -461,12 +461,12 @@ float Formation::GetFollowAngle()
     Player* followTarget = (Player*)AI_VALUE(Unit*, "follow target");
 
     Group* group = bot->GetGroup();
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(bot);
     int index = 1, total = 1;
 
-    if (!group && followTarget && !followTarget->GetPlayerbotAI() && followTarget->GetPlayerbotMgr())
+    if (!group && followTarget && !GetBotAI(followTarget) && GetBotMgr(followTarget))
     {
-        followTarget->GetPlayerbotMgr()->ForEachPlayerbot([&](Player* player)
+        GetBotMgr(followTarget)->ForEachPlayerbot([&](Player* player)
         {
             if (player == bot) index = total;
             total++;

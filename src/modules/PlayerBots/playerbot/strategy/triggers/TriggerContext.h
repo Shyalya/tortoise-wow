@@ -187,6 +187,7 @@ namespace ai
             creators["team has flag"] = [](PlayerbotAI* ai) { return new TeamHasFlag(ai); };
             creators["enemy team has flag"] = [](PlayerbotAI* ai) { return new EnemyTeamHasFlag(ai); };
             creators["enemy flagcarrier near"] = [](PlayerbotAI* ai) { return new EnemyFlagCarrierNear(ai); };
+            creators["team flagcarrier near"] = [](PlayerbotAI* ai) { return new TeamFlagCarrierNear(ai); };
             creators["in battleground"] = [](PlayerbotAI* ai) { return new PlayerIsInBattleground(ai); };
             creators["in battleground without flag"] = [](PlayerbotAI* ai) { return new PlayerIsInBattlegroundWithoutFlag(ai); };
             creators["wants in bg"] = [](PlayerbotAI* ai) { return new PlayerWantsInBattlegroundTrigger(ai); };

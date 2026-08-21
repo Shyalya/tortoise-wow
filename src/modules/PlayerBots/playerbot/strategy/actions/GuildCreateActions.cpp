@@ -88,7 +88,7 @@ bool BuyPetitionAction::canBuyPetition(Player* bot)
     if (bot->GetGuildIdInvited())
         return false;    
 
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(bot);
     AiObjectContext* context = ai->GetAiObjectContext();
 
     if (AI_VALUE2(uint32, "item count", "Hitem:5863:"))
@@ -183,10 +183,10 @@ bool PetitionOfferNearbyAction::Execute(Event& event)
         if (player->GetGuildIdInvited())
             continue;
 
-        if (!sPlayerbotAIConfig.randomBotInvitePlayer && player->isRealPlayer())
+        if (!sPlayerbotAIConfig.randomBotInvitePlayer && IsRealPlayer(player))
             continue;
 
-        PlayerbotAI* botAi = player->GetPlayerbotAI();
+        PlayerbotAI* botAi = GetBotAI(player);
 
         if (botAi)
         {

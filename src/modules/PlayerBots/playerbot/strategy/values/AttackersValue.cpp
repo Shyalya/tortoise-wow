@@ -58,7 +58,7 @@ std::list<ObjectGuid> AttackersValue::Calculate()
             if (sServerFacade.GetDistance2d(bot, player) > 10.0f)
                 continue;
 
-            PlayerbotAI* botAi = player->GetPlayerbotAI();
+            PlayerbotAI* botAi = GetBotAI(player);
 
             if (!botAi)
                 continue;
@@ -200,7 +200,7 @@ void AttackersValue::AddTargetsOf(Player* player, std::set<Unit*>& targets, std:
         std::set<Unit*> units;
 
         // If the player is a bot
-        PlayerbotAI* playerBot = player->GetPlayerbotAI();
+        PlayerbotAI* playerBot = GetBotAI(player);
         if (playerBot)
         {
             // Get all the units around the player
@@ -324,7 +324,7 @@ bool AttackersValue::InCombat(Unit* target, Player* player, bool checkPullTarget
         }
     }
 
-    if(!inCombat && checkPullTargets && player->GetPlayerbotAI())
+    if(!inCombat && checkPullTargets && GetBotAI(player))
     {
         inCombat = (PAI_VALUE(ObjectGuid, "attack target") == target->GetObjectGuid()) ||
                    (PAI_VALUE(Unit*, "pull target") == target);
@@ -351,7 +351,7 @@ bool AttackersValue::IsValid(Unit* target, Player* player, Player* owner, bool c
     if (enemyPlayer)
     {
         // Don't consider enemy players if pvp strategy is not set
-        if (playerToCheckAgainst->GetPlayerbotAI() && !playerToCheckAgainst->GetPlayerbotAI()->HasStrategy("pvp", BotState::BOT_STATE_COMBAT))
+        if (GetBotAI(playerToCheckAgainst) && !GetBotAI(playerToCheckAgainst)->HasStrategy("pvp", BotState::BOT_STATE_COMBAT))
         {
             return false;
         }
@@ -382,7 +382,7 @@ bool AttackersValue::IsValid(Unit* target, Player* player, Player* owner, bool c
         if (checkInCombat && !isDuelOpponent && !InCombat(target, player, (player == owner)))
         {
             bool isRtiTarget = false;
-            if (player->GetPlayerbotAI() && !player->GetPlayerbotAI()->HasActivePlayerMaster())
+            if (GetBotAI(player) && !GetBotAI(player)->HasActivePlayerMaster())
             {
                 Unit* rtiTarget = PAI_VALUE(Unit*, "rti target");
                 if (target == rtiTarget)
@@ -411,7 +411,7 @@ bool AttackersValue::IsValid(Unit* target, Player* player, Player* owner, bool c
         if (checkInCombat && !InCombat(target, player, (player == owner)))
         {
             bool isRtiTarget = false;
-            if (player->GetPlayerbotAI() && !player->GetPlayerbotAI()->HasActivePlayerMaster())
+            if (GetBotAI(player) && !GetBotAI(player)->HasActivePlayerMaster())
             {
                 Unit* rtiTarget = PAI_VALUE(Unit*, "rti target");
                 if (target == rtiTarget)
@@ -447,10 +447,10 @@ bool AttackersValue::IsValid(Unit* target, Player* player, Player* owner, bool c
 
 bool AttackersValue::IgnoreTarget(Unit* target, Player* playerToCheckAgainst)
 {
-    if (!playerToCheckAgainst->GetPlayerbotAI())
+    if (!GetBotAI(playerToCheckAgainst))
         return false; 
 
-    PlayerbotAI* ai = playerToCheckAgainst->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(playerToCheckAgainst);
     AiObjectContext* context = ai->GetAiObjectContext();
 
     //Ignore Hard hostiles while not already fighting.

@@ -277,7 +277,7 @@ bool CheckMountStateAction::isUseful()
         return false;
 #endif
 
-    if (!bot->GetPlayerbotAI()->HasStrategy("mount", BotState::BOT_STATE_NON_COMBAT) && !bot->IsMounted())
+    if (!GetBotAI(bot)->HasStrategy("mount", BotState::BOT_STATE_NON_COMBAT) && !bot->IsMounted())
         return false;
 
     if (!bot->IsMounted() && bot->IsInWater())
@@ -410,14 +410,14 @@ bool CheckMountStateAction::Mount(Player* requester, bool limitSpeedToGroup)
             if (!ai->IsSafe(member))
                 continue;
 
-            if (!member->GetPlayerbotAI())
+            if (!GetBotAI(member))
                 continue;
 
             if (!member->IsAlive())
                 continue;
 
-            if (!(member->GetPlayerbotAI()->HasStrategy("follow", BotState::BOT_STATE_NON_COMBAT) ||
-                member->GetPlayerbotAI()->HasStrategy("wander", BotState::BOT_STATE_NON_COMBAT)))
+            if (!(GetBotAI(member)->HasStrategy("follow", BotState::BOT_STATE_NON_COMBAT) ||
+                GetBotAI(member)->HasStrategy("wander", BotState::BOT_STATE_NON_COMBAT)))
                 continue;
 
             if (WorldPosition(bot).distance(member) > sPlayerbotAIConfig.reactDistance * 5)

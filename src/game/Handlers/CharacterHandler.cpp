@@ -42,6 +42,7 @@
 #include "Util.h"
 #include "Language.h"
 #include "Chat.h"
+#include "ScriptObjects.h"
 #include "Anticheat.h"
 #include "MasterPlayer.h"
 #include "PlayerBroadcaster.h"
@@ -399,6 +400,10 @@ void WorldSession::HandleCharCreateOpcode(WorldPacket & recv_data)
     BASIC_LOG("Account: %d (IP: %s) Create Character:[%s] (guid: %u)", GetAccountId(), IP_str.c_str(), name.c_str(), pNewChar->GetGUIDLow());
     sLog.out(LOG_CHAR, "[%s:%u@%s] Create Character:[%s] (guid: %u)", GetUsername().c_str(), GetAccountId(), IP_str.c_str(), name.c_str(), pNewChar->GetGUIDLow());
     sDBLogger.LogCharAction({ pNewChar->GetGUIDLow(), GetAccountId(), LogCharAction::ActionCreate, {} });
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_CREATE, [&](PlayerScript* script)
+    {
+        script->OnCreate(pNewChar.get());
+    });
     sObjectMgr.IncreaseActivePlayersCount(team);
 }
 
@@ -462,6 +467,10 @@ void WorldSession::HandleCharDeleteOpcode(WorldPacket & recv_data)
         onlinePlayer->GetSession()->LogoutPlayer(true);
 
     Player::DeleteFromDB(guid, GetAccountId());
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_DELETE, [&](PlayerScript* script)
+    {
+        script->OnDelete(guid, GetAccountId());
+    });
 
     WorldPacket data(SMSG_CHAR_DELETE, 1);
     data << (uint8)CHAR_DELETE_SUCCESS;
@@ -632,12 +641,15 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
         //   3. User immediately logs into Char A as a real player
         // The take-over path below transfers the Player object cleanly; we
         // just have to make sure the bot brain stops first.
-        if (pCurrChar->GetPlayerbotAI())
+        if (Script_IsAIControlled(pCurrChar))
         {
-            sLog.outInfo("[BOT] HandlePlayerLogin: char %s (guid %u) currently running as a bot — "
-                         "detaching PlayerbotAI before real-player session take-over",
+            sLog.outInfo("[BOT] HandlePlayerLogin: char %s (guid %u) currently driven by a module - "
+                         "asking it to let go before real-player session take-over",
                          pCurrChar->GetName(), playerGuid.GetCounter());
-            pCurrChar->RemovePlayerbotAI();
+            ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_RELEASE_TO_CLIENT, [&](PlayerScript* script)
+            {
+                script->OnReleaseToClient(pCurrChar);
+            });
         }
 
         pCurrChar->GetSession()->SetPlayer(nullptr);
@@ -691,8 +703,8 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
     // with m_playerbotAI set during AddPlayerBot) skip this. Real players get
     // a mgr so .bot commands work (otherwise the user hits "you cannot control
     // bots yet").
-    if (!pCurrChar->GetPlayerbotAI())
-        pCurrChar->CreatePlayerbotMgr();
+    // The module attaches its own controller from PlayerScript::OnLogin, further
+    // down this function - nothing between here and there asks for it.
 
 
     //WE DO NOT NEED TO SEND ALL POSSIBLE TRANSMOGS TO ANY PLAYER ON LOGIN
@@ -781,7 +793,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
     //     through GetPlayerbotAI, and only up to level 5. ---
     if (sConfig.GetBoolDefault("BeginnersGuilds", false)
         && pCurrChar->GetGuildId() == 0
-        && !pCurrChar->GetPlayerbotAI()
+        && !Script_IsAIControlled(pCurrChar)
         && pCurrChar->GetLevel() <= 5)
     {
         // Random bots sit on RNDBOT accounts. Their session carries no username
@@ -1108,6 +1120,10 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
     if (showedIntroCinematic)
         pCurrChar->m_Events.AddEvent(new RefreshVisiblePlayersEvent(pCurrChar->GetObjectGuid()),
                                      pCurrChar->m_Events.CalculateTime(3000));
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_LOGIN, [&](PlayerScript* script)
+    {
+        script->OnLogin(pCurrChar);
+    });
 }
 
 void WorldSession::HandleSetFactionAtWarOpcode(WorldPacket & recv_data)

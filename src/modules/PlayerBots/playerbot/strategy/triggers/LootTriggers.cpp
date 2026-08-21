@@ -48,7 +48,7 @@ bool FarFromCurrentLootTrigger::IsActive()
     // "close enough" (2D <= 5) and so never fired "move to loot", yet "open loot" failed the
     // 3D gate -> it sat a few yards off a corpse it could not loot. Use the same 3D rule so
     // the bot keeps approaching until it is genuinely on the corpse, then loots.
-    if (Creature* creature = bot->GetPlayerbotAI()->GetCreature(loot.guid))
+    if (Creature* creature = GetBotAI(bot)->GetCreature(loot.guid))
     {
         if (sServerFacade.GetDeathState(creature) == CORPSE)
             return !creature->IsWithinDistInMap(bot, bot->GetMaxLootDistance(creature), true, SizeFactor::None);

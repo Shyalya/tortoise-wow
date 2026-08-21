@@ -190,7 +190,7 @@ void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
         return;
     }
     bool isRealRandomBot = sRandomPlayerbotMgr.IsRandomBot(bot);
-    bool isRandomBot = sRandomPlayerbotMgr.IsRandomBot(bot) && bot->GetPlayerbotAI() && !bot->GetPlayerbotAI()->HasRealPlayerMaster() && !bot->GetPlayerbotAI()->IsInRealGuild();
+    bool isRandomBot = sRandomPlayerbotMgr.IsRandomBot(bot) && GetBotAI(bot) && !GetBotAI(bot)->HasRealPlayerMaster() && !GetBotAI(bot)->IsInRealGuild();
 
     sLog.outDetail("Resetting player...");
     auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Reset");
@@ -3004,7 +3004,7 @@ void PlayerbotFactory::InitEquipment(bool incremental, bool syncWithMaster, bool
         return;
     }
 
-    bool isRandomBot = sRandomPlayerbotMgr.IsRandomBot(bot) && bot->GetPlayerbotAI() && !bot->GetPlayerbotAI()->HasRealPlayerMaster() && !bot->GetPlayerbotAI()->IsInRealGuild();
+    bool isRandomBot = sRandomPlayerbotMgr.IsRandomBot(bot) && GetBotAI(bot) && !GetBotAI(bot)->HasRealPlayerMaster() && !GetBotAI(bot)->IsInRealGuild();
     if (!incremental)
     {
         DestroyItemsVisitor visitor(bot);

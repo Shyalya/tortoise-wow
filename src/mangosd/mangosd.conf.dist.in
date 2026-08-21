@@ -50,6 +50,11 @@ Database.AutoUpdate.AuthUpdateName = "auth"
 Database.AutoUpdate.CharUpdateName = "character"
 Database.AutoUpdate.WorldUpdateName = "world"
 
+# Database.AutoUpdate.AllowedModules. Comma-separated module names to include for
+# module SQL updates, or "all" to scan every enabled module.
+
+Database.AutoUpdate.AllowedModules = "all"
+
 # Database.AutoUpdate.SortByName. Controls the order in which SQL migration files are applied.  
 #   0 = Sort by file modification time ascending (oldest first); alphabetical name as tiebreaker. (Default)  
 #   1 = Sort alphabetically by file name ascending; modification time as tiebreaker.  

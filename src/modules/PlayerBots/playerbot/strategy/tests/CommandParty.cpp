@@ -95,7 +95,7 @@ TestResult CommandPartyForm::Execute(const std::string& params, Player* bot,
             return TestResult::IMPOSSIBLE;
         }
 
-        if (PlayerbotAI* memberAi = member->GetPlayerbotAI())
+        if (PlayerbotAI* memberAi = GetBotAI(member))
             memberAi->HandleCommand(CHAT_MSG_WHISPER, "follow " + std::string(bot->GetName()), *bot);
     }
 

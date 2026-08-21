@@ -31,6 +31,7 @@
 #include "Transport.h"
 #include "ObjectAccessor.h"
 #include "ObjectMgr.h"
+#include "ScriptObjects.h"
 #include "World.h"
 #include "Group.h"
 #include "MapRefManager.h"
@@ -396,6 +397,12 @@ bool Map::Add(Player *player)
     // Send objects first => Can not take quests at relogin
     SendInitTransports(player);
     SendInitSelf(player);
+
+    ScriptRegistry<AllMapScript>::ForEach([&](AllMapScript* script)
+    {
+        script->OnPlayerEnterAll(this, player);
+    });
+
     // Clear m_visibleGUIDs in case 2 players entered a map at the same time,
     // one could stay invisible from the other until re-zoning.
     // Inspired from the TrinityCore way.
@@ -867,6 +874,11 @@ void Map::DoUpdate(uint32 maxDiff)
 void Map::Update(uint32 t_diff)
 {
     XScopeStatTimer ScopeStatTimer{ UpdateTimer };
+    ScriptRegistry<AllMapScript>::ForEach([&](AllMapScript* script)
+    {
+        script->OnMapUpdate(this, t_diff);
+    });
+
     uint32 updateMapTime = WorldTimer::getMSTime();
     _dynamicTree.update(t_diff);
 
@@ -1129,6 +1141,11 @@ void ScriptedEvent::SendEventToAllTargets(uint32 uiData)
 
 void Map::Remove(Player *player, bool remove)
 {
+    ScriptRegistry<AllMapScript>::ForEach([&](AllMapScript* script)
+    {
+        script->OnPlayerLeaveAll(this, player);
+    });
+
     if (i_data)
         i_data->OnPlayerLeave(player, remove);
 

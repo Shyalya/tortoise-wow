@@ -58,7 +58,7 @@ void LootObject::Refresh(Player* bot, ObjectGuid guid, bool debug)
     reqItem = 0;
     this->guid = ObjectGuid();
 
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(bot);
     Creature* creature = ai->GetCreature(guid);
     if (creature && sServerFacade.GetDeathState(creature) == CORPSE)
     {
@@ -208,7 +208,7 @@ WorldObject* LootObject::GetWorldObject(Player* bot)
 {
     Refresh(bot, guid);
 
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(bot);
 
     Creature *creature = ai->GetCreature(guid);
     if (creature && sServerFacade.GetDeathState(creature) == CORPSE)
@@ -234,7 +234,7 @@ bool LootObject::IsLootPossible(Player* bot)
     if (IsEmpty() || !GetWorldObject(bot))
         return false;
 
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(bot);
 
     if (reqItem && !bot->HasItemCount(reqItem, 1))
         return false;

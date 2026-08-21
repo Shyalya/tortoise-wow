@@ -10,6 +10,22 @@
 
 using namespace ai;
 
+namespace
+{
+    // WSG's flag arrays are indexed by the flag's OWNING team: index
+    // TEAM_INDEX_ALLIANCE is the Silverwing (Alliance) flag, and only a Horde
+    // player can ever be carrying it. So the only flag a bot can hold is the
+    // enemy team's flag.
+    bool BotCarriesEnemyFlag(Player* bot, BattleGroundWS* bg)
+    {
+        const Team enemyTeam = BattleGround::GetOtherTeam(bot->GetTeam());
+        if (bg->GetFlagState(enemyTeam) != BG_WS_FLAG_STATE_ON_PLAYER)
+            return false;
+
+        return bot->GetObjectGuid() == bg->GetFlagCarrierGuid(BattleGround::GetTeamIndexByTeamId(enemyTeam));
+    }
+}
+
 bool EnemyPlayerNear::IsActive()
 {
     // Check if we have any enemy players to attack
@@ -34,24 +50,17 @@ bool EnemyPlayerNear::IsActive()
 
 bool PlayerHasNoFlag::IsActive()
 {
-#ifdef MANGOS
-    if (ai->GetBot()->InBattleGround())
-    {
-        if (ai->GetBot()->GetBattleGroundTypeId() == BattleGroundTypeId::BATTLEGROUND_WS)
-        {
-            BattleGroundWS *bg = (BattleGroundWS*)ai->GetBot()->GetBattleGround();
-            if (!(bg->GetFlagState(bg->GetOtherTeam(bot->GetTeam())) == BG_WS_FLAG_STATE_ON_PLAYER))
-                return true;
-            if (bot->GetObjectGuid() == bg->GetAllianceFlagCarrierGuid() || bot->GetObjectGuid() == bg->GetHordeFlagCarrierGuid())
-            {
-                return false;
-            }
-            return true;
-        }
+    if (!bot->InBattleGround())
         return false;
-    }
-#endif
-    return false;
+
+    if (bot->GetBattleGroundTypeId() != BattleGroundTypeId::BATTLEGROUND_WS)
+        return false;
+
+    BattleGroundWS* bg = (BattleGroundWS*)bot->GetBattleGround();
+    if (!bg)
+        return false;
+
+    return !BotCarriesEnemyFlag(bot, bg);
 }
 
 bool PlayerIsInBattleground::IsActive()
@@ -123,23 +132,17 @@ bool BgEndedTrigger::IsActive()
 
 bool PlayerIsInBattlegroundWithoutFlag::IsActive()
 {
-#ifdef MANGOS
-    if (ai->GetBot()->InBattleGround())
+    if (!bot->InBattleGround())
+        return false;
+
+    if (bot->GetBattleGroundTypeId() == BattleGroundTypeId::BATTLEGROUND_WS)
     {
-        if (ai->GetBot()->GetBattleGroundTypeId() == BattleGroundTypeId::BATTLEGROUND_WS)
-        {
-            BattleGroundWS *bg = (BattleGroundWS*)ai->GetBot()->GetBattleGround();
-            if (!(bg->GetFlagState(bg->GetOtherTeam(bot->GetTeam())) == BG_WS_FLAG_STATE_ON_PLAYER))
-                return true;
-            if (bot->GetGUIDLow() == bg->GetAllianceFlagCarrierGuid() || bot->GetGUIDLow() == bg->GetHordeFlagCarrierGuid())
-            {
-                return false;
-            }
-        }
-        return true;
+        BattleGroundWS* bg = (BattleGroundWS*)bot->GetBattleGround();
+        if (bg && BotCarriesEnemyFlag(bot, bg))
+            return false;
     }
-#endif
-    return false;
+
+    return true;
 }
 
 bool PlayerHasFlag::IsActive()
@@ -176,25 +179,21 @@ bool PlayerHasFlag::IsActive()
 
 bool TeamHasFlag::IsActive()
 {
-#ifdef MANGOS
-    if (ai->GetBot()->InBattleGround())
-    {
-        if (ai->GetBot()->GetBattleGroundTypeId() == BattleGroundTypeId::BATTLEGROUND_WS)
-        {
-            BattleGroundWS *bg = (BattleGroundWS*)ai->GetBot()->GetBattleGround();
-
-            if (bot->GetObjectGuid() == bg->GetAllianceFlagCarrierGuid() || bot->GetObjectGuid() == bg->GetHordeFlagCarrierGuid())
-            {
-                return false;
-            }
-
-            if (bg->GetFlagState(bg->GetOtherTeam(bot->GetTeam())) == BG_WS_FLAG_STATE_ON_PLAYER)
-                return true;
-        }
+    if (!bot->InBattleGround())
         return false;
-    }
-#endif
-    return false;
+
+    if (bot->GetBattleGroundTypeId() != BattleGroundTypeId::BATTLEGROUND_WS)
+        return false;
+
+    BattleGroundWS* bg = (BattleGroundWS*)bot->GetBattleGround();
+    if (!bg)
+        return false;
+
+    // A team mate other than this bot is carrying the enemy flag.
+    if (BotCarriesEnemyFlag(bot, bg))
+        return false;
+
+    return bg->GetFlagState(BattleGround::GetOtherTeam(bot->GetTeam())) == BG_WS_FLAG_STATE_ON_PLAYER;
 }
 
 bool EnemyTeamHasFlag::IsActive()

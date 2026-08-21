@@ -55,7 +55,7 @@ bool TravelAction::isUseful()
 bool MoveToDarkPortalAction::Execute(Event& event)
 {
     if (bot->GetGroup())
-        if (!ai->IsGroupLeader() && ai->HasActivePlayerMaster() && !bot->GetPlayerbotAI()->GetGroupMaster()->GetPlayerbotAI())
+        if (!ai->IsGroupLeader() && ai->HasActivePlayerMaster() && !GetBotAI(GetBotAI(bot)->GetGroupMaster()))
             return false;
 
 #ifndef MANGOSBOT_ZERO
@@ -128,7 +128,7 @@ bool DarkPortalAzerothAction::Execute(Event& event)
         WorldPacket packet(CMSG_AREATRIGGER);
         packet << 4354;
 
-        return bot->GetPlayerbotAI()->DoSpecificAction("reach area trigger", Event("travel action", packet));
+        return GetBotAI(bot)->DoSpecificAction("reach area trigger", Event("travel action", packet));
     }
 #endif
     return false;

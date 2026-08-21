@@ -57,6 +57,10 @@
 #include <regex>
 #include <numeric>
 
+// Typed access to the player slots this module owns. Replaces the
+// Player::GetPlayerbotAI() / GetPlayerbotMgr() members the core used to carry.
+#include "playerbot/BotSlots.h"
+
 // Playerbot core
 #include "playerbot/playerbot.h"
 

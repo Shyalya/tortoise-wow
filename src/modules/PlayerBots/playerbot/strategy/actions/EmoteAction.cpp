@@ -108,7 +108,7 @@ bool EmoteActionBase::Emote(Unit* target, uint32 type, bool textEmote)
     {
         bot->SetSelectionGuid(target->GetObjectGuid());
         Player* player = dynamic_cast<Player*>(target);
-        if (player && player->GetPlayerbotAI() && !sServerFacade.IsInFront(player, bot, sPlayerbotAIConfig.sightDistance, M_PI_F))
+        if (player && GetBotAI(player) && !sServerFacade.IsInFront(player, bot, sPlayerbotAIConfig.sightDistance, M_PI_F))
             sServerFacade.SetFacingTo(player, bot);
     }
 
@@ -852,8 +852,8 @@ bool TalkAction::Execute(Event& event)
     if (target)
     {
         Player* player = dynamic_cast<Player*>(target);
-        if (player && player->GetPlayerbotAI())
-            player->GetPlayerbotAI()->GetAiObjectContext()->GetValue<ObjectGuid>("talk target")->Set(bot->GetObjectGuid());
+        if (player && GetBotAI(player))
+            GetBotAI(player)->GetAiObjectContext()->GetValue<ObjectGuid>("talk target")->Set(bot->GetObjectGuid());
 
         context->GetValue<ObjectGuid>("talk target")->Set(target->GetObjectGuid());
         //return Emote(target, GetRandomEmote(target, true), true);

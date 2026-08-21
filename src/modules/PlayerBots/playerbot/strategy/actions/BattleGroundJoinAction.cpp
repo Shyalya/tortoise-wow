@@ -276,10 +276,10 @@ bool BGJoinAction::gatherArenaTeam(ArenaType type)
 
         if (member)
         {
-            if (!member->GetPlayerbotAI())
+            if (!GetBotAI(member))
                 continue;
 
-            if (member->GetGroup() && member->GetPlayerbotAI()->HasRealPlayerMaster())
+            if (member->GetGroup() && GetBotAI(member)->HasRealPlayerMaster())
                 continue;
 
             if (!sPlayerbotAIConfig.IsInRandomAccountList(member->GetSession()->GetAccountId()))
@@ -296,7 +296,7 @@ bool BGJoinAction::gatherArenaTeam(ArenaType type)
 
             member->TeleportTo(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), 0);
 
-            member->GetPlayerbotAI()->Reset();
+            GetBotAI(member)->Reset();
         }
 
         if (member)
@@ -355,7 +355,7 @@ bool BGJoinAction::gatherArenaTeam(ArenaType type)
         if (member->GetLevel() < DEFAULT_MAX_LEVEL)
             continue;
 
-        if (!member->GetPlayerbotAI())
+        if (!GetBotAI(member))
             continue;
 
         if (member->GetGroup() == leaderGroup)
@@ -364,7 +364,7 @@ bool BGJoinAction::gatherArenaTeam(ArenaType type)
         if (!leaderGroup->AddMember(ObjectGuid(HIGHGUID_PLAYER, *i), member->GetName()))
             continue;
 
-        member->GetPlayerbotAI()->Reset(true);
+        GetBotAI(member)->Reset(true);
 
         if (!member->IsWithinDistInMap(bot, sPlayerbotAIConfig.sightDistance, false))
             member->TeleportTo(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), 0);
@@ -632,7 +632,7 @@ bool BGJoinAction::isUseful()
 #endif
 
     // do not try if with player master or in combat/group
-    if (bot->GetPlayerbotAI()->HasActivePlayerMaster())
+    if (GetBotAI(bot)->HasActivePlayerMaster())
         return false;
 
     //if (bot->GetGroup() && !bot->GetGroup()->IsLeader(bot->GetObjectGuid()))

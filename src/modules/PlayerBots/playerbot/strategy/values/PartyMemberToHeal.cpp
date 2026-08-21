@@ -142,7 +142,7 @@ Unit* PartyMemberToHeal::Calculate()
             {
                 break;
             }
-            else if (ai->IsHeal(player) && player->GetPlayerbotAI())
+            else if (ai->IsHeal(player) && GetBotAI(player))
             {
                 float percent = (float)player->GetPower(POWER_MANA) / (float)player->GetMaxPower(POWER_MANA) * 100.0;
                 if (percent > sPlayerbotAIConfig.lowMana)

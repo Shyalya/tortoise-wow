@@ -926,14 +926,10 @@ class World
         // Penqle's LFGQueue lives in LFG/LFGMgr.h. Forward to sLFGMgr.
         // Forward-declare LFGQueue at this scope to avoid requiring full LFGMgr.h include.
         class LFGQueue& GetLFGQueue();
-        // host hook.
-        // Implementation in src/modules/PlayerBots/playerbot/HostHooks.cpp dispatches to bot mgrs.
-        void UpdatePlayerbotsTick(uint32 diff);
-        // One-shot startup hook (called from World::SetInitialWorldSettings) — loads bot config + mgrs.
+        // The one call the core still makes into the bot module: it registers the
+        // module hook objects. The per-tick driver is WorldScript::OnUpdate and the
+        // post-load work is WorldScript::OnStartup, both fired from World.cpp.
         void InitPlayerbotsAtStartup();
-        // Second startup hook — called after sObjectMgr.LoadPlayerInfo() so CreateRandomBots() can
-        // use GetPlayerInfo(race, class) to validate starting positions.
-        void FinalizePlayerbotsPostPlayerInfo();
         uint32 GetCurrentMSTime() const;
         // GetMaxDiff: cmangos exposes max diff for performance dashboard. Stub returns 0.
         uint32 GetMaxDiff() const { return 0; }

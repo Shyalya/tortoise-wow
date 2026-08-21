@@ -37,6 +37,7 @@
 #include "WorldRunnable.h"
 #include "World.h"
 #include "Log.h"
+#include "ScriptObjects.h"
 #include "Timer.h"
 #include "Policies/SingletonImp.h"
 #include "SystemConfig.h"
@@ -619,6 +620,13 @@ int Master::Run()
         Log::WaitBeforeContinueIfNeed();
         World::StopNow(ERROR_EXIT_CODE);
         // go down and shutdown the server
+    }
+    else
+    {
+        ScriptRegistry<ServerScript>::ForEachEnabledHook(SERVERHOOK_ON_NETWORK_START, [](ServerScript* script)
+        {
+            script->OnNetworkStart();
+        });
     }
 
     // Do NOT also call sWorldSocketMgr->Wait() here. WorldRunnable's shutdown

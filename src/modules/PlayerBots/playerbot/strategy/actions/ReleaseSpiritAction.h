@@ -201,7 +201,7 @@ namespace ai
                 sLog.outDetail("Repop: Teleporting bot #%d %s:%d <%s> to spawn", bot->GetGUIDLow(), bot->GetTeam() == ALLIANCE ? "A" : "H", bot->GetLevel(), bot->GetName());
                 //teleport bot to spawn
                 bot->TeleportTo(defaultPlayerInfo->mapId, defaultPlayerInfo->positionX, defaultPlayerInfo->positionY, defaultPlayerInfo->positionZ, defaultPlayerInfo->orientation);
-                if (bot->isRealPlayer())
+                if (IsRealPlayer(bot))
                     bot->SendHeartBeat();
             }
             else

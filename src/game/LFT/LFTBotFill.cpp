@@ -185,7 +185,7 @@ void LFTManager::DropUnneededFillBots()
         }
 
         if (Player* bot = GetPlayer(guid))
-            Playerbot_SetForcedRole(bot, 0);
+            Script_SetForcedRole(bot, 0);
 
         if (queued != m_queue.end())
         {
@@ -244,7 +244,7 @@ void LFTManager::SeedBotOnlyQueue()
         if (!bot || !bot->IsInWorld() || !bot->IsAlive())
             continue;
 
-        if (!bot->GetPlayerbotAI() || !IsRandomBotAccount(bot))
+        if (!Script_IsAIControlled(bot) || !IsRandomBotAccount(bot))
             continue;
 
         if (bot->GetGroup() || bot->InBattleGround() || bot->InBattleGroundQueue())
@@ -284,7 +284,7 @@ Player* LFTManager::TakeFromBotOnlyGroup(uint8 wanted, QueuedPlayer const& waite
         if (!bot || !bot->IsInWorld() || !bot->IsAlive())
             continue;
 
-        if (!bot->GetPlayerbotAI() || !IsRandomBotAccount(bot))
+        if (!Script_IsAIControlled(bot) || !IsRandomBotAccount(bot))
             continue;
 
         Group* group = bot->GetGroup();
@@ -304,7 +304,7 @@ Player* LFTManager::TakeFromBotOnlyGroup(uint8 wanted, QueuedPlayer const& waite
         if (!(AllowedRoleMask(bot) & wanted))
             continue;
 
-        if (!(Playerbot_GetAllowedRoles(bot) & wanted))
+        if (!(Script_GetAllowedRoles(bot) & wanted))
             continue;
 
         bool botsOnly = true;
@@ -317,7 +317,7 @@ Player* LFTManager::TakeFromBotOnlyGroup(uint8 wanted, QueuedPlayer const& waite
             }
 
             Player* member = GetPlayer(slot.guid);
-            if (!member || !member->GetPlayerbotAI() || !IsRandomBotAccount(member))
+            if (!member || !Script_IsAIControlled(member) || !IsRandomBotAccount(member))
             {
                 botsOnly = false;
                 break;
@@ -341,7 +341,7 @@ Player* LFTManager::TakeFromBotOnlyGroup(uint8 wanted, QueuedPlayer const& waite
 // bot that already fills it was free, so this is the last step before the group
 // stays short - a slot nobody can take is worth more than a spec left untouched.
 //
-// Playerbot_SetForcedRole does the work and refuses politely when the class
+// Script_SetForcedRole does the work and refuses politely when the class
 // cannot reach the role at all, so a shaman is never wiped in the hope of a tank.
 Player* LFTManager::TakeBotAndRespecFor(uint8 wanted, QueuedPlayer const& waiter,
                                         uint32 below, uint32 above)
@@ -352,7 +352,7 @@ Player* LFTManager::TakeBotAndRespecFor(uint8 wanted, QueuedPlayer const& waiter
         if (!bot || !bot->IsInWorld() || !bot->IsAlive())
             continue;
 
-        if (!bot->GetPlayerbotAI() || !IsRandomBotAccount(bot))
+        if (!Script_IsAIControlled(bot) || !IsRandomBotAccount(bot))
             continue;
 
         if (bot->GetGroup() || bot->InBattleGround() || bot->InBattleGroundQueue())
@@ -377,14 +377,14 @@ Player* LFTManager::TakeBotAndRespecFor(uint8 wanted, QueuedPlayer const& waiter
         if (!(AllowedRoleMask(bot) & wanted))
             continue;
 
-        if (Playerbot_GetAllowedRoles(bot) & wanted)
+        if (Script_GetAllowedRoles(bot) & wanted)
             continue;
 
-        Playerbot_SetForcedRole(bot, wanted);
+        Script_SetForcedRole(bot, wanted);
 
         // It refuses when the class cannot get there; only take the bot if it
         // actually came back able to do the job.
-        if (!(Playerbot_GetAllowedRoles(bot) & wanted))
+        if (!(Script_GetAllowedRoles(bot) & wanted))
             continue;
 
         sLog.outBasic("LFT: respecced %s to cover %s for %s, nobody was free",
@@ -465,7 +465,7 @@ void LFTManager::FillInstanceWithBots(std::string const& instance, QueuedPlayer 
             if (!bot || !bot->IsInWorld() || !bot->IsAlive())
                 continue;
 
-            if (!bot->GetPlayerbotAI() || !IsRandomBotAccount(bot))
+            if (!Script_IsAIControlled(bot) || !IsRandomBotAccount(bot))
                 continue;
 
             if (bot->GetGroup() || bot->InBattleGround() || bot->InBattleGroundQueue())
@@ -489,7 +489,7 @@ void LFTManager::FillInstanceWithBots(std::string const& instance, QueuedPlayer 
             // AllowedRoleMask says a shaman may queue as tank; the bot side has no
             // tank strategy for one at all, so it would stand there doing nothing
             // while the group has no tank and, worse, no healer either.
-            if (!(Playerbot_GetAllowedRoles(bot) & wanted))
+            if (!(Script_GetAllowedRoles(bot) & wanted))
                 continue;
 
             chosen = bot;
@@ -504,7 +504,7 @@ void LFTManager::FillInstanceWithBots(std::string const& instance, QueuedPlayer 
                 (wanted == LFT_ROLE_HEALER) ? belowHealer : below, above);
 
         // Still nobody, and the role is one people wait for. Take a bot whose
-        // class could fill it and let it respec: Playerbot_SetForcedRole drops
+        // class could fill it and let it respec: Script_SetForcedRole drops
         // the stored spec, resets the talents and picks again with the role in
         // hand, which is how a fury warrior becomes a protection one. The
         // machinery already existed and was never reached, because the search
@@ -576,13 +576,13 @@ void LFTManager::AcceptOffersForFillBots()
             // button nobody was going to press, so the offer expired and the
             // whole cycle started over every couple of minutes. A real player
             // still decides for themselves.
-            if (!bot || !bot->GetPlayerbotAI())
+            if (!bot || !Script_IsAIControlled(bot))
                 continue;
 
             // Hand the assigned role to the bot's AI before it accepts. Its
             // combat strategy comes from talents otherwise, so a fury warrior
             // pulled in as a tank would keep swinging instead of holding aggro.
-            Playerbot_SetForcedRole(bot, role.second);
+            Script_SetForcedRole(bot, role.second);
             sLog.outBasic("LFT: %s accepts as %s", bot->GetName(), RoleSuffix(role.second));
 
             HandleOfferAccept(bot);

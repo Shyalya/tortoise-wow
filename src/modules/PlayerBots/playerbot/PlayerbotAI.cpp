@@ -1272,9 +1272,9 @@ void PlayerbotAI::UpdateAIInternal(uint32 elapsed, bool minimal)
 
         if (logout && !bot->GetSession()->ShouldLogOut(time(nullptr)))
         {
-            if (master && master->GetPlayerbotMgr())
+            if (master && GetBotMgr(master))
             {
-                master->GetPlayerbotMgr()->LogoutPlayerBot(bot->GetObjectGuid().GetRawValue());
+                GetBotMgr(master)->LogoutPlayerBot(bot->GetObjectGuid().GetRawValue());
             }
             else
             {
@@ -1588,7 +1588,7 @@ void PlayerbotAI::HandleCommand(uint32 type, const std::string& text, Player& fr
             if (type == CHAT_MSG_WHISPER)
                 TellPlayer(&fromPlayer, BOT_TEXT("logout_start"));
 
-            if (master && master->GetPlayerbotMgr())
+            if (master && GetBotMgr(master))
                 SetShouldLogOut(true);
         }
     }
@@ -1862,7 +1862,7 @@ void PlayerbotAI::HandleBotOutgoingPacket(const WorldPacket& packet)
                     if (isFromFreeBot)
                     {
                         Player* player = sObjectMgr.GetPlayer(guid1);
-                        if (player && player->isRealPlayer())
+                        if (player && IsRealPlayer(player))
                             isFromFreeBot = false;
                     }
                 }
@@ -1934,7 +1934,7 @@ void PlayerbotAI::HandleBotOutgoingPacket(const WorldPacket& packet)
 
             if (isAiChat)
             {
-                ChatChannelSource chatChannelSource = bot->GetPlayerbotAI()->GetChatChannelSource(bot, msgtype, chanName);
+                ChatChannelSource chatChannelSource = GetBotAI(bot)->GetChatChannelSource(bot, msgtype, chanName);
 
                 std::string llmChannel;
 
@@ -2201,7 +2201,7 @@ void PlayerbotAI::DoNextAction(bool min)
         Player* playerMaster = nullptr;
 
         //Are there any non-bot players in the group?
-        if (!newMaster || newMaster->GetPlayerbotAI())
+        if (!newMaster || GetBotAI(newMaster))
             for (GroupReference* gref = group->GetFirstMember(); gref; gref = gref->next())
             {
                 Player* member = gref->getSource();
@@ -2222,14 +2222,14 @@ void PlayerbotAI::DoNextAction(bool min)
                     continue;
 
                 //Do not make bots your master if they are nog group leader.
-                if (member->GetPlayerbotAI() && !bot->InBattleGround())
+                if (GetBotAI(member) && !bot->InBattleGround())
                     continue;
 
                 if (bot->InBattleGround())
                     continue;
 
                 // same BG
-                if (bot->InBattleGround() && bot->GetBattleGround()->GetTypeId() == BATTLEGROUND_AV && !member->GetPlayerbotAI() && member->InBattleGround() && bot->GetMapId() == member->GetMapId())
+                if (bot->InBattleGround() && bot->GetBattleGround()->GetTypeId() == BATTLEGROUND_AV && !GetBotAI(member) && member->InBattleGround() && bot->GetMapId() == member->GetMapId())
                 {
                     // TODO disable move to objective if have master in bg
                     continue;
@@ -2328,7 +2328,7 @@ void PlayerbotAI::DoNextAction(bool min)
 
         if (!group && sRandomPlayerbotMgr.IsFreeBot(bot) && !IsRealPlayer())
         {
-            bot->GetPlayerbotAI()->SetMaster(nullptr);
+            GetBotAI(bot)->SetMaster(nullptr);
         }
 	}
 	else if (bot->m_movementInfo.HasMovementFlag(MOVEFLAG_WALK_MODE)) bot->m_movementInfo.RemoveMovementFlag(MOVEFLAG_WALK_MODE);
@@ -2637,7 +2637,7 @@ void PlayerbotAI::ResetStrategies(bool autoLoad)
 
 bool PlayerbotAI::IsRanged(Player* player, bool inGroup)
 {
-    PlayerbotAI* botAi = player->GetPlayerbotAI();
+    PlayerbotAI* botAi = GetBotAI(player);
     if (botAi)
     {
         bool isRanged = botAi->ContainsStrategy(STRATEGY_TYPE_RANGED);
@@ -2667,7 +2667,7 @@ bool PlayerbotAI::IsMelee(Player* player, bool inGroup)
 
 bool PlayerbotAI::IsTank(Player* player, bool inGroup)
 {
-    PlayerbotAI* botAi = player->GetPlayerbotAI();
+    PlayerbotAI* botAi = GetBotAI(player);
     if (botAi)
     {
         bool isTank = botAi->ContainsStrategy(STRATEGY_TYPE_TANK);
@@ -2682,7 +2682,7 @@ bool PlayerbotAI::IsTank(Player* player, bool inGroup)
 
 bool PlayerbotAI::IsHeal(Player* player, bool inGroup)
 {
-    PlayerbotAI* botAi = player->GetPlayerbotAI();
+    PlayerbotAI* botAi = GetBotAI(player);
     if (botAi)
     {
         bool isHeal = botAi->ContainsStrategy(STRATEGY_TYPE_HEAL);
@@ -2844,7 +2844,7 @@ std::vector<Player*> PlayerbotAI::GetPlayersInGroup()
     {
         Player* member = ref->getSource();
 
-        if (member->GetPlayerbotAI() && !member->GetPlayerbotAI()->IsRealPlayer())
+        if (GetBotAI(member) && !GetBotAI(member)->IsRealPlayer())
             continue;
 
         members.push_back(ref->getSource());
@@ -3454,7 +3454,7 @@ bool PlayerbotAI::SayToParty(std::string msg, bool likePlayer)
     {
         for (auto reciever : GetPlayersInGroup())
         {
-            if (likePlayer || reciever->isRealPlayer())
+            if (likePlayer || IsRealPlayer(reciever))
             {
                 WorldPacket packet_template(CMSG_MESSAGECHAT);
 
@@ -3640,7 +3640,7 @@ bool PlayerbotAI::TellPlayerNoFacing(Player* player, std::string text, Playerbot
         if (type == CHAT_MSG_SYSTEM && (sPlayerbotAIConfig.randomBotSayWithoutMaster || HasStrategy("debug", BotState::BOT_STATE_NON_COMBAT)))
             type = CHAT_MSG_SAY;
 
-        if (type == CHAT_MSG_SYSTEM && player->isRealPlayer())
+        if (type == CHAT_MSG_SYSTEM && IsRealPlayer(player))
             type = CHAT_MSG_WHISPER;
 
         if ((sPlayerbotAIConfig.hasLog("chat_log.csv") && HasStrategy("debug log", BotState::BOT_STATE_NON_COMBAT)) || HasStrategy("debug logname", BotState::BOT_STATE_NON_COMBAT))
@@ -3702,7 +3702,7 @@ bool PlayerbotAI::TellPlayerNoFacing(Player* player, std::string text, Playerbot
                 if (!IsTellAllowed(player, securityLevel))
                     return false;
 
-                if (!HasRealPlayerMaster() && !player->isRealPlayer())
+                if (!HasRealPlayerMaster() && !IsRealPlayer(player))
                     return false;
 
                 whispers[text] = time(0);
@@ -3733,13 +3733,13 @@ bool PlayerbotAI::TellPlayerNoFacing(Player* player, std::string text, Playerbot
 
 bool PlayerbotAI::TellError(Player* player, std::string text, PlayerbotSecurityLevel securityLevel, bool ignoreSilent)
 {
-    if (!IsTellAllowed(player, securityLevel) || !IsSafe(player) || player->GetPlayerbotAI())
+    if (!IsTellAllowed(player, securityLevel) || !IsSafe(player) || GetBotAI(player))
         return false;
 
     if (!ignoreSilent && HasStrategy("silent", BotState::BOT_STATE_NON_COMBAT))
         return false;
 
-    PlayerbotMgr* mgr = player->GetPlayerbotMgr();
+    PlayerbotMgr* mgr = GetBotMgr(player);
     if (mgr) mgr->TellError(bot->GetName(), text);
 
     return false;
@@ -6104,7 +6104,7 @@ ActivePiorityType PlayerbotAI::GetPriorityType()
             if (member == bot)
                 continue;
 
-            if (!member->GetPlayerbotAI() || (member->GetPlayerbotAI() && member->GetPlayerbotAI()->HasRealPlayerMaster()))
+            if (!GetBotAI(member) || (GetBotAI(member) && GetBotAI(member)->HasRealPlayerMaster()))
                 return ActivePiorityType::IN_GROUP_WITH_REAL_PLAYER;
         }
     }
@@ -7999,9 +7999,9 @@ PlayerbotHolder* PlayerbotAI::GetHolder() const
         return &sRandomPlayerbotMgr;
 
     if (bot->GetMaster())
-        return static_cast<Player*>(bot->GetMaster())->GetPlayerbotMgr();
+        return GetBotMgr(static_cast<Player*>(bot->GetMaster()));
 
-    return bot->GetPlayerbotMgr();
+    return GetBotMgr(bot);
 }
 
 std::string PlayerbotAI::InventoryParseOutfitName(std::string outfit)

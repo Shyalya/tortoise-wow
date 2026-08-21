@@ -1523,7 +1523,7 @@ TravelNodeRoute TravelNodeMap::getRoute(TravelNode* start, TravelNode* goal, Uni
     Player* bot = dynamic_cast<Player*>(unit);
     if (bot)
     {
-        PlayerbotAI* ai = bot->GetPlayerbotAI();
+        PlayerbotAI* ai = GetBotAI(bot);
         if (ai)
         {
             AiObjectContext* context = ai->GetAiObjectContext();
@@ -1548,7 +1548,7 @@ TravelNodeRoute TravelNodeMap::getRoute(TravelNode* start, TravelNode* goal, Uni
                         continue;
                     }
 
-                    if (!player->GetPlayerbotAI())
+                    if (!GetBotAI(player))
                         continue;
 
                     startStub->currentGold = std::min(startStub->currentGold, PAI_VALUE2(uint32, "free money for", (uint32)NeedMoneyFor::travel));
@@ -1859,7 +1859,7 @@ TravelNodeRoute TravelNodeMap::getRoute(WorldPosition startPos, WorldPosition en
     Player* bot = dynamic_cast<Player*>(unit);
     if (bot)
     {
-        PlayerbotAI* ai = bot->GetPlayerbotAI();
+        PlayerbotAI* ai = GetBotAI(bot);
         AiObjectContext* context = ai->GetAiObjectContext();
         if (AI_VALUE2(bool, "action useful", "hearthstone"))
         {
@@ -3666,12 +3666,12 @@ TravelNodeMap::PathFindResult TravelNodeMap::testPathToLoop(const WorldPosition&
     std::string reason = "none", prevReason = "none";
 
     Player* player = (Player*)bot;
-    if (player->GetPlayerbotAI())
+    if (GetBotAI(player))
     {
-        if (!player->GetPlayerbotAI()->GetLastEvent().getSource().empty())
-            reason = player->GetPlayerbotAI()->GetLastEvent().getSource();
+        if (!GetBotAI(player)->GetLastEvent().getSource().empty())
+            reason = GetBotAI(player)->GetLastEvent().getSource();
 
-        AiObjectContext* context = player->GetPlayerbotAI()->GetAiObjectContext();
+        AiObjectContext* context = GetBotAI(player)->GetAiObjectContext();
         if (context)
         {
             LastMovement& lastMove = context->GetValue<LastMovement&>("last movement")->Get();

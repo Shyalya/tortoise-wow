@@ -43,6 +43,7 @@ set (game_SRCS
     PlayerDump.cpp
     QuestDef.cpp
     ReputationMgr.cpp
+    ScriptObjects.h
     ScriptMgr.cpp
     SocialMgr.cpp
     StatSystem.cpp

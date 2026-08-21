@@ -1575,7 +1575,7 @@ bool MovementAction::MoveTo(uint32 mapId, float x, float y, float z, bool idle, 
             PathNodeType pathType = nextPathPoint.type;
             uint32 entry = nextPathPoint.entry;
 
-            if (pathType == PathNodeType::NODE_STATIC_PORTAL && entry) // && !ai->isRealPlayer())
+            if (pathType == PathNodeType::NODE_STATIC_PORTAL && entry) // && !IsRealPlayer(ai))
             {
                 //Log bot movement
                 if (sPlayerbotAIConfig.hasLog("bot_movement.csv"))
@@ -2379,7 +2379,7 @@ bool MovementAction::Follow(Unit* target, float distance, float angle)
 
             if (ai->IsSafe(player))
             {
-                if (player->GetPlayerbotAI()) //Try to move to where the bot is going if it is closer and in the same direction.
+                if (GetBotAI(player)) //Try to move to where the bot is going if it is closer and in the same direction.
                 {
                     WorldPosition longMove = PAI_VALUE(WorldPosition, "last long move");
 
@@ -2866,7 +2866,7 @@ bool MovementAction::Flee(Unit *target)
             if (distanceToGroupMember < minFleeDistance || distanceToGroupMember > maxFleeDistance)
                 continue;
 
-            if (PlayerbotAI* groupMemberBotAi = groupMember->GetPlayerbotAI())
+            if (PlayerbotAI* groupMemberBotAi = GetBotAI(groupMember))
             {
                 // Ignore if the group member is affected by an aoe spell
                 if (groupMemberBotAi->GetAiObjectContext()->GetValue<bool>("has area debuff", "self target")->Get())
@@ -3054,7 +3054,7 @@ bool MovementAction::IsValidPosition(const WorldPosition& position, const WorldP
 
 bool MovementAction::IsHazardNearPosition(const WorldPosition& position, HazardPosition* outHazard)
 {
-    AiObjectContext* context = bot->GetPlayerbotAI()->GetAiObjectContext();
+    AiObjectContext* context = GetBotAI(bot)->GetAiObjectContext();
     std::list<HazardPosition> hazards = AI_VALUE(std::list<HazardPosition>, "hazards");
     if (!hazards.empty())
     {

@@ -18,7 +18,7 @@ INSTANTIATE_SINGLETON_1(ai::TravelMgr);
 
 PlayerTravelInfo::PlayerTravelInfo(Player* player)
 {
-    PlayerbotAI* ai = player->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(player);
     AiObjectContext* context = ai->GetAiObjectContext();
 
     position = player;
@@ -154,7 +154,7 @@ bool QuestRelationTravelDestination::IsPossible(const PlayerTravelInfo& info) co
 }
 
 bool QuestRelationTravelDestination::IsActive(Player* bot, const PlayerTravelInfo& info) const {
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(bot);
     AiObjectContext* context = ai->GetAiObjectContext();
 
     if(!IsPossible(info))
@@ -322,7 +322,7 @@ bool QuestObjectiveTravelDestination::IsPossible(const PlayerTravelInfo& info) c
 }
 
 bool QuestObjectiveTravelDestination::IsActive(Player* bot, const PlayerTravelInfo& info) const {
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(bot);
     AiObjectContext* context = ai->GetAiObjectContext();
 
     if (!IsPossible(info))
@@ -483,7 +483,7 @@ bool RpgTravelDestination::IsPossible(const PlayerTravelInfo& info) const
 
 bool RpgTravelDestination::IsActive(Player* bot, const PlayerTravelInfo& info) const
 {
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(bot);
     AiObjectContext* context = ai->GetAiObjectContext();
 
     if (!IsPossible(info))
@@ -629,7 +629,7 @@ bool GrindTravelDestination::IsPossible(const PlayerTravelInfo& info) const
 
 bool GrindTravelDestination::IsActive(Player* bot, const PlayerTravelInfo& info) const
 {
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(bot);
     AiObjectContext* context = ai->GetAiObjectContext();
 
     if (!IsPossible(info))
@@ -693,7 +693,7 @@ bool BossTravelDestination::IsPossible(const PlayerTravelInfo& info) const
 
 bool BossTravelDestination::IsActive(Player* bot, const PlayerTravelInfo& info) const
 {
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(bot);
     AiObjectContext* context = ai->GetAiObjectContext();
 
     if (!IsPossible(info))
@@ -802,7 +802,7 @@ bool GatherTravelDestination::IsPossible(const PlayerTravelInfo& info) const
 
 bool GatherTravelDestination::IsActive(Player* bot, const PlayerTravelInfo& info) const
 {
-    PlayerbotAI* ai = bot->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(bot);
     AiObjectContext* context = ai->GetAiObjectContext();
 
     if (!IsPossible(info))
@@ -926,7 +926,7 @@ bool TravelTarget::IsDestinationActive()
             player = member;
     }
 
-    if (!player->GetPlayerbotAI()) //No ai so clear target.
+    if (!GetBotAI(player)) //No ai so clear target.
         return false;
 
     return tDestination->IsActive(player, PlayerTravelInfo(player));
@@ -944,10 +944,10 @@ bool TravelTarget::IsConditionsActive(bool clear)
             player = member;
     }
 
-    if (!player || !player->GetPlayerbotAI()) //No ai so clear target.
+    if (!player || !GetBotAI(player)) //No ai so clear target.
         return false;
         
-    AiObjectContext* playerContext = player->GetPlayerbotAI()->GetAiObjectContext();
+    AiObjectContext* playerContext = GetBotAI(player)->GetAiObjectContext();
 
     if (!playerContext)
         return false;
@@ -2838,10 +2838,10 @@ void TravelMgr::SetNullTravelTarget(Player* player) const
     if (!player)
         return;
 
-    if (!player->GetPlayerbotAI())
+    if (!GetBotAI(player))
         return;
 
-    TravelTarget* target = player->GetPlayerbotAI()->GetAiObjectContext()->GetValue<TravelTarget*>("travel target")->Get();
+    TravelTarget* target = GetBotAI(player)->GetAiObjectContext()->GetValue<TravelTarget*>("travel target")->Get();
 
     SetNullTravelTarget(target);
 }

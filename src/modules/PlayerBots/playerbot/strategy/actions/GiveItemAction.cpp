@@ -17,7 +17,7 @@ bool GiveItemAction::Execute(Event& event)
     Player* receiver = dynamic_cast<Player*>(target);
     if (!receiver) return false;
 
-    PlayerbotAI *receiverAi = receiver->GetPlayerbotAI();
+    PlayerbotAI *receiverAi = GetBotAI(receiver);
     if (!receiverAi)
         return false;
 

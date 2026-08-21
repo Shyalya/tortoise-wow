@@ -575,7 +575,7 @@ namespace ai
     class FindItemUsageVisitor : public FindItemVisitor
     {
     public:
-        FindItemUsageVisitor(Player* bot, ItemUsage usage = ItemUsage::ITEM_USAGE_NONE) : FindItemVisitor(), bot(bot), usage(usage) { context = bot->GetPlayerbotAI()->GetAiObjectContext();};
+        FindItemUsageVisitor(Player* bot, ItemUsage usage = ItemUsage::ITEM_USAGE_NONE) : FindItemVisitor(), bot(bot), usage(usage) { context = GetBotAI(bot)->GetAiObjectContext();};
 
         void SetUsage(ItemUsage newUsage = ItemUsage::ITEM_USAGE_NONE) { usage = newUsage; }
 
@@ -597,7 +597,7 @@ namespace ai
     class FindVendorItemsVisitor : public FindItemVisitor
     {
     public:
-        FindVendorItemsVisitor(Player* bot, bool includeAH) : FindItemVisitor(), bot(bot), includeAH(includeAH) { context = bot->GetPlayerbotAI()->GetAiObjectContext(); };
+        FindVendorItemsVisitor(Player* bot, bool includeAH) : FindItemVisitor(), bot(bot), includeAH(includeAH) { context = GetBotAI(bot)->GetAiObjectContext(); };
 
         virtual bool Accept(const ItemPrototype* proto) override { return false; }
 

@@ -76,8 +76,29 @@ Engine::~Engine(void)
     strategies.clear();
 }
 
-void Engine::Reset()
+bool Engine::Reset()
 {
+    // Re-entrancy guard. This drains and deletes every ActionBasket in `queue`.
+    // An action's Execute() is allowed to change the strategy set - BGTactics
+    // does it with ChangeStrategy("-buff") / ("-collision") / ("-arena"), and
+    // PlayerbotAI::ResetStrategies does it too - and every one of those paths
+    // lands in Init() -> Reset() while DoNextAction's do/while walk over the
+    // same queue is still running. Draining there ended the tick on the spot
+    // ("no actions executed") and freed baskets the walk still owned.
+    //
+    // So while a walk is in progress we do not touch the queue: we record that
+    // a re-init is owed and DoNextAction performs it once the walk has ended.
+    // Callers must treat a false return as "deferred, nothing was cleared".
+    if (inDoNextAction)
+    {
+        reinitPending = true;
+        // Deliberately greppable: this is the only in-world evidence that the
+        // deferral fired. A tick that logs it must go on to log another
+        // "A:<action> - OK" rather than "no actions executed".
+        LogAction("S:reinit deferred");
+        return false;
+    }
+
     ActionNode* action = NULL;
     do
     {
@@ -99,11 +120,16 @@ void Engine::Reset()
         delete multiplier;
     }
     multipliers.clear();
+
+    return true;
 }
 
 void Engine::Init()
 {
-    Reset();
+    // Deferred: the queue belongs to an in-progress DoNextAction walk, which
+    // will call Init() again as soon as it finishes.
+    if (!Reset())
+        return;
 
     for (std::map<std::string, Strategy*>::iterator i = strategies.begin(); i != strategies.end(); i++)
     {
@@ -128,7 +154,12 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
         LogValues();
 
     bool actionExecuted = false;
-    ActionBasket* basket = NULL;
+
+    // A strategy change issued from inside an action's Execute() must not drop
+    // the queue while we are walking it; Reset() parks the re-init instead and
+    // we run it below, after the walk.
+    bool const wasInDoNextAction = inDoNextAction;
+    inDoNextAction = true;
 
     time_t currentTime = time(0);
     aiObjectContext->Update();
@@ -139,18 +170,40 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
 
     int iterations = 0;
     int iterationsPerTick = queue.Size() * (minimal ? (uint32)(sPlayerbotAIConfig.iterationsPerTick / 2) : sPlayerbotAIConfig.iterationsPerTick);
+    bool hasBasket = false;
     do 
     {
-        basket = queue.Peek();
-        if (basket) 
+        float relevance = 0.0f, oldRelevance = 0.0f; // just for reference
+        bool skipPrerequisites = false;
+        Event event;
+        ActionNode* actionNode = NULL;
+        bool popped = false;
+
         {
-            float relevance = basket->getRelevance(), oldRelevance = relevance; // just for reference
-            bool skipPrerequisites = basket->isSkipPrerequisites();
-            Event event = basket->getEvent();
-            if (minimal && (relevance < 100))
-                continue;
-            // NOTE: queue.Pop() deletes basket
-            ActionNode* actionNode = queue.Pop();
+            // `basket` lives only inside this block, and the block ends at the
+            // Pop that frees it. Everything the rest of the iteration needs is
+            // copied out first, so no code past the Pop can name the freed
+            // basket at all - it is a compile error, not a use-after-free.
+            // `hasBasket` carries the only thing the loop condition needs.
+            ActionBasket* basket = queue.Peek();
+            hasBasket = (basket != NULL);
+            if (basket)
+            {
+                relevance = basket->getRelevance();
+                oldRelevance = relevance;
+                skipPrerequisites = basket->isSkipPrerequisites();
+                event = basket->getEvent();
+                if (minimal && (relevance < 100))
+                    continue;
+
+                // NOTE: queue.Pop() deletes basket
+                actionNode = queue.Pop();
+                popped = true;
+            }
+        }
+
+        if (popped)
+        {
             Action* action = InitializeAction(actionNode);
 
             std::string actionName = (action ? action->getName() : "unknown");
@@ -323,7 +376,7 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
             delete actionNode;
         }
     }
-    while (basket && ++iterations <= iterationsPerTick);
+    while (hasBasket && ++iterations <= iterationsPerTick);
 
     /*
     if (!basket)
@@ -352,6 +405,14 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
         LogAction("no actions executed");
 
     queue.RemoveExpired();
+
+    inDoNextAction = wasInDoNextAction;
+    if (!inDoNextAction && reinitPending)
+    {
+        reinitPending = false;
+        Init();
+    }
+
     return actionExecuted;
 }
 
@@ -506,7 +567,7 @@ bool Engine::CanExecuteAction(const std::string& name, bool isUseful, bool isPos
 
 void Engine::addStrategy(const std::string& name)
 {
-    std::string const signatureBefore = StrategySignature();
+    uint64 const tokenBefore = StrategySetToken();
 
     // The second argument means "rebuild now", and initMode means the opposite
     // - hold rebuilds back until the bulk change is done - so passing one as
@@ -524,14 +585,15 @@ void Engine::addStrategy(const std::string& name)
         }
 
         LogAction("S:+%s", strategy->getName().c_str());
-        strategies[strategy->getName()] = strategy;
+        if (strategies.insert(std::make_pair(strategy->getName(), strategy)).second)
+            strategiesHash ^= StrategyNameHash(strategy->getName());
         strategy->OnStrategyAdded(state);
     }
 
     // Init() empties the action queue, so only pay it when the strategy set
     // actually moved. Re-adding a strategy the engine already carries used to
     // wipe the queue for nothing.
-    if (!initMode && StrategySignature() != signatureBefore)
+    if (!initMode && StrategySetToken() != tokenBefore)
     {
         Init();
     }
@@ -564,6 +626,7 @@ bool Engine::removeStrategy(const std::string& name, bool init)
 
     LogAction("S:-%s", name.c_str());
     i->second->OnStrategyRemoved(state);
+    strategiesHash ^= StrategyNameHash(i->first);
     strategies.erase(i);
 
     if (init)
@@ -577,6 +640,7 @@ bool Engine::removeStrategy(const std::string& name, bool init)
 void Engine::removeAllStrategies()
 {
     strategies.clear();
+    strategiesHash = 0;
     Init();
 }
 
@@ -844,7 +908,7 @@ void Engine::ChangeStrategy(const std::string& names)
     // only the set left at the end matters. Hold the rebuilds back for the
     // whole list and do one afterwards - the same thing
     // PlayerbotAI::ResetStrategies does around its bulk change.
-    std::string const signatureBefore = StrategySignature();
+    uint64 const tokenBefore = StrategySetToken();
 
     bool const wasInitMode = initMode;
     initMode = true;
@@ -876,31 +940,20 @@ void Engine::ChangeStrategy(const std::string& names)
 
     // Caller is in a bulk change of its own - it will rebuild when it is done.
     //
-    // The signature guard is what keeps a no-op change cheap. Init() calls
-    // Reset(), which drains `queue` outright - so a ChangeStrategy issued from
-    // inside an action's Execute() destroys every basket DoNextAction has not
-    // popped yet, and the do-while at :326 exits on a null Peek(). BGTactics
+    // The set-token guard is what keeps a no-op change cheap; it is no longer
+    // what keeps a real one safe - Reset() now defers while DoNextAction owns
+    // the queue. Before both, Init() -> Reset() drained `queue` outright, so a
+    // ChangeStrategy issued from inside an action's Execute() destroyed every
+    // basket DoNextAction had not popped yet and the walk exited on a null
+    // Peek(). BGTactics
     // fires exactly that: `ai->ChangeStrategy("-buff", BOT_STATE_NON_COMBAT)`
     // (BattleGroundTactics.cpp:2716-2718) on every tick of a battleground in
     // progress, whether or not "buff" is still attached. In WSG that ran on the
     // relevance-70 `bg check flag` action and killed the rest of the tick, so
     // `bg move to objective` at relevance 1.0 was queued 23,908 times and
     // popped none.
-    if (!initMode && StrategySignature() != signatureBefore)
+    if (!initMode && StrategySetToken() != tokenBefore)
         Init();
-}
-
-std::string Engine::StrategySignature() const
-{
-    // strategies is an ordered map, so equal sets give equal strings.
-    std::string signature;
-    for (std::map<std::string, Strategy*>::const_iterator i = strategies.begin(); i != strategies.end(); ++i)
-    {
-        signature += i->first;
-        signature += "|";
-    }
-
-    return signature;
 }
 
 void Engine::PrintStrategies(Player* requester, const std::string& engineType)

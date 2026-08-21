@@ -41,6 +41,7 @@
 #include "BattleGroundMgr.h"
 #include "MapManager.h"
 #include "SocialMgr.h"
+#include "ScriptObjects.h"
 
 // PlayerBotMgr.h include removed — Penqle stub binned for cmangos port.
 #include "Anticheat/Anticheat.h"
@@ -175,6 +176,14 @@ char const* WorldSession::GetPlayerName() const
 /// Send a packet to the client
 void WorldSession::SendPacket(WorldPacket const* packet)
 {
+    bool handledByScript = ScriptRegistry<ServerScript>::ForEachEnabledHookWithReturn(SERVERHOOK_CAN_PACKET_SEND, [&](ServerScript* script)
+    {
+        return !script->CanPacketSend(this, *packet);
+    });
+
+    if (handledByScript)
+        return;
+
     // There is a maximum size packet.
     if (packet->size() > 0x8000)
     {
@@ -229,10 +238,6 @@ void WorldSession::SendPacket(WorldPacket const* packet)
     // the AI can react to server-originated events: group invites (auto-accept), vendor errors,
     // BG queue status, resurrect requests, etc. Real-player sessions have m_playerbotAI=null
     // so this is a no-op for them; bot sessions have null m_Socket AND m_playerbotAI set, so
-    // we route the packet to the AI and skip the network send.
-    // Implementation in src/modules/PlayerBots/playerbot/HostHooks.cpp dispatches to the AI.
-    if (_player && Player_DispatchBotOutgoingPacket(_player, *packet))
-        return;
 
 	if (m_Socket == nullptr)
         return;
@@ -471,11 +476,21 @@ void WorldSession::ProcessPackets(PacketFilter& updater)
             continue;
         }
 
-
-        ALL_SESSION_SCRIPTS(this, OnPacket(packet->GetOpcode()));
         OpcodeHandler const& opHandle = opcodeTable[packet->GetOpcode()];
         try
         {
+            ALL_SESSION_SCRIPTS(this, OnPacket(packet->GetOpcode()));
+            bool handledByScript = ScriptRegistry<ServerScript>::ForEachEnabledHookWithReturn(SERVERHOOK_CAN_PACKET_RECEIVE, [&](ServerScript* script)
+            {
+                return !script->CanPacketReceive(this, *packet);
+            });
+
+            if (handledByScript)
+            {
+                delete packet;
+                continue;
+            }
+
             uint32 packetTime = WorldTimer::getMSTime();
             switch (opHandle.status)
             {
@@ -491,9 +506,13 @@ void WorldSession::ProcessPackets(PacketFilter& updater)
                     {
                         ExecuteOpcode(opHandle, packet);
 
-                        // Mirror the player's action packets to any bots they control
-                        // (quest accepts, gossip, quest shares, ...). No-op without bots.
-                        Player_DispatchMasterIncomingPacket(_player, *packet);
+                        // Let modules observe the action now that the handler ran -
+                        // a master commanding puppets mirrors quest accepts, gossip
+                        // and quest shares to them from here.
+                        ScriptRegistry<ServerScript>::ForEachEnabledHook(SERVERHOOK_ON_PACKET_HANDLED, [&](ServerScript* script)
+                        {
+                            script->OnPacketHandled(this, *packet);
+                        });
                     }
 
                     // lag can cause STATUS_LOGGEDIN opcodes to arrive after the player started a transfer
@@ -627,19 +646,17 @@ void WorldSession::LogoutPlayer(bool Save)
     bool doBanPlayer = false;
     bool disabledSocials = false;
 
-    // detach bot AI/mgr before logout
-    // tears down the Player. Safe to call on real players / bots (no-op when ptr is null).
-    if (_player)
-    {
-        _player->RemovePlayerbotAI();
-        _player->RemovePlayerbotMgr();
-    }
+    // Module teardown happens from PlayerScript::OnBeforeLogout just below.
 
     if (_player)
     {
         bool inWorld = _player->IsInWorld() && _player->FindMap();
 
         sLog.out(LOG_CHAR, "[%s:%u@%s] Logout Character:[%s] (guid: %u)", GetUsername().c_str(), GetAccountId(), GetRemoteAddress().c_str(), _player->GetName() , _player->GetGUIDLow());
+        ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_BEFORE_LOGOUT, [&](PlayerScript* script)
+        {
+            script->OnBeforeLogout(_player);
+        });
         sDBLogger.LogCharAction({ _player->GetGUIDLow(), GetAccountId(), LogCharAction::ActionLogout, {} });
         if (ObjectGuid lootGuid = GetPlayer()->GetLootGuid())
             DoLootRelease(lootGuid);
@@ -803,7 +820,7 @@ void WorldSession::LogoutPlayer(bool Save)
                 if (slot.guid == _player->GetObjectGuid())
                     continue;
                 Player* member = sObjectMgr.GetPlayer(slot.guid);
-                if (!member || !member->isRealPlayer())
+                if (!member || Script_IsMachineDriven(member))
                     botGuids.push_back(slot.guid);
             }
             for (const ObjectGuid& guid : botGuids)
@@ -834,11 +851,21 @@ void WorldSession::LogoutPlayer(bool Save)
 
         if (inWorld && !removedFromMap)
         {
+            ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_LOGOUT, [&](PlayerScript* script)
+            {
+                script->OnLogout(_player);
+            });
+
             Map* _map = _player->GetMap();
             _map->Remove(_player, true);
         }
         else
         {
+            ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_LOGOUT, [&](PlayerScript* script)
+            {
+                script->OnLogout(_player);
+            });
+
             _player->CleanupsBeforeDelete();
             Map::DeleteFromWorld(_player);
         }

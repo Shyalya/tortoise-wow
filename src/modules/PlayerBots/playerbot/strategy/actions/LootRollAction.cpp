@@ -228,7 +228,7 @@ RollVote RollAction::CalculateRollVote(ItemQualifier& itemQualifier)
             needVote = ROLL_GREED;
     }
 
-    bool canLoot = StoreLootAction::IsLootAllowed(itemQualifier, bot->GetPlayerbotAI());
+    bool canLoot = StoreLootAction::IsLootAllowed(itemQualifier, GetBotAI(bot));
 
     if (AI_VALUE2(bool, "manual bool", "roll feedback"))
     {
@@ -290,7 +290,7 @@ bool RollAction::HumansStillDeciding(ObjectGuid lootGuid, uint32 slot, bool& hum
     for (auto const& vote : roll->playerVote)
     {
         Player* voter = sObjectMgr.GetPlayer(vote.first);
-        if (!voter || voter->GetPlayerbotAI())
+        if (!voter || GetBotAI(voter))
             continue;
 
         if (vote.second == ROLL_NEED)

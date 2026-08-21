@@ -44,8 +44,8 @@ bool MoveToTravelTargetAction::Execute(Event& event)
             if (!member->IsMoving())
                 continue;
 
-            if (member->GetPlayerbotAI() &&
-                !(member->GetPlayerbotAI()->HasStrategy("follow", BotState::BOT_STATE_NON_COMBAT) || member->GetPlayerbotAI()->HasStrategy("wander", BotState::BOT_STATE_NON_COMBAT)))
+            if (GetBotAI(member) &&
+                !(GetBotAI(member)->HasStrategy("follow", BotState::BOT_STATE_NON_COMBAT) || GetBotAI(member)->HasStrategy("wander", BotState::BOT_STATE_NON_COMBAT)))
                 continue;
 
             WorldPosition memberPos(member);
@@ -73,7 +73,7 @@ bool MoveToTravelTargetAction::Execute(Event& event)
 
                 out << member->GetName();
 
-                if (bot->GetPlayerbotAI() && !ai->HasActivePlayerMaster())
+                if (GetBotAI(bot) && !ai->HasActivePlayerMaster())
                 {
                     out << " who is " << round(memberDistance) << "y away";
                     if (!memberPos.getAreaName().empty())

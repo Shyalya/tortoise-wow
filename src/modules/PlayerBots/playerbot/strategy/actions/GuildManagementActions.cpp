@@ -121,10 +121,10 @@ bool GuildManageNearbyAction::Execute(Event& event)
         if (player->GetGuildIdInvited())
             continue;
 
-        if (!sPlayerbotAIConfig.randomBotInvitePlayer && player->isRealPlayer())
+        if (!sPlayerbotAIConfig.randomBotInvitePlayer && IsRealPlayer(player))
             continue;
 
-        PlayerbotAI* botAi = player->GetPlayerbotAI();
+        PlayerbotAI* botAi = GetBotAI(player);
 
         if (botAi)
         {            

@@ -575,7 +575,7 @@ void LFTManager::TeleportBotGroupToInstance(Offer const& offer)
     for (auto const& role : offer.roles)
     {
         Player* member = GetPlayer(role.first);
-        if (!member || !member->GetPlayerbotAI())
+        if (!member || !Script_IsAIControlled(member))
             return;
     }
 

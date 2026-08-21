@@ -2238,7 +2238,7 @@ bool QuestRewarded_npc_mysterious_stranger(Player* pPlayer, Creature* pQuestGive
         return false;
 
     // Bots must never activate challenge modes — skip all rewards from this NPC.
-    if (pPlayer->GetPlayerbotAI())
+    if (Script_IsAIControlled(pPlayer))
         return false;
 
     if (pQuest->GetQuestId() == 80388) // Stay awhile and listen...

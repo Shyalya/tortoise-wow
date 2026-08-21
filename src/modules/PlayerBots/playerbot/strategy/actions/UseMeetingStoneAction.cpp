@@ -245,7 +245,7 @@ bool SummonAction::Teleport(Player* requester, Player *summoner, Player *player)
                     return false;
                 }
 
-                if(player->isRealPlayer())
+                if(IsRealPlayer(player))
                     player->SendHeartBeat();
 
                 if (summoner->GetTransport())

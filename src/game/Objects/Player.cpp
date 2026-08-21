@@ -64,6 +64,7 @@
 #include "Database/DatabaseImpl.h"
 #include "Spell.h"
 #include "ScriptMgr.h"
+#include "ScriptObjects.h"
 #include "SocialMgr.h"
 #include "Mail.h"
 #include "WaypointMovementGenerator.h"
@@ -1593,6 +1594,11 @@ void Player::Update(uint32 update_diff, uint32 p_time)
     if (!IsInWorld())
         return;
 
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_BEFORE_UPDATE, [&](PlayerScript* script)
+    {
+        script->OnBeforeUpdate(this, update_diff);
+    });
+
     UpdateMirrorTimers(update_diff);
 
     //used to implement delayed far teleports
@@ -1602,12 +1608,11 @@ void Player::Update(uint32 update_diff, uint32 p_time)
         i_AI->UpdateAI(p_time);
     SetCanDelayTeleport(false);
 
-    // per-Player bot tick.
-    // If this Player is a bot (has m_playerbotAI), tick its AI; if it's a real player driving bots
-    // (has m_playerbotMgr), tick the manager so its bots respond. Both call sites are no-ops if
-    // the corresponding pointer is null.
-    UpdatePlayerbotHooks(update_diff);
-    SC_PHASE_PLAYER("Player::Update.afterPlayerbotHooks");
+    // The per-Player bot tick used to sit here. It is PlayerScript::OnUpdate now,
+    // fired at the end of this function instead of right after Unit::Update. Both
+    // positions are after Unit::Update, so a driven character still decides on
+    // settled movement and aura state; at the new one its own regen and timers
+    // have run too.
 
     time_t now = time(nullptr);
 
@@ -1946,6 +1951,11 @@ void Player::Update(uint32 update_diff, uint32 p_time)
         }
     }
     SC_PHASE_PLAYER("Player::Update.exit");
+
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_UPDATE, [&](PlayerScript* script)
+    {
+        script->OnUpdate(this, update_diff);
+    });
 }
 
 void Player::OnDisconnected()
@@ -2616,6 +2626,11 @@ bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientati
     // don't let gm level > 1 either
     if (!InBattleGround() && mEntry->IsBattleGround())
         return false;
+
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_BEFORE_TELEPORT, [&](PlayerScript* script)
+    {
+        script->OnBeforeTeleport(this, mapid, x, y, z, orientation);
+    });
 
     DEBUG_LOG("Player %s will teleported to map %u", GetName(), mapid);
 
@@ -3633,6 +3648,14 @@ void Player::GiveXP(uint32 xp, Unit* victim)
     if (xp < 1)
         return;
 
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_GIVE_EXP, [&](PlayerScript* script)
+    {
+        script->OnGiveXP(this, xp, victim);
+    });
+
+    if (xp < 1)
+        return;
+
     if (xp > 100000)
     {
         sLog.out(LOG_LEVELUP, "Character %s has attempted to get %u amount of experience.", GetName(), xp);
@@ -3747,6 +3770,8 @@ void Player::GiveLevel(uint32 level)
 {
     if (level == GetLevel())
         return;
+
+    uint8 const oldLevel = GetLevel();
 
     uint32 numInstanceMembers = 0;
     uint32 numGroupMembers = 0;
@@ -3964,6 +3989,10 @@ void Player::GiveLevel(uint32 level)
     m_Played_time[PLAYED_TIME_LEVEL] = 0;               // Level Played Time reset
     SetLevel(level);
     UpdateSkillsForLevel();
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_LEVEL_CHANGED, [&](PlayerScript* script)
+    {
+        script->OnLevelChanged(this, oldLevel);
+    });
 
     // save base values (bonuses already included in stored stats
     for (int i = STAT_STRENGTH; i < MAX_STATS; ++i)
@@ -4577,6 +4606,10 @@ void Player::LearnSpell(uint32 spell_id, bool dependent, bool talent)
         WorldPacket data(SMSG_LEARNED_SPELL, 4);
         data << uint32(spell_id);
         GetSession()->SendPacket(&data);
+        ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_LEARN_SPELL, [&](PlayerScript* script)
+        {
+            script->OnLearnSpell(this, spell_id);
+        });
     }
 
     // learn all disabled higher ranks (recursive) - skip for talent spells
@@ -4644,6 +4677,10 @@ void Player::RemoveSpell(uint32 spell_id, bool disabled, bool learn_low_rank, bo
     }
 
     RemoveAurasDueToSpell(spell_id);
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_FORGOT_SPELL, [&](PlayerScript* script)
+    {
+        script->OnForgotSpell(this, spell_id);
+    });
 
     // remove pet auras
     if (PetAura const* petSpell = sSpellMgr.GetPetAura(spell_id))
@@ -5064,6 +5101,11 @@ bool Player::ResetTalents(bool no_cost)
 
     //FIXME: Remove pet before or after unlearn spells? for now after unlearn to allow removing of talent related, pet affecting auras
     RemovePet(PET_SAVE_REAGENTS);
+
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_TALENTS_RESET, [&](PlayerScript* script)
+    {
+        script->OnTalentsReset(this, no_cost);
+    });
 
     return true;
 }
@@ -5779,6 +5821,11 @@ void Player::BuildPlayerRepop()
 
     // set and clear other
     SetByteValue(UNIT_FIELD_BYTES_1, 3, UNIT_BYTE1_FLAG_ALWAYS_STAND);
+
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_PLAYER_RELEASED_GHOST, [&](PlayerScript* script)
+    {
+        script->OnPlayerReleasedGhost(this);
+    });
 }
 
 void Player::ResurrectPlayer(float restore_percent, bool applySickness, bool forceHc)
@@ -6454,7 +6501,7 @@ void Player::RepopAtGraveyard()
         for (GroupReference* itr = GetGroup()->GetFirstMember(); itr; itr = itr->next())
         {
             Player* member = itr->getSource();
-            if (member && member != this && !member->GetPlayerbotAI())
+            if (member && member != this && !Script_IsAIControlled(member))
             {
                 noHumanHelp = false;
                 break;
@@ -6464,7 +6511,7 @@ void Player::RepopAtGraveyard()
 
     bool const repopAtEntrance =
         (sWorld.getConfig(CONFIG_BOOL_SOLO_DUNGEON_REPOP_ALIVE) && noHumanHelp) ||
-        GetPlayerbotAI() != nullptr;
+        Script_IsAIControlled(this);
 
     if (!IsAlive() && repopAtEntrance && GetMap() && GetMap()->IsDungeon())
     {
@@ -7794,7 +7841,7 @@ void Player::CheckAreaExploreAndOutdoor()
                 // routinely teleported everywhere by the bot system and must be
                 // excluded, otherwise every bot login at a saved high-level position
                 // spams false-positive errors.
-                if (GetLevel() < 16 && !GetPlayerbotAI()) // Chinese config limitation for the world chat.
+                if (GetLevel() < 16 && !Script_IsAIControlled(this)) // Chinese config limitation for the world chat.
                 {
                     if (uint32(p->AreaLevel) > 20)
                     {
@@ -8166,6 +8213,7 @@ void Player::SetTransport(Transport* t)
 
 void Player::UpdateArea(uint32 newArea)
 {
+    uint32 oldArea = m_areaUpdateId;
     m_areaUpdateId    = newArea;
 
     DismountCheck();
@@ -8188,6 +8236,14 @@ void Player::UpdateArea(uint32 newArea)
     }
 
     UpdateAreaDependentAuras();
+
+    if (oldArea != newArea)
+    {
+        ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_UPDATE_AREA, [&](PlayerScript* script)
+        {
+            script->OnUpdateArea(this, oldArea, newArea);
+        });
+    }
 }
 
 void Player::UpdateZone(uint32 newZone, uint32 newArea)
@@ -8272,6 +8328,14 @@ void Player::UpdateZone(uint32 newZone, uint32 newArea)
 
     UpdateZoneDependentAuras();
     SetZoneScript();
+
+    if (oldZoneId != newZone)
+    {
+        ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_UPDATE_ZONE, [&](PlayerScript* script)
+        {
+            script->OnUpdateZone(this, newZone, newArea);
+        });
+    }
 }
 
 //If players are too far way of duel flag... then player loose the duel
@@ -8430,6 +8494,11 @@ void Player::DuelComplete(DuelCompleteType type)
     {
         pOpponent->m_disableGeneralDamage = true;
         pOpponent->m_Events.AddLambdaEventAtOffset([pOpponent]() { pOpponent->m_disableGeneralDamage = false; }, 2000);
+
+        ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_DUEL_END, [&](PlayerScript* script)
+        {
+            script->OnDuelEnd(pOpponent, this, type);
+        });
 
         if (pOpponent->m_duel)
             pOpponent->m_duel->finished = true;;
@@ -15031,6 +15100,11 @@ void Player::CompleteQuest(uint32 quest_id)
 
         if (Quest const* qInfo = sObjectMgr.GetQuestTemplate(quest_id))
         {
+            ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_PLAYER_COMPLETE_QUEST, [&](PlayerScript* script)
+            {
+                script->OnPlayerCompleteQuest(this, qInfo);
+            });
+
             if (qInfo->HasQuestFlag(QUEST_FLAGS_AUTO_REWARDED))
                 RewardQuest(qInfo, 0, this, false);
         }
@@ -15999,7 +16073,20 @@ void Player::ItemRemovedQuestCheck(uint32 entry, uint32 count)
 void Player::KilledMonster(CreatureInfo const* cInfo, ObjectGuid guid)
 {
     if (cInfo->entry)
+    {
+        if (Map* map = FindMap())
+        {
+            if (Creature* creature = map->GetCreature(guid))
+            {
+                ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_CREATURE_KILL, [&](PlayerScript* script)
+                {
+                    script->OnCreatureKill(this, creature);
+                });
+            }
+        }
+
         KilledMonsterCredit(cInfo->entry, guid);
+    }
 }
 
 void Player::KilledMonsterCredit(uint32 entry, ObjectGuid guid)
@@ -16214,7 +16301,22 @@ void Player::LogModifyMoney(int32 d, const char* type, ObjectGuid fromGuid, uint
     {
         sLog.out(LOG_MONEY_TRADES, "[%s] %s gets %ic (data: %u|%s)", type, GetShortDescription().c_str(), d, data, fromGuid.GetString().c_str());
     }
+
     ModifyMoney(d);
+}
+
+void Player::ModifyMoney(int32 d)
+{
+    int32 amount = d;
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_MONEY_CHANGED, [&](PlayerScript* script)
+    {
+        script->OnMoneyChanged(this, amount);
+    });
+
+    if (amount < 0)
+        SetMoney(GetMoney() > uint32(-amount) ? GetMoney() + amount : 0);
+    else
+        SetMoney(GetMoney() < uint32(MAX_MONEY_AMOUNT - amount) ? GetMoney() + amount : MAX_MONEY_AMOUNT);
 }
 
 void Player::MoneyChanged(uint32 count)
@@ -18454,6 +18556,14 @@ bool Player::SaveToDB(bool online, bool force, bool direct)
         data->uiLevel = GetLevel();
         data->uiZoneId = GetCachedZoneId();
         data->uiHardcoreStatus = GetHardcoreStatus();
+    }
+
+    if (saved)
+    {
+        ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_SAVE, [&](PlayerScript* script)
+        {
+            script->OnSave(this);
+        });
     }
 
     return saved;
@@ -22035,6 +22145,14 @@ void Player::RewardSinglePlayerAtKill(Unit* pVictim)
     }
     else
     {
+        if (Player* playerVictim = pVictim->ToPlayer())
+        {
+            ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_PVP_KILL, [&](PlayerScript* script)
+            {
+                script->OnPVPKill(this, playerVictim);
+            });
+        }
+
         if (InGurubashiArena(false) && IsHonorOrXPTarget(pVictim))
         {
             ChatHandler(this).PSendSysMessage("|cffff8040Arena Spectator throws you a coin.|r");
@@ -22552,6 +22670,10 @@ void Player::AutoStoreLoot(Loot& loot, bool broadcast, uint8 bag, uint8 slot)
         SendNotifyLootItemRemoved(i);
         Item* pItem = StoreNewItem(dest, lootItem->itemid, true, lootItem->randomPropertyId);
         SendNewItem(pItem, lootItem->count, false, false, broadcast);
+        ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_LOOT_ITEM, [&](PlayerScript* script)
+        {
+            script->OnLootItem(this, pItem, lootItem->count, GetLootGuid());
+        });
     }
 }
 

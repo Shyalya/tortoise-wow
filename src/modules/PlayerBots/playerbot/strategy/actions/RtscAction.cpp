@@ -134,7 +134,7 @@ bool RTSCAction::Execute(Event& event)
 				if (!ai->IsSafe(player))
 					continue;
 
-				if (!player->GetPlayerbotAI())
+				if (!GetBotAI(player))
 					continue;
 
 				if (args.size() < 5 && player != bot)
@@ -202,7 +202,7 @@ bool RTSCAction::Execute(Event& event)
 				if (!ai->IsSafe(player))
 					continue;
 
-				if (!player->GetPlayerbotAI())
+				if (!GetBotAI(player))
 					continue;
 
 				if (args.size() < 5 && player != bot)

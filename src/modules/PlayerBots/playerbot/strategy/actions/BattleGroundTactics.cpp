@@ -2456,9 +2456,11 @@ bool BGTactics::wsgPaths()
             }
             else if (bot->GetPositionX() > 1443.9f) { // moving from the fasty to the gate directly is bugged.. moving back to the tunnel first
                 MoveTo(bg->GetMapId(), 1443.761963f, 1459.581909f, 342.115417f);
+                return  true;
             }
             else if (bot->GetPositionX() > 1380.9f) { // move into the tunnel
                 MoveTo(bg->GetMapId(), 1380.761963f, 1457.581909f, 329.115417f);
+                return  true;
             }
             else if (bot->GetPositionX() > 1351.9f) //to the alliance entrance
             {
@@ -2636,10 +2638,10 @@ bool BGTactics::wsgRoofJump()
     if (atAllianceSecondFloorJump && (!inCombat || (pos.z < 361.f && pos.x < 1421.f)))
     {
         // not at jump point
-        if (bot->GetPositionY() < 1468.f)
+        if (bot->GetPositionY() < 1466.f)
             return MoveTo(bg->GetMapId(), WS_FLAG_ALLIANCE_FLOOR_JUMP_UPPER.x, WS_FLAG_ALLIANCE_FLOOR_JUMP_UPPER.y, WS_FLAG_ALLIANCE_FLOOR_JUMP_UPPER.z);
         else
-            return MoveTo(bg->GetMapId(), WS_FLAG_ALLIANCE_FLOOR_JUMP_UPPER.x, WS_FLAG_ALLIANCE_FLOOR_JUMP_UPPER.y, WS_FLAG_ALLIANCE_FLOOR_JUMP_UPPER.z, false, false, true);
+            return MoveTo(bg->GetMapId(), WS_FLAG_ALLIANCE_FLOOR_JUMP_LOWER.x, WS_FLAG_ALLIANCE_FLOOR_JUMP_LOWER.y, WS_FLAG_ALLIANCE_FLOOR_JUMP_LOWER.z, false, false, true);
     }
     return false;
 }
@@ -2717,8 +2719,11 @@ bool BGTactics::Execute(Event& event)
     if (bg->GetStatus() == STATUS_IN_PROGRESS)
         ai->ChangeStrategy("-buff", BotState::BOT_STATE_NON_COMBAT);
 
-    std::vector<BattleBotPath*> const* vPaths;
-    std::vector<uint32> const* vFlagIds;
+    // Both stay null for any battleground type without a case below
+    // (BATTLEGROUND_BR and BATTLEGROUND_SV reach 'default: break'), and the AV
+    // case deliberately leaves vFlagIds null. Every use is null-guarded.
+    std::vector<BattleBotPath*> const* vPaths = nullptr;
+    std::vector<uint32> const* vFlagIds = nullptr;
 
     BattleGroundTypeId bgType = bg->GetTypeId();
 #ifdef MANGOSBOT_TWO
@@ -2792,6 +2797,10 @@ bool BGTactics::Execute(Event& event)
         if (bg->GetStatus() == STATUS_WAIT_JOIN)
             return false;
 
+        // no waypoint paths defined for this battleground type
+        if (!vPaths)
+            return false;
+
         if (useBuff())
             return true;
 
@@ -2838,7 +2847,7 @@ bool BGTactics::Execute(Event& event)
             case BATTLEGROUND_AV: return CheckFlagAv();
         }
 
-        if (vFlagIds)
+        if (vPaths && vFlagIds)
         {
             if (atFlag(*vPaths, *vFlagIds))
                 return true;
@@ -2973,7 +2982,7 @@ static bool BgTeamHasRealPlayer(BattleGround* bg, Team team)
     for (auto const& itr : bg->GetPlayers())
     {
         if (Player* p = sObjectMgr.GetPlayer(itr.first))
-            if (!p->GetPlayerbotAI() && p->GetTeam() == team)
+            if (!GetBotAI(p) && p->GetTeam() == team)
                 return true;
     }
     return false;
@@ -3159,7 +3168,7 @@ bool BGTactics::selectObjective(bool reset)
 
         if (isDead && (botSelectedObjectives[botGUID] != nullptr))
         {
-            bot->Say("I'm dead, guess I'll reset my objective.", LANG_UNIVERSAL);
+            sLog.outDetail("Bot #%d %s:%d <%s>: died with an AB objective selected, resetting it", bot->GetGUIDLow(), bot->GetTeam() == ALLIANCE ? "A" : "H", bot->getLevel(), bot->GetName());
             botSelectedObjectives[botGUID] = nullptr; // Reset objective if we die... maybe more lucky elsewhere -- wait I don't think this is executed on dead bots so it's never triggered? Try something else
             botObjectiveSelectionTime[botGUID] = 0;
         }

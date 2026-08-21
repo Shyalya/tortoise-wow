@@ -22,6 +22,7 @@
 #pragma once
 
 #include "Common.h"
+#include "ModuleSlots.h"
 #include "ItemPrototype.h"
 #include "Unit.h"
 #include "Item.h"
@@ -65,9 +66,6 @@ class ZoneScript;
 class PlayerAI;
 class PlayerBroadcaster;
 class MapReference;
-// Forward decls for bot host hooks (defined in the playerbots module).
-class PlayerbotAI;
-class PlayerbotMgr;
 
 static constexpr uint8 PLAYER_MAX_SKILLS = 127;
 constexpr uint8 PLAYER_EXPLORED_ZONES_SIZE = 64;
@@ -1421,13 +1419,7 @@ class Player final: public Unit
 
         uint32 GetMoney() const { return GetUInt32Value(PLAYER_FIELD_COINAGE); }
         void LogModifyMoney(int32 d, const char* type, ObjectGuid fromGuid = ObjectGuid(), uint32 data = 0);
-        void ModifyMoney(int32 d)
-        {
-            if (d < 0)
-                SetMoney(GetMoney() > uint32(-d) ? GetMoney() + d : 0);
-            else
-                SetMoney(GetMoney() < uint32(MAX_MONEY_AMOUNT - d) ? GetMoney() + d : MAX_MONEY_AMOUNT);
-        }
+        void ModifyMoney(int32 d);
         void LootMoney(int32 g, Loot* loot);
         std::string GetShortDescription() const; // "player:guid [username:accountId@IP]"
 
@@ -2402,16 +2394,13 @@ class Player final: public Unit
         void RemoveAI();
 
         // =========================================================================
-        // Bot host interface + cmangos compat aliases.
+        // Module storage and cmangos compat aliases.
         //
-        // Compiled unconditionally (no #ifdef BUILD_PLAYERBOTS). When bots are
-        // disabled, src/game/PlayerbotStubs.cpp provides empty bodies for the
-        // non-inline members so the host still links. The vendored playerbots
-        // module in src/modules/PlayerBots/ provides the real implementations.
-        //
-        // Three groups follow:
-        //   1. Bot-lifecycle hooks: Create/Remove PlayerbotAI/Mgr, accessors,
-        //      isRealPlayer, UpdatePlayerbotHooks.
+        // The bot-lifecycle group that used to head this block is gone: creating,
+        // destroying and reaching a PlayerbotAI is the module's business now, done
+        // through the slots below. What is left:
+        //   1. Module storage — an opaque pointer per claimed slot, see
+        //      ModuleSlots.h. The core allocates it and never reads it.
         //   2. cmangos camelCase / signature aliases — one-line forwarders to
         //      the Penqle-named equivalent so the vendored bot source compiles
         //      unmodified. Each is tagged with the cmangos name it shadows.
@@ -2420,12 +2409,11 @@ class Player final: public Unit
         //      module tolerates no-op behavior at these sites.
         // =========================================================================
 
-        // m_playerbotAI is set by CreatePlayerbotAI() during PlayerbotHolder::OnBotLogin.
-        // m_playerbotMgr is set when a real Player logs in (mgr drives all their bots).
-        PlayerbotAI* GetPlayerbotAI() const { return m_playerbotAI; }
-        PlayerbotMgr* GetPlayerbotMgr() const { return m_playerbotMgr; }
+        // Module storage. See ModuleSlots.h for who owns which slot.
+        void* GetModuleSlot(uint8 slot) const { return slot < MODULE_SLOT_MAX ? m_moduleSlots[slot] : nullptr; }
+        void SetModuleSlot(uint8 slot, void* value) { if (slot < MODULE_SLOT_MAX) m_moduleSlots[slot] = value; }
+        template<class T> T* GetModuleSlotAs(uint8 slot) const { return static_cast<T*>(GetModuleSlot(slot)); }
         // isRealPlayer: a bot's AI is non-null and not flagged as real-player; otherwise this is a real player.
-        bool isRealPlayer() const;
 
         // cmangos-style aliases the bot module uses on Player:
         // IsInGroup(other) — checks if `other` is in the same group as this player.
@@ -2524,19 +2512,6 @@ class Player final: public Unit
         MountInfoStub const* GetMountInfo() const { return nullptr; }
         // GetMaster: cmangos returns Player's master (party leader / bot owner). Out-of-line in Player.cpp.
         Player* GetMaster() const;
-        // RemovePlayerbotAI / CreatePlayerbotAI: bot lifecycle.
-        // Implementations in Player.cpp; CreatePlayerbotAI allocates a PlayerbotAI for this Player.
-        void RemovePlayerbotAI();
-        void CreatePlayerbotAI();
-        // RemovePlayerbotMgr / CreatePlayerbotMgr: real-player bot-controller lifecycle.
-        // Real players (non-bots) get a PlayerbotMgr to manage their alt bots via .bot commands.
-        void RemovePlayerbotMgr();
-        void CreatePlayerbotMgr();
-        // SetPlayerbotMgr/AI: setters used by RandomPlayerbotMgr / OnSessionLogin to attach managers.
-        void SetPlayerbotAI(PlayerbotAI* ai) { m_playerbotAI = ai; }
-        void SetPlayerbotMgr(PlayerbotMgr* mgr) { m_playerbotMgr = mgr; }
-        // Per-Player tick driver — called from Player::Update. Implementation in HostHooks.cpp.
-        void UpdatePlayerbotHooks(uint32 diff);
         // MeleeAttackStart/Stop: cmangos forwarders to AttackerStateUpdate. Stub no-op.
         void MeleeAttackStart(Unit* /*pVictim*/) {}
         void MeleeAttackStop(Unit* /*pVictim*/ = nullptr) {}
@@ -3359,43 +3334,22 @@ public:
         void SendAddonMessage(std::string prefix, std::string message);
         void SendAddonMessage(std::string prefix, std::string message, Player* from);
 
-        // Bot state members.
-        // m_playerbotAI: non-null if this Player is a bot; null otherwise.
-        // m_playerbotMgr: non-null if this Player has bots under its control (real player driving bots).
     private:
-        PlayerbotAI* m_playerbotAI = nullptr;
-        PlayerbotMgr* m_playerbotMgr = nullptr;
+        // Per-player storage for modules. The core hands out the space and never
+        // looks inside it; slot ids are claimed in ModuleSlots.h. A flat array
+        // rather than a keyed map because the population module reads its slot on
+        // every tick of every driven character, where a hash lookup would show.
+        void* m_moduleSlots[MODULE_SLOT_MAX] = {};
 };
 
 void AddItemsSetItem(Player*player,Item* item);
 void RemoveItemsSetItem(Player*player,ItemPrototype const* proto);
 
-// outgoing-packet interceptor for bots.
-// WorldSession::SendPacket calls this; if the player has a PlayerbotAI attached, the AI
-// processes the packet (group invites, BG status, vendor errors, etc.) and returns true
-// to suppress network send. Real players (no AI) return false. Implementation in HostHooks.cpp.
-bool Player_DispatchBotOutgoingPacket(Player* player, class WorldPacket const& packet);
-
-// incoming-packet interceptor for bot-owning players.
-// WorldSession::ProcessPackets calls this after the player's own handler ran; the packet is
-// forwarded to PlayerbotMgr::HandleMasterIncomingPacket so the player's bots can mirror it
-// (quest accepts, gossip, quest shares, ...). Never suppresses the packet; no-op for bots.
-void Player_DispatchMasterIncomingPacket(Player* player, class WorldPacket const& packet);
-
-// chat-message dispatcher for bots.
-// WorldSession::HandleMessagechatOpcode calls this after validating the master's chat input,
-// so each bot under the master's PlayerbotMgr (and matching random bots) gets the message
-// fed to their PlayerbotAI::HandleCommand for parsing as a bot command (/party "co" etc).
-// Implementation in HostHooks.cpp.
-void Player_DispatchBotChatCommand(Player* master, uint32 type, std::string const& msg, uint32 lang, std::string const& to = "");
-// Tell a bot which role the dungeon finder gave it (LFT_ROLE_* bits, 0 clears).
-// No-op for anything that is not a bot.
-void Playerbot_SetForcedRole(Player* bot, uint8 role);
-// Which roles this bot's AI can actually play, as LFT_ROLE_* bits. The
-// queue's own AllowedRoleMask is about what a class may sign up as; this is
-// about what the bot can deliver, and the two are not the same - a shaman may
-// queue as tank but has no tank strategy at all.
-uint8 Playerbot_GetAllowedRoles(Player* bot);
+// The four bot dispatchers that used to be declared here are gone. They are
+// module hooks now: ServerScript::CanPacketSend and ::OnPacketHandled for the
+// two packet paths, PlayerScript::OnChatCommand, ::SetForcedRole and
+// ::GetAllowedRoles for the rest. Ask through the Script_* helpers in
+// ScriptMgr.h rather than reaching for a bot type from the core.
 
 // "the bodies of template functions must be made available in a header file"
 template <class T> T Player::ApplySpellMod(uint32 spellId, SpellModOp op, T &basevalue, Spell* spell)

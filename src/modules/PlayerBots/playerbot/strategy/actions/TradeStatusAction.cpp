@@ -20,7 +20,7 @@ bool TradeStatusAction::Execute(Event& event)
         return false;
 
     bool shouldTrade = true;
-    if (!trader->GetPlayerbotAI())
+    if (!GetBotAI(trader))
     {
         shouldTrade = false;
         if (trader == master || bot->IsInGroup(trader))
@@ -117,7 +117,7 @@ bool TradeStatusAction::Execute(Event& event)
 void TradeStatusAction::BeginTrade()
 {
     Player* trader = bot->GetTrader();
-    if (!trader || trader->GetPlayerbotAI())
+    if (!trader || GetBotAI(trader))
         return;
 
     WorldPacket p;
@@ -146,7 +146,7 @@ bool TradeStatusAction::CheckTrade()
     if (!bot->GetTradeData() || !trader || !trader->GetTradeData())
         return false;
 
-    if (!ai->HasActivePlayerMaster() && bot->GetTrader()->GetPlayerbotAI())
+    if (!ai->HasActivePlayerMaster() && GetBotAI(bot->GetTrader()))
     {
         bool isGivingItem = false;
         for (uint32 slot = 0; slot < TRADE_SLOT_TRADED_COUNT; ++slot)

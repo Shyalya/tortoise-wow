@@ -49,7 +49,7 @@ namespace ai
                 return true;
             }
 
-            if (owner->isRealPlayer())
+            if (IsRealPlayer(owner))
             {
                 HandleCommand("c", command, owner);
                 HandleCommand("t", command, owner);

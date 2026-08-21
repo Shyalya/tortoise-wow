@@ -27,7 +27,7 @@ bool BroadcastHelper::BroadcastTest(
     return false;
 
     //don't think bots rejoin channnels when changing areas?
-    //bot->GetPlayerbotMgr()->JoinChatChannels(bot);
+    //GetBotMgr(bot)->JoinChatChannels(bot);
 
     std::map<std::string, std::string> placeholders;
     placeholders["%rand1"] = std::to_string(urand(0, 1));
@@ -1075,7 +1075,7 @@ bool BroadcastHelper::BroadcastSuggestThunderfury(
 
         std::map<std::string, std::string> placeholders;
         ItemPrototype const* thunderfuryProto = sObjectMgr.GetItemPrototype(19019);
-        placeholders["%thunderfury_link"] = bot->GetPlayerbotAI()->GetChatHelper()->formatItem(thunderfuryProto);
+        placeholders["%thunderfury_link"] = GetBotAI(bot)->GetChatHelper()->formatItem(thunderfuryProto);
         placeholders["%random_inventory_item_link"] = botItems.size() > 0 ? ai->GetChatHelper()->formatItem(botItems[rand() % botItems.size()]) : BOT_TEXT("string_empty_link");
 
         return BroadcastToChannelWithGlobalChance(

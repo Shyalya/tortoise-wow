@@ -41,7 +41,7 @@ PlayerbotSecurityLevel PlayerbotSecurity::LevelFor(Player* from, DenyReason* rea
             }
         }
 
-        if (bot->GetPlayerbotAI()->IsOpposing(from))
+        if (GetBotAI(bot)->IsOpposing(from))
         {
             if (sWorld.getConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_INTERACTION_GROUP))
                 return PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL;
@@ -60,8 +60,8 @@ PlayerbotSecurityLevel PlayerbotSecurity::LevelFor(Player* from, DenyReason* rea
 
         if (sPlayerbotAIConfig.gearscorecheck)
         {
-            uint32 botGS = bot->GetPlayerbotAI()->GetEquipGearScore(bot, false, false);
-            uint32 fromGS = bot->GetPlayerbotAI()->GetEquipGearScore(from, false, false);
+            uint32 botGS = GetBotAI(bot)->GetEquipGearScore(bot, false, false);
+            uint32 fromGS = GetBotAI(bot)->GetEquipGearScore(from, false, false);
             if (botGS && bot->GetLevel() > 15 && botGS > fromGS && (100 * (botGS - fromGS) / botGS) >= 12 * sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL) / from->GetLevel())
             {
                 if (reason) *reason = DenyReason::PLAYERBOT_DENY_GEARSCORE;
@@ -79,7 +79,7 @@ PlayerbotSecurityLevel PlayerbotSecurity::LevelFor(Player* from, DenyReason* rea
         }
 
 #ifdef MANGOSBOT_ONE
-        if (bot->GetPlayerbotAI()->HasRealPlayerMaster() && bot->GetSession()->m_lfgInfo.queued)
+        if (GetBotAI(bot)->HasRealPlayerMaster() && bot->GetSession()->m_lfgInfo.queued)
 #endif
 #ifdef MANGOSBOT_ZERO
         if (sWorld.GetLFGQueue().IsPlayerInQueue(bot->GetObjectGuid()))
@@ -156,11 +156,11 @@ bool PlayerbotSecurity::CheckLevelFor(PlayerbotSecurityLevel level, bool silent,
         return true;
 
     //Do not report security errors to bots.
-    if (silent || (from->GetPlayerbotAI() && !from->GetPlayerbotAI()->IsRealPlayer()))
+    if (silent || (GetBotAI(from) && !GetBotAI(from)->IsRealPlayer()))
         return false;
 
-    Player* master = bot->GetPlayerbotAI()->GetMaster();
-    if (master && bot->GetPlayerbotAI() && bot->GetPlayerbotAI()->IsOpposing(master) && master->GetSession()->GetSecurity() < SEC_GAMEMASTER)
+    Player* master = GetBotAI(bot)->GetMaster();
+    if (master && GetBotAI(bot) && GetBotAI(bot)->IsOpposing(master) && master->GetSession()->GetSecurity() < SEC_GAMEMASTER)
         return false;
 
     std::ostringstream out;
@@ -180,8 +180,8 @@ bool PlayerbotSecurity::CheckLevelFor(PlayerbotSecurityLevel level, bool silent,
             break;
         case DenyReason::PLAYERBOT_DENY_GEARSCORE:
             {
-                int botGS = (int)bot->GetPlayerbotAI()->GetEquipGearScore(bot, false, false);
-                int fromGS = (int)bot->GetPlayerbotAI()->GetEquipGearScore(from, false, false);
+                int botGS = (int)GetBotAI(bot)->GetEquipGearScore(bot, false, false);
+                int fromGS = (int)GetBotAI(bot)->GetEquipGearScore(from, false, false);
                 int diff = (100 * (botGS - fromGS) / botGS);
                 int req = 12 * sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL) / from->GetLevel();
                 out << "Your gearscore is too low: |cffff0000" << fromGS << "|cffffffff/|cff00ff00" << botGS << " |cffff0000" << diff << "%|cffffffff/|cff00ff00" << req << "%";
@@ -224,8 +224,8 @@ bool PlayerbotSecurity::CheckLevelFor(PlayerbotSecurityLevel level, bool silent,
             out << "I am currently leading a group. I can invite you if you want.";
             break;
         case DenyReason::PLAYERBOT_DENY_NOT_LEADER:
-            if (bot->GetPlayerbotAI()->GetGroupMaster() && bot->GetPlayerbotAI()->IsSafe(bot->GetPlayerbotAI()->GetGroupMaster()))
-                out << "I am in a group with " << bot->GetPlayerbotAI()->GetGroupMaster()->GetName() << ". You can ask him for invite.";
+            if (GetBotAI(bot)->GetGroupMaster() && GetBotAI(bot)->IsSafe(GetBotAI(bot)->GetGroupMaster()))
+                out << "I am in a group with " << GetBotAI(bot)->GetGroupMaster()->GetName() << ". You can ask him for invite.";
             else
                 out << "I am in a group with someone else";
             break;

@@ -48,6 +48,7 @@
 #include "ItemEnchantmentMgr.h"
 #include "MapManager.h"
 #include "ScriptMgr.h"
+#include "ScriptObjects.h"
 #include "CreatureAIRegistry.h"
 #include "Policies/SingletonImp.h"
 #include "BattleGroundMgr.h"
@@ -213,6 +214,11 @@ uint32 World::GetCurrentMSTime() const
 
 void World::Shutdown()
 {
+    ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_SHUTDOWN, [](WorldScript* script)
+    {
+        script->OnShutdown();
+    });
+
 	sGuildMgr.SaveGuildBanks();
     sWorld.KickAll();                                       // save and kick all players
     sWorld.UpdateSessions(1);                               // real players unload required UpdateSessions call
@@ -612,6 +618,10 @@ void World::LoadConfigSettingsCommonPart(bool reload)
     ///- Read the player limit and the Message of the day from the config file
     SetPlayerLimit(sConfig.GetIntDefault("PlayerLimit", DEFAULT_PLAYER_LIMIT), true);
     SetMotd(sConfig.GetStringDefault("Motd", "Welcome to the Massive Network Game Object Server."));
+    ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_MOTD_CHANGE, [&](WorldScript* script)
+    {
+        script->OnMotdChange(m_motd);
+    });
 
     if (reload)
         sMapMgr.SetGridCleanUpDelay(getConfig(CONFIG_UINT32_INTERVAL_GRIDCLEAN));
@@ -846,11 +856,22 @@ void World::LoadConfigSettingsCommonPart(bool reload)
 
 void World::LoadConfigSettings(bool reload)
 {
+    ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_BEFORE_CONFIG_LOAD, [&](WorldScript* script)
+    {
+        script->OnBeforeConfigLoad(reload);
+    });
+
     if (reload)
     {
         if (!sConfig.Reload())
         {
             sLog.outError("World settings reload fail: can't read settings from %s.", sConfig.GetFilename().c_str());
+            return;
+        }
+
+        if (!sConfig.LoadModulesConfigs())
+        {
+            sLog.outError("World settings reload fail: can't read module settings for %s.", sConfig.GetFilename().c_str());
             return;
         }
     }
@@ -882,6 +903,11 @@ void World::LoadConfigSettings(bool reload)
     LoadConfigSettingsFromFile();
 
     LoadConfigSettingsCommonPart(reload);
+
+    ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_AFTER_CONFIG_LOAD, [&](WorldScript* script)
+    {
+        script->OnAfterConfigLoad(reload);
+    });
 }
 
 bool World::LoadConfigSettingsFromDB(bool reload)
@@ -1924,6 +1950,13 @@ void LoadPlayerEggLoot();
         exit(1);
     }
 
+    sLog.outString("Loading module strings...");
+    if (!sObjectMgr.LoadModuleStrings())
+    {
+        Log::WaitBeforeContinueIfNeed();
+        exit(1);
+    }
+
     CheckEggExploit();
 
     ///- Loads existing IDs in the database.
@@ -2216,6 +2249,14 @@ void LoadPlayerEggLoot();
     sLog.outString("Loading creature EventAI events...");
     sEventAIMgr.LoadCreatureEventAI_Events();
     sScriptMgr.Initialize();
+    ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_LOAD_CUSTOM_DATABASE_TABLE, [](WorldScript* script)
+    {
+        script->OnLoadCustomDatabaseTable();
+    });
+    ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_BEFORE_WORLD_INITIALIZED, [](WorldScript* script)
+    {
+        script->OnBeforeWorldInitialized();
+    });
     sLog.outString("Loading aura removal handler...");
     sAuraRemovalMgr.LoadFromDB();
     sLog.outString("Loading daily quests handler...");
@@ -2303,8 +2344,8 @@ void LoadPlayerEggLoot();
     sLog.outString("Caching player pets...");
 	sCharacterDatabaseCache.LoadAll();
     // Penqle's "Loading player bot manager... / sPlayerBotMgr.Load()" removed.
-    // cmangos's RandomPlayerbotMgr is instantiated by InitPlayerbotsAtStartup(), called near the
-    // end of this function (just before FinalizePlayerbotsPostPlayerInfo).
+    // cmangos's RandomPlayerbotMgr is instantiated by InitPlayerbotsAtStartup(), called near
+    // the end of this function.
     sLog.outString("Loading faction change reputations...");
 	sObjectMgr.LoadFactionChangeReputations();
     sLog.outString("Loading faction change spells...");
@@ -2403,9 +2444,20 @@ void LoadPlayerEggLoot();
     // BuildEquipCache, scans sItemStorage) and validates the premade talent specs (LoadTalentSpecs,
     // reads Talent.dbc). It MUST run after LoadDBCStores() and LoadItemPrototypes() above, otherwise
     // those caches build against empty data on first boot. No-op if AiPlayerbot.Enabled = 0.
-    // FinalizePlayerbotsPostPlayerInfo() then creates random bots using the populated caches.
+    // The module registers its hook objects here; the work it used to do in
+    // FinalizePlayerbotsPostPlayerInfo() now runs from WorldScript::OnStartup
+    // just below, which is the same point in the sequence.
     InitPlayerbotsAtStartup();
-    FinalizePlayerbotsPostPlayerInfo();
+
+    // Moved here from the tail of DetectDBCLang(). That helper runs right after
+    // LoadDBCStores() and well before LoadItemPrototypes(), so a module doing any
+    // item work in OnStartup saw empty caches. Here it sits at the end of world
+    // setup, still inside the loading-time measurement, which is where
+    // AzerothCore fires it.
+    ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_STARTUP, [](WorldScript* script)
+    {
+        script->OnStartup();
+    });
     sLog.outString("Current content phase is set to %u.", GetContentPhase() + 1);
     uint32 uStartInterval = WorldTimer::getMSTimeDiff(uStartTime, WorldTimer::getMSTime());
     sLog.outString("World server is up and running! Loading time: %i minutes %i seconds", uStartInterval / 60000, (uStartInterval % 60000) / 1000);
@@ -2576,6 +2628,7 @@ void World::UpdateWorldBuffTimer(uint32 diff, WorldBuffTimerState& state, uint32
 void World::Update(uint32 diff)
 {
     XScopeStatTimer ScopeStatTimer(sPerfMonitor.WorldTick);
+
     ///- Update the different timers
     for (auto& timer : m_timers)
     {
@@ -2657,10 +2710,6 @@ void World::Update(uint32 diff)
     sZoneScriptMgr.Update(diff);
     sDynamicVisMgr.UpdateVisibility(diff);
 
-    // hook into bot module update.
-    // RandomPlayerbotMgr::UpdateAI ticks all logged-in random bots and the bot login queue.
-    // Implementation lives in the bot module; declared via host hook in playerbot/HostHooks.cpp.
-    UpdatePlayerbotsTick(diff);
 
     ///- Update groups with offline leaders
     if (m_timers[WUPDATE_GROUPS].Passed())
@@ -2786,7 +2835,7 @@ void World::Update(uint32 diff)
         m_MaintenanceTimeChecker -= diff;
 
     // PlayerBotMgr update removed — Penqle stub binned. cmangos's
-    // sRandomPlayerbotMgr.UpdateAIInternal(diff) is called from World::UpdatePlayerbotsTick().
+    // sRandomPlayerbotMgr.UpdateAI(diff) runs from the bot module WorldScript::OnUpdate.
 
     // Update AutoBroadcast
     sAutoBroadCastMgr.Update(diff);
@@ -2982,6 +3031,15 @@ void World::Update(uint32 diff)
             sWorld.ShutdownServ(900, SHUTDOWN_MASK_RESTART, SHUTDOWN_EXIT_CODE);
         }
     }
+
+    // Moved here from the head of this function. Firing first meant a module
+    // acted before UpdateSessions, sMapMgr, sBattleGroundMgr and sLFTMgr had
+    // run, so it saw the previous tick. This is where AzerothCore fires it, and
+    // where the bot tick used to sit.
+    ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_UPDATE, [&](WorldScript* script)
+    {
+        script->OnUpdate(diff);
+    });
 }
 
 /// Send a packet to all players (except self if mentioned)
@@ -3504,6 +3562,11 @@ void World::ShutdownServ(uint32 time, uint32 options, uint8 exitcode)
     if (m_stopEvent)
         return;
 
+    ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_SHUTDOWN_INITIATE, [&](WorldScript* script)
+    {
+        script->OnShutdownInitiate(options, exitcode);
+    });
+
     m_ShutdownMask = options;
     m_ExitCode = exitcode;
 
@@ -3559,6 +3622,11 @@ void World::ShutdownCancel()
     // nothing cancel or too later
     if (!m_ShutdownTimer || m_stopEvent)
         return;
+
+    ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_SHUTDOWN_CANCEL, [](WorldScript* script)
+    {
+        script->OnShutdownCancel();
+    });
 
     ServerMessageType msgid = (m_ShutdownMask & SHUTDOWN_MASK_RESTART) ? SERVER_MSG_RESTART_CANCELLED : SERVER_MSG_SHUTDOWN_CANCELLED;
 
@@ -3948,6 +4016,9 @@ void World::SetPlayerLimit(int32 limit, bool needUpdate)
     if (limit < -SEC_ADMINISTRATOR)
         limit = -SEC_ADMINISTRATOR;
 
+    bool const wasOpen = m_playerLimit >= 0;
+    bool const isOpen = limit >= 0;
+
     // lock update need
     bool db_update_need = needUpdate || (limit < 0) != (m_playerLimit < 0) || (limit < 0 && m_playerLimit < 0 && limit != m_playerLimit);
 
@@ -3956,6 +4027,14 @@ void World::SetPlayerLimit(int32 limit, bool needUpdate)
     if (db_update_need)
         LoginDatabase.PExecute("UPDATE realmlist SET allowedSecurityLevel = '%u' WHERE id = '%u'",
                                uint32(GetPlayerSecurityLimit()), realmID);
+
+    if (wasOpen != isOpen)
+    {
+        ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_OPEN_STATE_CHANGE, [&](WorldScript* script)
+        {
+            script->OnOpenStateChange(isOpen);
+        });
+    }
 }
 
 void World::UpdateMaxSessionCounters()

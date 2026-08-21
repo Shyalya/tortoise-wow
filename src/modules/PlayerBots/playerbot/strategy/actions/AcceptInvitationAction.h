@@ -56,7 +56,7 @@ namespace ai
 
             Player* master = inviter;
 
-            if (master->GetPlayerbotAI()) //Copy formation from bot master.
+            if (GetBotAI(master)) //Copy formation from bot master.
             {
                 if (sPlayerbotAIConfig.inviteChat && (sRandomPlayerbotMgr.IsFreeBot(bot) || !ai->HasActivePlayerMaster()))
                 {

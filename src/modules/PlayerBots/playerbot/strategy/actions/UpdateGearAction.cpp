@@ -129,7 +129,7 @@ bool UpdateGearAction::isUseful()
     {
         // Only for max level random bots that are playing with a real player
         Player* master = GetMaster();
-        if (master && master->isRealPlayer() && bot->IsInGroup(master) && sRandomPlayerbotMgr.IsRandomBot(bot))
+        if (master && IsRealPlayer(master) && bot->IsInGroup(master) && sRandomPlayerbotMgr.IsRandomBot(bot))
         {
             return bot->GetLevel() >= DEFAULT_MAX_LEVEL;
         }

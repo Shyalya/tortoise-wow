@@ -14,7 +14,7 @@ namespace ai
         if (ai->HasActivePlayerMaster() && player != bot && player != ai->GetMaster() && player->GetSession() && player->GetSession()->GetSecurity() < SEC_MODERATOR)
             return false;
 
-        bool aiMaster = (ai->GetMaster() && ai->GetMaster()->GetPlayerbotAI());
+        bool aiMaster = (ai->GetMaster() && GetBotAI(ai->GetMaster()));
 
         ai->TellPlayer(player, BOT_TEXT("goodbye"), PlayerbotSecurityLevel::PLAYERBOT_SECURITY_TALK, false);
 
@@ -37,7 +37,7 @@ namespace ai
 
         if (freeBot)
         {
-            bot->GetPlayerbotAI()->SetMaster(nullptr);
+            GetBotAI(bot)->SetMaster(nullptr);
         }        
 
         if(!aiMaster)

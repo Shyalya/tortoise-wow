@@ -45,6 +45,16 @@ void BattlegroundStrategy::InitNonCombatTriggers(std::list<TriggerNode*> &trigge
         "enemy flagcarrier near",
         NextAction::array(0, new NextAction("attack enemy flag carrier", 80.0f), NULL)));*/
 
+    // "team flagcarrier near" is now registered in TriggerContext.h, so this node
+    // would actually fire if uncommented -- until 2026-08-19 it could not, and a
+    // reader restoring it would have got a silently skipped trigger instead.
+    // Deliberately left disabled: this is the non-combat ladder whose mover,
+    // "bg move to objective", runs at relevance 1.0f. Adding "bg protect fc" at
+    // 40.0f would outrank it whenever the bot's own flag carrier is in visibility
+    // range, so bots near the carrier would follow it instead of pushing to
+    // objectives -- the starvation already recorded in backlog artifact 046. Any
+    // restore must pick a relevance below the mover, or move the node onto the
+    // combat ladder.
     /*triggers.push_back(new TriggerNode(
         "team flagcarrier near",
         NextAction::array(0, new NextAction("bg protect fc", 40.0f), NULL)));*/

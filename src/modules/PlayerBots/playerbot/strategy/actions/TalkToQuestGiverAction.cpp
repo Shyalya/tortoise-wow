@@ -19,7 +19,7 @@ bool TalkToQuestGiverAction::ProcessQuest(Player* requester, Quest const* quest,
     QuestStatus status = bot->GetQuestStatus(quest->GetQuestId());
     if (sPlayerbotAIConfig.syncQuestForPlayer)
     {
-        if (requester && (!requester->GetPlayerbotAI() || requester->GetPlayerbotAI()->IsRealPlayer()))
+        if (requester && (!GetBotAI(requester) || GetBotAI(requester)->IsRealPlayer()))
         {
             QuestStatus masterStatus = requester->GetQuestStatus(quest->GetQuestId());
             if (masterStatus == QUEST_STATUS_INCOMPLETE || masterStatus == QUEST_STATUS_FAILED)

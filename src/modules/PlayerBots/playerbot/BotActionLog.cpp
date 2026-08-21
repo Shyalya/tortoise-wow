@@ -367,7 +367,7 @@ using ai::botdiag::BotActionLog;
 namespace {
     inline PlayerbotAI* AiFor(Unit* u) {
         if (!u || !u->IsPlayer()) return nullptr;
-        return static_cast<Player*>(u)->GetPlayerbotAI();
+        return GetBotAI(static_cast<Player*>(u));
     }
 }
 
@@ -404,7 +404,7 @@ void BotActionLog_LogAuraRemove(Unit* target, uint32 spellId, uint64 casterGuidR
 void BotActionLog_LogCastStart(WorldObject* caster, uint32 spellId, uint64 targetGuidRaw, uint32 castTimeMs)
 {
     if (!caster || !caster->IsPlayer()) return;
-    PlayerbotAI* ai = static_cast<Player*>(caster)->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(static_cast<Player*>(caster));
     if (!ai) return;
     BotActionLog::LogCastStart(ai, spellId, ObjectGuid(targetGuidRaw), castTimeMs);
 }
@@ -412,7 +412,7 @@ void BotActionLog_LogCastStart(WorldObject* caster, uint32 spellId, uint64 targe
 void BotActionLog_LogCastResult(WorldObject* caster, uint32 spellId, uint8 result, const char* phase)
 {
     if (!caster || !caster->IsPlayer()) return;
-    PlayerbotAI* ai = static_cast<Player*>(caster)->GetPlayerbotAI();
+    PlayerbotAI* ai = GetBotAI(static_cast<Player*>(caster));
     if (!ai) return;
     BotActionLog::LogCastResult(ai, spellId, result, phase);
 }

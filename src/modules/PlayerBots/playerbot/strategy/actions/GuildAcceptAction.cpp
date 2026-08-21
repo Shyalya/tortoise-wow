@@ -30,7 +30,7 @@ bool GuildAcceptAction::Execute(Event& event)
     {
         ai->TellError(requester, "You are not in a guild!");
 
-        if(sServerFacade.GetDistance2d(bot, inviter) < sPlayerbotAIConfig.spellDistance * 1.5 && inviter->GetPlayerbotAI())
+        if(sServerFacade.GetDistance2d(bot, inviter) < sPlayerbotAIConfig.spellDistance * 1.5 && GetBotAI(inviter))
             bot->Say(BOT_TEXT2("You are not in a guild %name!", placeholders), (bot->GetTeam() == ALLIANCE ? LANG_COMMON : LANG_ORCISH));
 
         accept = false;
@@ -39,7 +39,7 @@ bool GuildAcceptAction::Execute(Event& event)
     {
         ai->TellError(requester, "Sorry, I am in a guild already");
 
-        if (sServerFacade.GetDistance2d(bot, inviter) < sPlayerbotAIConfig.spellDistance * 1.5 && inviter->GetPlayerbotAI())
+        if (sServerFacade.GetDistance2d(bot, inviter) < sPlayerbotAIConfig.spellDistance * 1.5 && GetBotAI(inviter))
             bot->Say(BOT_TEXT2("Sorry, I am in a guild already %name.", placeholders), (bot->GetTeam() == ALLIANCE ? LANG_COMMON : LANG_ORCISH));
 
         accept = false;
@@ -48,7 +48,7 @@ bool GuildAcceptAction::Execute(Event& event)
     {
         ai->TellError(requester, "Sorry, I don't want to join your guild :(");
 
-        if (sServerFacade.GetDistance2d(bot, inviter) < sPlayerbotAIConfig.spellDistance * 1.5 && inviter->GetPlayerbotAI())
+        if (sServerFacade.GetDistance2d(bot, inviter) < sPlayerbotAIConfig.spellDistance * 1.5 && GetBotAI(inviter))
             bot->Say(BOT_TEXT2("Sorry, I don't want to join your guild %name :(.", placeholders), (bot->GetTeam() == ALLIANCE ? LANG_COMMON : LANG_ORCISH));
 
         accept = false;
@@ -60,13 +60,13 @@ bool GuildAcceptAction::Execute(Event& event)
     {
         ai->TellError(requester, "This guild has over 1000 members. To stop it from reaching the 1064 member limit I refuse to join it.");
 
-        if (sServerFacade.GetDistance2d(bot, inviter) < sPlayerbotAIConfig.spellDistance * 1.5 && inviter->GetPlayerbotAI())
+        if (sServerFacade.GetDistance2d(bot, inviter) < sPlayerbotAIConfig.spellDistance * 1.5 && GetBotAI(inviter))
             bot->Say(BOT_TEXT2("%name, your guild has over 1000 members. To stop it from reaching the 1064 member limit I refuse to join it.", placeholders), (bot->GetTeam() == ALLIANCE ? LANG_COMMON : LANG_ORCISH));
 
         accept = false;
     }
 
-    if (accept && sPlayerbotAIConfig.inviteChat && sServerFacade.GetDistance2d(bot, inviter) < sPlayerbotAIConfig.spellDistance * 1.5 && inviter->GetPlayerbotAI() && (sRandomPlayerbotMgr.IsFreeBot(bot) || !ai->HasActivePlayerMaster()))
+    if (accept && sPlayerbotAIConfig.inviteChat && sServerFacade.GetDistance2d(bot, inviter) < sPlayerbotAIConfig.spellDistance * 1.5 && GetBotAI(inviter) && (sRandomPlayerbotMgr.IsFreeBot(bot) || !ai->HasActivePlayerMaster()))
     {
         if (urand(0, 3))
             bot->Say(BOT_TEXT2("Sounds good %name sign me up!", placeholders), (bot->GetTeam() == ALLIANCE ? LANG_COMMON : LANG_ORCISH));

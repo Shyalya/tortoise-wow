@@ -635,9 +635,9 @@ public:
     }
     bool IsSelfMaster() { return master ? (master == bot) : false; }
     //Bot has a master that is a player.
-    bool HasRealPlayerMaster() { return master && (!master->GetPlayerbotAI() || master->GetPlayerbotAI()->IsRealPlayer()); } 
+    bool HasRealPlayerMaster() { return master && (!GetBotAI(master) || GetBotAI(master)->IsRealPlayer()); } 
     //Bot has a master that is actively playing.
-    bool HasActivePlayerMaster() const { return master && !master->GetPlayerbotAI(); }
+    bool HasActivePlayerMaster() const { return master && !GetBotAI(master); }
     //Checks if the bot is summoned as alt of a player
     bool IsAlt() { return HasRealPlayerMaster() && !sRandomPlayerbotMgr.IsRandomBot(bot); }
     //Get the group leader or the master of the bot.

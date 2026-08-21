@@ -39,7 +39,7 @@ public:
             if (bot->HasAura(spellId))
                 return true;
 
-            Item* itemForSpell = *bot->GetPlayerbotAI()->GetAiObjectContext()->GetValue<Item*>("item for spell", spellId);
+            Item* itemForSpell = *GetBotAI(bot)->GetAiObjectContext()->GetValue<Item*>("item for spell", spellId);
             if (itemForSpell && itemForSpell->GetEnchantmentId(TEMP_ENCHANTMENT_SLOT))
                 return true;
         

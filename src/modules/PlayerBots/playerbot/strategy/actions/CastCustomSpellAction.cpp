@@ -365,7 +365,7 @@ bool CastCustomSpellAction::CastSummonPlayer(Player* requester, std::string comm
                 {
                     if (membersAroundSummoner >= 3)
                     {
-                        if (target->isRealPlayer())
+                        if (IsRealPlayer(target))
                         {
                             float x, y, z;
                             bot->GetPosition(x, y, z);
@@ -380,7 +380,7 @@ bool CastCustomSpellAction::CastSummonPlayer(Player* requester, std::string comm
                         else
                         {
                             target->TeleportTo(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), bot->GetOrientation());
-                            if (target->isRealPlayer())
+                            if (IsRealPlayer(target))
                                 target->SendHeartBeat();
                         }
 

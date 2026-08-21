@@ -87,7 +87,7 @@ int ListQuestsAction::ListQuests(Player* requester, bool completed, bool silent,
         if (player->GetMapId() != bot->GetMapId())
             continue;
 
-        if (!player->GetPlayerbotAI())
+        if (!GetBotAI(player))
             continue;
 
         for (uint16 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)

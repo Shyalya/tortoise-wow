@@ -38,7 +38,7 @@ bool FindNonCcTargetStrategy::IsCcTarget(Unit* attacker)
             if (!player || !sServerFacade.IsAlive(player) || !ai->IsSafe(player))
                 continue;
 
-            if (player->GetPlayerbotAI())
+            if (GetBotAI(player))
             {
                 if (PAI_VALUE(Unit*,"rti cc target") == attacker)
                     return true;
@@ -101,7 +101,7 @@ TravelTarget* LeaderTravelTargetValue::Calculate()
     TravelTarget* target = AI_VALUE(TravelTarget*, "travel target");
 
     Player* player = ai->GetGroupMaster();
-    if (!player || player == bot || !player->GetPlayerbotAI() || !ai->IsSafe(player))
+    if (!player || player == bot || !GetBotAI(player) || !ai->IsSafe(player))
         return target;
 
     if (bot->GetGroup() && !ai->IsGroupLeader())

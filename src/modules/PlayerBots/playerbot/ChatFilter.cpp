@@ -810,7 +810,7 @@ public:
     virtual std::string Filter(std::string message) override
     {
         Player* bot = ai->GetBot();
-        AiObjectContext* context = bot->GetPlayerbotAI()->GetAiObjectContext();
+        AiObjectContext* context = GetBotAI(bot)->GetAiObjectContext();
 
         if (message.find("@needrepair") == 0)
         {
@@ -1200,7 +1200,7 @@ public:
             }
 
             Player* bot = ai->GetBot();
-            auto botQuestIds = bot->GetPlayerbotAI()->GetAllCurrentQuestIds();
+            auto botQuestIds = GetBotAI(bot)->GetAllCurrentQuestIds();
 
             std::set<uint32> matchingQuestIds;
             for (auto botQuestId : botQuestIds)

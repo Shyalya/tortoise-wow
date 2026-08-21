@@ -37,7 +37,7 @@ std::list<Item*> ItemsUsefulToGiveValue::Calculate()
 
     std::list<Item*> giveItems;
 
-    if (ai->HasActivePlayerMaster() || !player->GetPlayerbotAI())
+    if (ai->HasActivePlayerMaster() || !GetBotAI(player))
         return giveItems;
 
     std::list<ItemUsage> myUsages = { ItemUsage::ITEM_USAGE_NONE , ItemUsage::ITEM_USAGE_VENDOR, ItemUsage::ITEM_USAGE_AH, ItemUsage::ITEM_USAGE_BROKEN_AH, ItemUsage::ITEM_USAGE_DISENCHANT };
@@ -89,7 +89,7 @@ std::list<Item*> ItemsUsefulToEnchantValue::Calculate()
 
     std::list<Item*> enchantItems;
 
-    if (ai->HasActivePlayerMaster() || !player->GetPlayerbotAI() || !ai->IsSafe(player))
+    if (ai->HasActivePlayerMaster() || !GetBotAI(player) || !ai->IsSafe(player))
         return enchantItems;
 
     std::vector<uint32> enchantSpells = AI_VALUE(std::vector<uint32>, "enchant spells");

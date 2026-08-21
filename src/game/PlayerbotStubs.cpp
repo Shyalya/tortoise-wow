@@ -1,10 +1,14 @@
-// Empty implementations of the bot-subsystem hooks for builds that don't link
-// the playerbots module (BUILD_PLAYERBOTS=OFF). The host code calls these
-// unconditionally; without these stubs the link step fails on missing symbols.
+// Empty implementations for builds without the playerbots module
+// (BUILD_PLAYERBOTS=OFF). The host calls these unconditionally; without the
+// stubs the link step fails on missing symbols. When the module is built it
+// provides the real ones and this file is excluded (src/game/CMakeLists.txt).
 //
-// When BUILD_PLAYERBOTS=ON the bot module provides the real implementations
-// (HostHooks.cpp + BotActionLog.cpp) and this file is excluded from the build
-// (see src/game/CMakeLists.txt).
+// This list used to be three times as long. Everything the bots reached the
+// core through is a module hook now, and a hook needs no stub - the virtual
+// has an empty body and nothing registers it. What is left are the few
+// symbols that are genuinely core-side: the module bootstrap, the damage-log
+// probes compiled into Unit.cpp, and the chat commands Chat.cpp registers
+// whether or not the module exists.
 
 #include "Objects/Player.h"
 #include "Objects/Unit.h"
@@ -12,23 +16,9 @@
 #include "WorldPacket.h"
 #include "Chat/Chat.h"
 
-void Player::CreatePlayerbotAI()              {}
-void Player::RemovePlayerbotAI()              {}
-void Player::CreatePlayerbotMgr()             {}
-void Player::RemovePlayerbotMgr()             {}
-// No bot Player can exist when BUILD_PLAYERBOTS=OFF, so every Player is real.
-bool Player::isRealPlayer() const             { return true; }
-void Player::UpdatePlayerbotHooks(uint32)     {}
-
-void World::UpdatePlayerbotsTick(uint32)      {}
+// The single call the core makes into the module: it registers the hook
+// objects. Nothing to register when the module is not there.
 void World::InitPlayerbotsAtStartup()         {}
-void World::FinalizePlayerbotsPostPlayerInfo() {}
-
-bool Player_DispatchBotOutgoingPacket(Player*, WorldPacket const&) { return false; }
-void Player_DispatchMasterIncomingPacket(Player*, WorldPacket const&) {}
-void Player_DispatchBotChatCommand(Player*, uint32, std::string const&, uint32, std::string const&) {}
-void Playerbot_SetForcedRole(Player*, uint8) {}
-uint8 Playerbot_GetAllowedRoles(Player*) { return 0; }
 
 void BotActionLog_LogCastStart  (WorldObject*, uint32, uint64, uint32)         {}
 void BotActionLog_LogCastResult (WorldObject*, uint32, uint8, const char*)     {}

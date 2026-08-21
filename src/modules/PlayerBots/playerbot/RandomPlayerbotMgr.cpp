@@ -394,11 +394,11 @@ void RandomPlayerbotMgr::LogPlayerLocation()
     if (sPlayerbotAIConfig.randomBotAutologin)
     {
         ForEachPlayerbot([&](Player* bot) {
-            if (bot->GetPlayerbotAI())
+            if (GetBotAI(bot))
             {
 
                 botCount++;
-                if (bot->GetPlayerbotAI()->AllowActivity(ALL_ACTIVITY))
+                if (GetBotAI(bot)->AllowActivity(ALL_ACTIVITY))
                 {
                     activeBots++;
                 }
@@ -411,10 +411,10 @@ void RandomPlayerbotMgr::LogPlayerLocation()
         Player* bot = i.second;
         if (!bot)
             continue;
-        if (bot->GetPlayerbotAI())
+        if (GetBotAI(bot))
         {
             botCount++;
-            if (bot->GetPlayerbotAI()->AllowActivity(ALL_ACTIVITY))
+            if (GetBotAI(bot)->AllowActivity(ALL_ACTIVITY))
                 activeBots++;
         }
     }
@@ -446,14 +446,14 @@ void RandomPlayerbotMgr::LogPlayerLocation()
                     out << bot->GetPowerPercent() << ",";
                     out << bot->GetMoney() << ",";
 
-                    if (bot->GetPlayerbotAI())
+                    if (GetBotAI(bot))
                     {
-                        out << std::to_string(uint8(bot->GetPlayerbotAI()->GetGrouperType())) << ",";
-                        out << std::to_string(uint8(bot->GetPlayerbotAI()->GetGuilderType())) << ",";
-                        out << (bot->GetPlayerbotAI()->AllowActivity(ALL_ACTIVITY) ? "active" : "inactive") << ",";
-                        out << (bot->GetPlayerbotAI()->IsActive() ? "active" : "delay") << ",";
-                        out << bot->GetPlayerbotAI()->HandleRemoteCommand("state") << ",";
-                        PlayerbotAI* ai = bot->GetPlayerbotAI();
+                        out << std::to_string(uint8(GetBotAI(bot)->GetGrouperType())) << ",";
+                        out << std::to_string(uint8(GetBotAI(bot)->GetGuilderType())) << ",";
+                        out << (GetBotAI(bot)->AllowActivity(ALL_ACTIVITY) ? "active" : "inactive") << ",";
+                        out << (GetBotAI(bot)->IsActive() ? "active" : "delay") << ",";
+                        out << GetBotAI(bot)->HandleRemoteCommand("state") << ",";
+                        PlayerbotAI* ai = GetBotAI(bot);
                         AiObjectContext* context = ai->GetAiObjectContext();
 
                         out << (AI_VALUE(bool, "should get money") ? "should get money" : "has enough money") << ",";
@@ -564,14 +564,14 @@ void RandomPlayerbotMgr::LogPlayerLocation()
                 out << bot->GetHealth() << ",";
                 out << bot->GetPowerPercent() << ",";
                 out << bot->GetMoney() << ",";
-                if (bot->GetPlayerbotAI())
+                if (GetBotAI(bot))
                 {
-                    out << std::to_string(uint8(bot->GetPlayerbotAI()->GetGrouperType())) << ",";
-                    out << std::to_string(uint8(bot->GetPlayerbotAI()->GetGuilderType())) << ",";
-                    out << (bot->GetPlayerbotAI()->AllowActivity(ALL_ACTIVITY) ? "active" : "inactive") << ",";
-                    out << (bot->GetPlayerbotAI()->IsActive() ? "active" : "delay") << ",";
-                    out << bot->GetPlayerbotAI()->HandleRemoteCommand("state") << ",";
-                    PlayerbotAI* ai = bot->GetPlayerbotAI();
+                    out << std::to_string(uint8(GetBotAI(bot)->GetGrouperType())) << ",";
+                    out << std::to_string(uint8(GetBotAI(bot)->GetGuilderType())) << ",";
+                    out << (GetBotAI(bot)->AllowActivity(ALL_ACTIVITY) ? "active" : "inactive") << ",";
+                    out << (GetBotAI(bot)->IsActive() ? "active" : "delay") << ",";
+                    out << GetBotAI(bot)->HandleRemoteCommand("state") << ",";
+                    PlayerbotAI* ai = GetBotAI(bot);
                     AiObjectContext* context = ai->GetAiObjectContext();
 
                     out << (AI_VALUE(bool, "should get money") ? "should get money" : "has enough money") << ",";
@@ -834,15 +834,15 @@ void RandomPlayerbotMgr::ScaleBotActivity()
         {
             ForEachPlayerbot([&](Player* bot)
             {
-                if (bot->GetPlayerbotAI()->AllowActivity())
+                if (GetBotAI(bot)->AllowActivity())
                 {
                     std::string bracket = "level:" + std::to_string(bot->GetLevel() / 10);
 
-                    float level = bot->GetPlayerbotAI()->GetLevelFloat();
+                    float level = GetBotAI(bot)->GetLevelFloat();
                     totalLevel += level;
                     float gold = bot->GetMoney() / 10000;
                     totalGold += gold;
-                    float gearscore = bot->GetPlayerbotAI()->GetEquipGearScore(bot, false, false);
+                    float gearscore = GetBotAI(bot)->GetEquipGearScore(bot, false, false);
                     totalGearscore += gearscore;
 
                     const uint32 botGuid = bot->GetObjectGuid().GetCounter();
@@ -909,7 +909,7 @@ void RandomPlayerbotMgr::LoginFreeBots()
 
                         if (master)
                         {
-                            bot->GetPlayerbotAI()->DoSpecificAction("join", Event("create group", "", master));
+                            GetBotAI(bot)->DoSpecificAction("join", Event("create group", "", master));
                         }
                     }
 
@@ -971,7 +971,7 @@ void RandomPlayerbotMgr::LoginFreeBots()
 
                 if (GetEventValue(botGuid, "test"))
                 {
-                    PlayerbotAI* ai = bot->GetPlayerbotAI();
+                    PlayerbotAI* ai = GetBotAI(bot);
                     AiObjectContext* context = ai->GetAiObjectContext();
                     std::string testName = GetEventData(botGuid, "test");
                     testName = std::regex_replace(testName, std::regex("\\'"), "'");
@@ -989,7 +989,7 @@ void RandomPlayerbotMgr::LoginFreeBots()
                         ObjectGuid masterGuid(ObjectGuid(HIGHGUID_PLAYER, mGuid));
                         if (accountId == sObjectMgr.GetPlayerAccountIdByGUID(masterGuid))
                         {
-                            PlayerbotMgr* mgr = master->GetPlayerbotMgr();
+                            PlayerbotMgr* mgr = GetBotMgr(master);
                             if (mgr)
                             {
                                 MovePlayerBot(guid, mgr);
@@ -1618,7 +1618,7 @@ void RandomPlayerbotMgr::CheckBgQueue()
                 );
             }
 #endif
-            if (player->GetPlayerbotAI())
+            if (GetBotAI(player))
                 BgBots[queueTypeId][bracketId][TeamId]++;
             else
                 BgPlayers[queueTypeId][bracketId][TeamId]++;
@@ -2307,7 +2307,7 @@ bool RandomPlayerbotMgr::ProcessBot(uint32 bot)
         return false;
     }
 
-    PlayerbotAI* ai = player ? player->GetPlayerbotAI() : NULL;
+    PlayerbotAI* ai = player ? GetBotAI(player) : NULL;
 
     bool botsAllowedInWorld = !sPlayerbotAIConfig.randomBotLoginWithPlayer || (!players.empty() && sWorld.GetActiveSessionCount() > 0);
 
@@ -2399,7 +2399,7 @@ bool RandomPlayerbotMgr::ProcessBot(uint32 bot)
             if (!sRandomPlayerbotMgr.IsRandomBot(player))
                 update = false;
 
-            if (player->GetGroup() && ai->GetGroupMaster() && (!ai->GetGroupMaster()->GetPlayerbotAI() || ai->GetGroupMaster()->GetPlayerbotAI()->IsRealPlayer()))
+            if (player->GetGroup() && ai->GetGroupMaster() && (!GetBotAI(ai->GetGroupMaster()) || GetBotAI(ai->GetGroupMaster())->IsRealPlayer()))
                 update = false;
 
             if (ai->HasPlayerNearby())
@@ -2431,7 +2431,7 @@ bool RandomPlayerbotMgr::ProcessBot(Player* player)
 
     // only teleport idle bots
     bool idleBot = false;
-    TravelTarget* target = player->GetPlayerbotAI()->GetAiObjectContext()->GetValue<TravelTarget*>("travel target")->Get();
+    TravelTarget* target = GetBotAI(player)->GetAiObjectContext()->GetValue<TravelTarget*>("travel target")->Get();
     if (target)
     {
         if (target->GetTravelState() == TravelState::TRAVEL_STATE_IDLE)
@@ -2545,7 +2545,7 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation> 
     if (bot->GetGroup() && !bot->GetGroup()->IsLeader(bot->GetObjectGuid()))
         return;
 
-    if (bot->IsTaxiFlying() && bot->GetPlayerbotAI()->HasPlayerNearby())
+    if (bot->IsTaxiFlying() && GetBotAI(bot)->HasPlayerNearby())
         return;
 
     if (locs.empty())
@@ -2827,14 +2827,14 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation> 
             bot->GetMotionMaster()->Clear();
             bot->TeleportTo(loc.mapid, x, y, z, 0);
             bot->SendHeartBeat();
-            bot->GetPlayerbotAI()->Reset(true);
+            GetBotAI(bot)->Reset(true);
 
             if (bot->GetGroup())
             {
                 for (GroupReference* gref = bot->GetGroup()->GetFirstMember(); gref; gref = gref->next())
                 {
                     Player* member = gref->getSource();
-                    PlayerbotAI* ai = bot->GetPlayerbotAI();
+                    PlayerbotAI* ai = GetBotAI(bot);
                     if (ai && bot != member)
                     {
                         if (member->IsTaxiFlying())
@@ -2845,7 +2845,7 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation> 
                         member->GetMotionMaster()->Clear();
                         member->TeleportTo(loc.mapid, x, y, z, 0);
                         member->SendHeartBeat();
-                        member->GetPlayerbotAI()->Reset(true);
+                        GetBotAI(member)->Reset(true);
                     }
 
                 }
@@ -3329,8 +3329,8 @@ void RandomPlayerbotMgr::RandomizeFirst(Player* bot)
     uint32 randomTime = urand(sPlayerbotAIConfig.minRandomBotRandomizeTime, sPlayerbotAIConfig.maxRandomBotRandomizeTime);
     SetEventValue(bot->GetGUIDLow(), "randomize", 1, randomTime);
 
-    bool hasPlayer = bot->GetPlayerbotAI()->HasRealPlayerMaster();
-    bot->GetPlayerbotAI()->Reset(!hasPlayer);
+    bool hasPlayer = GetBotAI(bot)->HasRealPlayerMaster();
+    GetBotAI(bot)->Reset(!hasPlayer);
 
     if (bot->GetGroup() && !hasPlayer)
         bot->RemoveFromGroup();
@@ -3372,7 +3372,7 @@ void RandomPlayerbotMgr::Refresh(Player* bot)
     {
         bot->ResurrectPlayer(1.0f);
         bot->SpawnCorpseBones();
-        bot->GetPlayerbotAI()->ResetStrategies();
+        GetBotAI(bot)->ResetStrategies();
     }
 
     if (sPlayerbotAIConfig.disableRandomLevels)
@@ -3384,7 +3384,7 @@ void RandomPlayerbotMgr::Refresh(Player* bot)
     sLog.outDetail("Refreshing bot #%d <%s>", bot->GetGUIDLow(), bot->GetName());
     auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "Refresh");
 
-    bot->GetPlayerbotAI()->Reset();
+    GetBotAI(bot)->Reset();
 
     bot->DurabilityRepairAll(false, 1.0f
 #ifndef MANGOSBOT_ZERO
@@ -3409,9 +3409,9 @@ void RandomPlayerbotMgr::Refresh(Player* bot)
 
 bool RandomPlayerbotMgr::IsRandomBot(Player* bot)
 {
-    if (bot && bot->GetPlayerbotAI())
+    if (bot && GetBotAI(bot))
     {
-        if (bot->GetPlayerbotAI()->IsRealPlayer())
+        if (GetBotAI(bot)->IsRealPlayer())
             return false;
     }
     if (bot)
@@ -3787,7 +3787,7 @@ void RandomPlayerbotMgr::HandleCommand(uint32 type, const std::string& text, Pla
             }
         }
 
-        bot->GetPlayerbotAI()->HandleCommand(type, text, fromPlayer, lang);
+        GetBotAI(bot)->HandleCommand(type, text, fromPlayer, lang);
     });
 }
 
@@ -3797,11 +3797,11 @@ void RandomPlayerbotMgr::OnPlayerLogout(Player* player)
 
     DisablePlayerBot(player->GetGUIDLow());
 
-    if (!hadPlayerBot && player->GetPlayerbotAI() && player->GetPlayerbotAI()->IsRealPlayer() && player->GetGroup() && sPlayerbotAIConfig.IsFreeAltBot(player))
+    if (!hadPlayerBot && GetBotAI(player) && GetBotAI(player)->IsRealPlayer() && player->GetGroup() && sPlayerbotAIConfig.IsFreeAltBot(player))
         player->GetSession()->SetOffline(); //Prevent groupkick
 
     ForEachPlayerbot([&](Player* bot) {
-        PlayerbotAI* ai = bot->GetPlayerbotAI();
+        PlayerbotAI* ai = GetBotAI(bot);
         if (player == ai->GetMaster())
         {
             ai->SetMaster(NULL);
@@ -3843,8 +3843,8 @@ void RandomPlayerbotMgr::OnPlayerLogin(Player* player)
         for (GroupReference *gref = group->GetFirstMember(); gref; gref = gref->next())
         {
             Player* member = gref->getSource();
-            PlayerbotAI* ai = bot->GetPlayerbotAI();
-            if (member == player && (!ai->GetMaster() || ai->GetMaster()->GetPlayerbotAI()))
+            PlayerbotAI* ai = GetBotAI(bot);
+            if (member == player && (!ai->GetMaster() || GetBotAI(ai->GetMaster())))
             {
                 if (!bot->InBattleGround())
                 {
@@ -3930,10 +3930,10 @@ void RandomPlayerbotMgr::PrintStats(uint32 requesterGuid)
         perRace[bot->getRace()]++;
         perClass[bot->getClass()]++;
 
-        if (bot->GetPlayerbotAI()->AllowActivity())
+        if (GetBotAI(bot)->AllowActivity())
             active++;
 
-        if (bot->GetPlayerbotAI()->GetAiObjectContext()->GetValue<bool>("random bot update")->Get())
+        if (GetBotAI(bot)->GetAiObjectContext()->GetValue<bool>("random bot update")->Get())
             update++;
 
         uint32 botId = bot->GetGUIDLow();
@@ -4016,7 +4016,7 @@ void RandomPlayerbotMgr::PrintStats(uint32 requesterGuid)
             break;
         }
 
-        TravelTarget* target = bot->GetPlayerbotAI()->GetAiObjectContext()->GetValue<TravelTarget*>("travel target")->Get();
+        TravelTarget* target = GetBotAI(bot)->GetAiObjectContext()->GetValue<TravelTarget*>("travel target")->Get();
         if (target)
         {
             TravelState state = target->GetTravelState();
@@ -4210,7 +4210,7 @@ std::string RandomPlayerbotMgr::HandleRemoteCommand(std::string request)
     if (!bot)
         return "invalid guid";
 
-    PlayerbotAI *ai = bot->GetPlayerbotAI();
+    PlayerbotAI *ai = GetBotAI(bot);
     if (!ai)
         return "invalid guid";
 
@@ -4257,9 +4257,9 @@ void RandomPlayerbotMgr::RandomTeleportForRpg(Player* bot, bool activeOnly)
     Refresh(bot);
 
     //Travel cooldown for 10 minutes.
-    if (bot->GetPlayerbotAI())
+    if (GetBotAI(bot))
     {
-        AiObjectContext* context = bot->GetPlayerbotAI()->GetAiObjectContext();
+        AiObjectContext* context = GetBotAI(bot)->GetAiObjectContext();
         TravelTarget* travelTarget = AI_VALUE(TravelTarget*, "travel target");
 
         sTravelMgr.SetNullTravelTarget(travelTarget);

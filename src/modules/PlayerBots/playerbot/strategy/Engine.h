@@ -8,6 +8,8 @@
 #include "Strategy.h"
 #include "playerbot/BotState.h"
 
+#include <functional>
+
 namespace ai
 {
     class ActionExecutionListener
@@ -100,7 +102,9 @@ namespace ai
 
     protected:
         bool MultiplyAndPush(NextAction** actions, float forceRelevance, bool skipPrerequisites, const Event& event, const char* pushType);
-        void Reset();
+        // Returns false when the reset was deferred because a DoNextAction
+        // walk owns the queue right now; see the comment at Engine::Reset.
+        bool Reset();
         void ProcessTriggers(bool minimal);
         void PushDefaultActions();
         void PushAgain(ActionNode* actionNode, float relevance, const Event& event);
@@ -111,10 +115,26 @@ namespace ai
     private:
         void LogAction(const char* format, ...);
         void LogValues();
-        // Ordered join of the currently attached strategy names. A strategy
-        // change that leaves this unchanged is a no-op and must not call
+        // Cheap change-detector for the attached strategy set. A strategy
+        // change that leaves the token unchanged is a no-op and must not call
         // Init(), because Init() -> Reset() empties the action queue.
-        std::string StrategySignature() const;
+        //
+        // This used to be an ordered string join, which allocated on every
+        // addStrategy/ChangeStrategy - twice, once before and once after.
+        // BattleGroundTactics issues ChangeStrategy("-buff") on every
+        // non-combat tick of every bot in a battleground, so at ~1000 bots
+        // that string was built on the hottest path there is. The token is an
+        // XOR of the per-name hashes (order-independent, and exactly undone
+        // when the name is removed again) mixed with the set size, kept up to
+        // date by addStrategy/removeStrategy/removeAllStrategies.
+        static uint64 StrategyNameHash(const std::string& name)
+        {
+            return static_cast<uint64>(std::hash<std::string>()(name));
+        }
+        uint64 StrategySetToken() const
+        {
+            return strategiesHash ^ (static_cast<uint64>(strategies.size()) * 0x9E3779B97F4A7C15ULL);
+        }
 
     protected:
 	    Queue queue;
@@ -122,11 +142,18 @@ namespace ai
         std::list<Multiplier*> multipliers;
         AiObjectContext* aiObjectContext;
         std::map<std::string, Strategy*> strategies;
+        // XOR of StrategyNameHash() over every key in `strategies`.
+        uint64 strategiesHash = 0;
         float lastRelevance;
         std::string lastAction;
         ActionExecutionListeners actionExecutionListeners;
         BotState state;
         Action* lastExecutedAction;
+        // True while DoNextAction is walking `queue`. Reset() must not drain
+        // the queue in that window; it sets reinitPending instead and
+        // DoNextAction re-inits once the walk is over.
+        bool inDoNextAction = false;
+        bool reinitPending = false;
 
     public:
 		bool testMode;

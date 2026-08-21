@@ -38,6 +38,7 @@
 #include "Geometry.h"
 #include "Anticheat/Movement/Movement.hpp"
 #include "SuspiciousStatisticMgr.h"
+#include "ScriptObjects.h"
 
 // Bot diagnostic logging — flag-gated via AiPlayerbot.EnableActionLog. We
 // can't #include "BotDiagnostics.h" here because the playerbot/ dir isn't
@@ -60,7 +61,7 @@ static bool _scIsBotSession(WorldSession const* sess)
 {
     if (!sess) return false;
     Player const* p = sess->GetPlayer();
-    if (p && p->GetPlayerbotAI()) return true;
+    if (p && Script_IsAIControlled(p)) return true;
     // Fall-back: free-floating bot sessions have remote address "" or "disconnected/bot".
     return sess->GetRemoteAddress().empty() || sess->GetRemoteAddress() == "disconnected/bot";
 }
@@ -276,6 +277,11 @@ void WorldSession::HandleMoveWorldportAckOpcode()
     {
         GetPlayer()->SendHeartBeat(true);
     }
+
+    ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_MAP_CHANGED, [&](PlayerScript* script)
+    {
+        script->OnMapChanged(GetPlayer());
+    });
 }
 
 void WorldSession::HandleMoveTeleportAckOpcode(WorldPacket& recvData)
@@ -397,6 +403,14 @@ void WorldSession::HandleMovementOpcodes(WorldPacket& recvData)
 	    sSuspiciousStatisticMgr.OnMovement(pPlayerMover, movementInfo);
     }
 #endif
+
+    if (pPlayerMover)
+    {
+        ScriptRegistry<MovementHandlerScript>::ForEach([&](MovementHandlerScript* script)
+        {
+            script->OnPlayerMove(pPlayerMover);
+        });
+    }
 
     // This is required for proper movement extrapolation
     if (opcode == MSG_MOVE_JUMP)
@@ -974,6 +988,11 @@ void WorldSession::HandleMoveNotActiveMoverOpcode(WorldPacket& recvData)
 #ifdef USE_ANTICHEAT
         sSuspiciousStatisticMgr.OnMovement(_player, movementInfo);
 #endif
+
+        ScriptRegistry<MovementHandlerScript>::ForEach([&](MovementHandlerScript* script)
+        {
+            script->OnPlayerMove(pPlayerMover);
+        });
     }
 
     HandleMoverRelocation(pMover, movementInfo);

@@ -148,7 +148,7 @@ void CleanQuestLogAction::DropQuestType(Player* requester, uint8 &numQuest, uint
         }
 
         //Drop quest.
-        bot->GetPlayerbotAI()->DropQuest(questId);
+        GetBotAI(bot)->DropQuest(questId);
 
         numQuest--;
 

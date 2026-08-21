@@ -51,6 +51,7 @@
 #include "InstanceData.h"
 #include "Chat.h"
 #include "Anticheat.h"
+#include "ScriptObjects.h"
 
 #include "packet_builder.h"
 #include "MovementBroadcaster.h"
@@ -4265,6 +4266,14 @@ int32 WorldObject::DealHeal(Unit *pVictim, uint32 addhealth, SpellEntry const *s
     // Script Event HealedBy
     if (pVictim->AI() && pUnit)
         pVictim->AI()->HealedBy(pUnit, addhealth);
+
+    if (pUnit)
+    {
+        ScriptRegistry<UnitScript>::ForEachEnabledHook(UNITHOOK_ON_HEAL, [&](UnitScript* script)
+        {
+            script->OnHeal(pUnit, pVictim, addhealth);
+        });
+    }
 
     int32 gain = pVictim->ModifyHealth(int32(addhealth));
 

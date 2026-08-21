@@ -85,7 +85,7 @@ bool EnemyPlayersValue::IsValid(Unit* target, Player* player)
             /*
             // Check if too far away (Do we need this?)
             const float maxPvPDistance = GetMaxAttackDistance(player);
-            const bool inCannon = player->GetPlayerbotAI() && player->GetPlayerbotAI()->IsInVehicle(false, true);
+            const bool inCannon = GetBotAI(player) && GetBotAI(player)->IsInVehicle(false, true);
             uint32 const pvpDistance = (inCannon || player->GetHealth() > enemyPlayer->GetHealth()) ? maxPvPDistance : 20.0f;
             if (!player->IsWithinDist(enemyPlayer, pvpDistance, false))
             {
@@ -212,7 +212,7 @@ float EnemyPlayerValue::GetMaxAttackDistance(Player* bot)
 
         if (bgType == BATTLEGROUND_IC)
         {
-            if (bot->GetPlayerbotAI()->IsInVehicle(false, true))
+            if (GetBotAI(bot)->IsInVehicle(false, true))
                 return 120.0f;
         }
 #endif
