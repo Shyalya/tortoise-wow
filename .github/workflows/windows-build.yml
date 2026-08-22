@@ -1,0 +1,232 @@
+name: Windows Build
+
+# Flat install zip for tortoise-wow-portable\server\. No client data.
+# Also publishes a matching SQL bundle for portable setup (sql\ tree).
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+env:
+  BUILD_TYPE: Release
+  VCPKG_ROOT: C:/vcpkg
+  VCPKG_DEFAULT_TRIPLET: x64-windows
+  INSTALL_DIR: ${{ github.workspace }}/install
+  # Bump major/minor here; patch auto-increments (0.1.1, 0.1.2, …) per release.
+  RELEASE_VERSION: '0.1'
+
+jobs:
+  build:
+    runs-on: windows-2022
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Archive name
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse --short HEAD)
+          "GITHUB_SHORT_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "ARCHIVE_NAME=tortoise-wow-windows-server-$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "SQL_ARCHIVE_NAME=tortoise-wow-sql-$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Bundle SQL
+        shell: pwsh
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          $createDb = Join-Path $root 'sql/create_databases.sql'
+          $baseDir = Join-Path $root 'sql/base'
+          if (-not (Test-Path $createDb)) { throw "Required SQL missing: sql/create_databases.sql" }
+          if (-not (Test-Path $baseDir)) { throw "Required SQL missing: sql/base/" }
+
+          $sqlRoot = Join-Path $root 'sql-bundle/sql'
+          New-Item -ItemType Directory -Force -Path $sqlRoot | Out-Null
+
+          Copy-Item $createDb (Join-Path $sqlRoot 'create_databases.sql')
+          Copy-Item -Recurse $baseDir (Join-Path $sqlRoot 'base')
+
+          $dbUpdates = Join-Path $root 'sql/database_updates'
+          if (Test-Path $dbUpdates) {
+            Copy-Item -Recurse $dbUpdates (Join-Path $sqlRoot 'database_updates')
+          } else {
+            Write-Warning 'sql/database_updates/ missing; bundle will omit migration SQL'
+          }
+
+          $pbWorld = Join-Path $root 'src/modules/PlayerBots/sql/world'
+          $pbChars = Join-Path $root 'src/modules/PlayerBots/sql/characters'
+          $pbOk = (Test-Path $pbWorld) -and (Test-Path $pbChars)
+          if (-not $pbOk) {
+            if (-not (Test-Path $pbWorld)) { Write-Warning "PlayerBots world SQL missing: $pbWorld" }
+            if (-not (Test-Path $pbChars)) { Write-Warning "PlayerBots characters SQL missing: $pbChars" }
+          } else {
+            $pbDestWorld = Join-Path $sqlRoot 'playerbots/world'
+            $pbDestChars = Join-Path $sqlRoot 'playerbots/characters'
+            New-Item -ItemType Directory -Force -Path $pbDestWorld, $pbDestChars | Out-Null
+            Copy-Item -Recurse (Join-Path $pbWorld '*') $pbDestWorld
+            Copy-Item -Recurse (Join-Path $pbChars '*') $pbDestChars
+          }
+
+          @(
+            "commit=$env:GITHUB_SHA"
+            "short=$env:GITHUB_SHORT_SHA"
+            "ref=$env:GITHUB_REF"
+          ) | Set-Content (Join-Path $sqlRoot 'BUILD_INFO.txt')
+
+          $zip = Join-Path $root "$env:SQL_ARCHIVE_NAME.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path (Join-Path $root 'sql-bundle/*') -DestinationPath $zip
+          "SQL_ZIP_PATH=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:/vcpkg/installed
+            C:/vcpkg/downloads
+            C:/vcpkg/buildtrees
+            C:/vcpkg/packages
+          key: vcpkg-win-ace-boost-${{ hashFiles('.github/workflows/windows-build.yml') }}
+          restore-keys: |
+            vcpkg-win-ace-boost-
+
+      - name: Bootstrap vcpkg
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "$env:VCPKG_ROOT/vcpkg.exe")) {
+            git clone --depth 1 https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT
+            & "$env:VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+          }
+
+      - name: ACE + Boost
+        shell: pwsh
+        run: |
+          # No CMAKE_TOOLCHAIN_FILE — dep/windows owns OpenSSL/MySQL; toolchain mixes 3.x in.
+          $pkgs = @(
+            'ace:x64-windows',
+            'boost-algorithm:x64-windows',
+            'boost-asio:x64-windows',
+            'boost-bimap:x64-windows',
+            'boost-bind:x64-windows',
+            'boost-filesystem:x64-windows',
+            'boost-functional:x64-windows',
+            'boost-smart-ptr:x64-windows',
+            'boost-stacktrace:x64-windows',
+            'boost-thread:x64-windows',
+            'boost-system:x64-windows'
+          )
+          & "$env:VCPKG_ROOT/vcpkg.exe" install @pkgs --disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          $v = "$env:VCPKG_ROOT/installed/x64-windows"
+          cmake -B build -A x64 `
+            -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE `
+            -DCMAKE_INSTALL_PREFIX="$env:INSTALL_DIR" `
+            -DBUILD_PLAYERBOTS=ON `
+            -DUSE_EXTRACTORS=ON `
+            -DALLOW_TURTLE_ADDONS=ON `
+            -DACE_ROOT="$v" `
+            -DBOOST_ROOT="$v" `
+            -DBoost_NO_BOOST_CMAKE=ON
+          if ($LASTEXITCODE -ne 0) { throw "configure failed" }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build --config $env:BUILD_TYPE --parallel
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+
+      - name: Install
+        shell: pwsh
+        run: |
+          cmake --install build --config $env:BUILD_TYPE
+          if ($LASTEXITCODE -ne 0) { throw "install failed" }
+
+      - name: Runtime DLLs
+        shell: pwsh
+        run: |
+          $bin = "$env:VCPKG_ROOT/installed/x64-windows/bin"
+          $dest = $env:INSTALL_DIR
+          Copy-Item -Force "$bin/ACE.dll" $dest
+          Copy-Item -Force "$bin/boost_*.dll" $dest
+
+          foreach ($name in @('mangosd.exe', 'realmd.exe', 'mangosd.conf.dist', 'realmd.conf.dist')) {
+            if (-not (Test-Path (Join-Path $dest $name))) {
+              throw "missing $name in install dir"
+            }
+          }
+          if (-not (Test-Path (Join-Path $dest 'aiplayerbot.conf.dist'))) {
+            Write-Warning 'aiplayerbot.conf.dist missing from install'
+          }
+
+          @(
+            "commit=$env:GITHUB_SHA"
+            "short=$env:GITHUB_SHORT_SHA"
+            "ref=$env:GITHUB_REF"
+          ) | Set-Content (Join-Path $dest 'BUILD_INFO.txt')
+
+      - name: Zip
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:GITHUB_WORKSPACE "$env:ARCHIVE_NAME.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path (Join-Path $env:INSTALL_DIR '*') -DestinationPath $zip
+          "ZIP_PATH=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE_NAME }}
+          path: ${{ env.ZIP_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SQL_ARCHIVE_NAME }}
+          path: ${{ env.SQL_ZIP_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    needs: build
+    # Publish when a PR merges to main (push event). PRs alone only run build.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Determine release version
+        id: version
+        run: |
+          prefix='${{ env.RELEASE_VERSION }}'
+          latest=$(gh release list --limit 100 --json tagName -q '.[].tagName' \
+            | grep -E "^${prefix//./\\.}\\.[0-9]+$" | sort -t. -k3 -n | tail -1 || true)
+          if [ -z "$latest" ]; then
+            tag="${prefix}.1"
+          else
+            patch=$(echo "$latest" | cut -d. -f3)
+            tag="${prefix}.$((patch + 1))"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          files: artifacts/**/*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
