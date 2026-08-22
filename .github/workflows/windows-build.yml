@@ -117,7 +117,7 @@ jobs:
             'boost-thread:x64-windows',
             'boost-system:x64-windows'
           )
-          & "$env:VCPKG_ROOT/vcpkg.exe" install @pkgs --disableMetrics
+          & "$env:VCPKG_ROOT/vcpkg.exe" install @pkgs --disable-metrics
           if ($LASTEXITCODE -ne 0) { throw "vcpkg install failed" }
 
       - name: Configure
