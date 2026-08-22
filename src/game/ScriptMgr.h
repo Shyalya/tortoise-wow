@@ -1639,6 +1639,14 @@ class ScriptMgr
         typedef std::unordered_map<int32, CreatureEscortData> EscortDataMap;
 
         AreaTriggerScriptMap    m_AreaTriggerScripts;
+
+    public:
+        // Read-only view for modules that need the candidate list itself
+        // (mod-dungeon-clear's areatrigger relay walks every scripted trigger
+        // once at startup). Same pattern as ObjectMgr::GetAllCreatureData.
+        AreaTriggerScriptMap const& GetAllAreaTriggerScripts() const { return m_AreaTriggerScripts; }
+
+    private:
         EventIdScriptMap        m_EventIdScripts;
 
         ScriptNameMap           m_scriptNames;

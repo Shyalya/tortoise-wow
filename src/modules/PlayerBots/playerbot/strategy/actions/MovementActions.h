@@ -8,6 +8,18 @@
 #include "playerbot/strategy/values/HazardsValue.h"
 #include "playerbot/strategy/values/LastMovementValue.h"
 
+// Move priorities, for code ported from mod-playerbots, which arbitrates moves
+// by them. Nothing in this tree arbitrates: MoveTo takes the move and issues
+// it. The type exists so ported call sites keep their shape, and every place
+// that drops the value says so.
+enum class MovementPriority : uint8
+{
+    MOVEMENT_IDLE   = 0,
+    MOVEMENT_NORMAL = 1,
+    MOVEMENT_COMBAT = 2,
+    MOVEMENT_FORCED = 3
+};
+
 namespace ai
 {
     class MovementAction : public Action
@@ -56,7 +68,44 @@ namespace ai
         bool MoveTo2(const WorldPosition& endPos, bool idle = false, bool react = false, bool noPath = false, bool ignoreEnemyTargets = false);
 
         bool MoveTo(uint32 mapId, float x, float y, float z, bool idle = false, bool react = false, bool noPath = false, bool ignoreEnemyTargets = false);
+
+        // mod-playerbots carries four more arguments on this call. Three are
+        // accepted and dropped - exact_waypoint, lessDelay and backwards have no
+        // counterpart in this generator - and the priority goes the way every
+        // other priority here goes, see MovementPriority. normal_only maps onto
+        // noPath, which is the same request: do not route, go straight.
+        bool MoveTo(uint32 mapId, float x, float y, float z, bool idle, bool react,
+                    bool normal_only, bool /*exact_waypoint*/,
+                    MovementPriority /*priority*/, bool /*lessDelay*/ = false,
+                    bool /*backwards*/ = false)
+        { return MoveTo(mapId, x, y, z, idle, react, normal_only); }
+
+        // mod-playerbots refuses a move to a spot the bot was just sent to.
+        // Nothing here records that, so nothing is a duplicate. False keeps the
+        // move flowing, which is the safe direction - see IsWaitingForLastMove.
+        bool IsDuplicateMove(float /*x*/, float /*y*/, float /*z*/) const { return false; }
         bool MoveTo(Unit* target, float distance = 0.0f);
+
+        // mod-playerbots spelling: jump the bot to a point. Sits on
+        // MotionMaster::MoveJump rather than on JumpAction::JumpTowards, which
+        // belongs to a different action class and cannot be reached from here.
+        // The mapId is accepted and ignored - a jump never leaves the map, and
+        // ported callers pass it because their MoveTo takes one.
+        // The priority is dropped; see MovementPriority.
+        bool JumpTo(uint32 /*mapId*/, float x, float y, float z,
+                    MovementPriority /*priority*/ = MovementPriority::MOVEMENT_NORMAL);
+
+        // mod-playerbots records a wait sized to the last leg and refuses a
+        // later move whose priority is not strictly greater. This tree records
+        // no such wait - LastMovement carries no timestamp and no priority - so
+        // there is nothing to answer from and this says "not waiting".
+        //
+        // False is the safe answer, not merely the convenient one. The failure
+        // it avoids is the one the porting module documents against its own
+        // upstream: a leftover wait silently refusing the NEXT leg, leaving the
+        // tank standing in the pack it just pulled. Erring the other way only
+        // means a move is reissued sooner than upstream would.
+        bool IsWaitingForLastMove(MovementPriority /*priority*/ = MovementPriority::MOVEMENT_NORMAL) const { return false; }
         bool MoveNear(WorldObject* target, float distance = sPlayerbotAIConfig.contactDistance);
         float GetFollowAngle();
         bool Follow(Unit* target, float distance = 0);
@@ -69,6 +118,10 @@ namespace ai
 
         bool IsMovingAllowed(Unit* target);
         bool IsMovingAllowed(uint32 mapId, float x, float y, float z);
+        // mod-playerbots also asks the question with no destination: may this
+        // bot move at all right now. Answered against the bot's own position,
+        // which is the part of the check that does not depend on a target.
+        bool IsMovingAllowed();
         bool Flee(Unit *target);
         void ClearIdleState();
         void UpdateMovementState();

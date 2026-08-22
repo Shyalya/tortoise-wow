@@ -5,6 +5,8 @@
 
 class Unit;
 
+#include <initializer_list>
+
 namespace ai
 {
     class NextAction;
@@ -77,6 +79,21 @@ namespace ai
             this->name = name;
             this->handlers = handlers;
             this->trigger = NULL;
+        }
+
+        // mod-playerbots passes the handlers as a brace list of NextAction
+        // values. This tree stores a NULL-terminated array of pointers, so the
+        // list is copied over into that shape here - the node owns the array
+        // either way, the destructor already frees it.
+        TriggerNode(std::string name, std::initializer_list<NextAction> handlerList)
+        {
+            this->name = name;
+            this->trigger = NULL;
+            this->handlers = new NextAction*[handlerList.size() + 1];
+            size_t i = 0;
+            for (NextAction const& a : handlerList)
+                this->handlers[i++] = new NextAction(a);
+            this->handlers[i] = NULL;
         }
         virtual ~TriggerNode();
 

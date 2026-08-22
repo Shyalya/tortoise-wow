@@ -1,0 +1,6 @@
+# Client-derived (Blizzard) navmesh slices live here, produced by
+# tools/slice_mapdata.py for the Tier-2 nav geometry suite. They are NEVER
+# committed — ignore everything except this guard and the README.
+*
+!.gitignore
+!README.md

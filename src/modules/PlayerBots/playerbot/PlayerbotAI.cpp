@@ -1,5 +1,6 @@
 #include "PlayerbotMgr.h"
 #include "playerbot/playerbot.h"
+#include "playerbot/AiContextAugment.h"
 #include "playerbot/PerformanceMonitor.h"
 #include <stdarg.h>
 #include <iomanip>
@@ -145,6 +146,8 @@ PlayerbotAI::PlayerbotAI(Player* bot) :
 	accountId = sObjectMgr.GetPlayerAccountIdByGUID(bot->GetObjectGuid());
 
     aiObjectContext = AiFactory::createAiObjectContext(bot, this);
+    // Hand the fresh context to module augmenters - see AiContextAugment.h.
+    RunAiContextAugmenters(this, aiObjectContext);
 
     UpdateTalentSpec();
 
@@ -8838,4 +8841,23 @@ bool PlayerbotAI::HandleSpellClick(ObjectGuid guid)
     }
 #endif
     return false;
+}
+
+
+// See the declaration: the group members that are actual people. Used by the
+// ported dungeon-clear status publisher to address its addon packets.
+std::vector<Player*> PlayerbotAI::GetRealPlayersInGroup()
+{
+    std::vector<Player*> out;
+    Group* group = bot ? bot->GetGroup() : nullptr;
+    if (!group)
+        return out;
+
+    for (GroupReference* gref = group->GetFirstMember(); gref; gref = gref->next())
+    {
+        Player* member = gref->getSource();
+        if (member && IsRealPlayer(member))
+            out.push_back(member);
+    }
+    return out;
 }

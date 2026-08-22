@@ -44,16 +44,19 @@
 
 struct AreaTriggerEntry
 {
+    // Anonymous unions carry the AzerothCore field names on the same storage,
+    // the way WorldLocation in SharedDefines.h does. Layout unchanged - the DBC
+    // loader fills by offset and must not see the struct move.
     uint32    id;                                           // 0
-    uint32    mapid;                                        // 1
+    union { uint32 mapid;           uint32 map;         };  // 1
     float     x;                                            // 2
     float     y;                                            // 3
     float     z;                                            // 4
     float     radius;                                       // 5
-    float     box_x;                                        // 6 extent x edge
-    float     box_y;                                        // 7 extent y edge
-    float     box_z;                                        // 8 extent z edge
-    float     box_orientation;                              // 9 extent rotation by about z axis
+    union { float box_x;            float width;       };  // 6 extent x edge
+    union { float box_y;            float length;      };  // 7 extent y edge
+    union { float box_z;            float height;      };  // 8 extent z edge
+    union { float box_orientation;  float orientation; };  // 9 extent rotation by about z axis
     // cmangos AreaTriggerEntry has teleport-destination fields.
     // Penqle stores teleport targets in a separate AreaTriggerTeleport table; bot uses these as
     // simple sentinel zeroes (no teleport). Stubs are 0; real impl deferred to
@@ -399,6 +402,18 @@ struct GameObjectDisplayInfoEntry
     uint32      Displayid;                                  // 0        m_ID
     char* filename;                                         // 1        m_modelName
                                                             // 2-11     m_Sound
+    // The geo box arrived with the 2.x client; the 1.12 DBC carries sounds and
+    // nothing else, so there is no data to load. Class-level zeros keep ported
+    // door-width checks compiling; their effect degrades from "segment crosses
+    // the door's box" to "segment passes within the pad of the door's origin",
+    // which still catches a path through the door and misses only grazes along
+    // an unusually wide one.
+    static constexpr float minX = 0.0f;
+    static constexpr float minY = 0.0f;
+    static constexpr float minZ = 0.0f;
+    static constexpr float maxX = 0.0f;
+    static constexpr float maxY = 0.0f;
+    static constexpr float maxZ = 0.0f;
 };
 
 // All Gt* DBC store data for 100 levels, some by 100 per class/race

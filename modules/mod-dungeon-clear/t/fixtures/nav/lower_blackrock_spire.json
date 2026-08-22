@@ -1,0 +1,15 @@
+# Lower Blackrock Spire (map 229) — chasm wall-climb shortcut.
+#
+# The navmesh stitches a walkable poly up a near-vertical chasm face between the
+# lower walkway (~z30) and an upper ledge (~z58). The long-range A* used to climb
+# it as a shortcut, leaving the human party (which can't make the climb) behind.
+# DcNavPenaltyRegistry boxes the shaft (DcRouteFilter multiplies any A* edge through
+# it), so the corridor must now take the legitimate way around.
+#
+# The assertion here guards the must-not-regress property of the discouragement:
+# the upper ledge stays REACHABLE (a cost penalty must never strand the bot by
+# making the only-known route impassable). Once a live slice is available, tighten
+# this with a maxStepZ (the detour ramp has small per-point pops; the wall-climb
+# popped hard) and/or a minPoints floor (the detour has many more points than the
+# ~6-point shortcut) to assert the shortcut itself is gone, not just reachable.
+{"name":"LBRS lower walkway to upper ledge (no chasm-wall shortcut)","map":229,"sx":-127.33,"sy":-402.11,"sz":30.32,"tx":-124.88,"ty":-378.42,"tz":58.4,"expectReachable":true,"expectComplete":true}

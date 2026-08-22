@@ -13,6 +13,7 @@
 #include "strategy/IterateItemsMask.h"
 #include "RandomPlayerbotMgr.h"
 
+#include "playerbot/BotSlots.h"
 class Player;
 class PlayerbotMgr;
 class ChatHandler;
@@ -513,6 +514,13 @@ public:
     bool IsInVehicle(bool canControl = false, bool canCast = false, bool canAttack = false, bool canTurn = false, bool fixed = false, std::string vehicleName = "");
 
     uint32 GetEquipGearScore(Player* player, bool withBags, bool withBank);
+    // mod-playerbots short forms.
+    uint32 GetEquipGearScore(Player* player) { return GetEquipGearScore(player, false, false); }
+    std::vector<Player*> GetRealPlayersInGroup();
+    // mod-playerbots short forms: the error goes to the master, the cast
+    // check uses effect mask 0 (any effect).
+    bool TellError(std::string text) { return TellError(GetMaster(), text); }
+    bool CanCastSpell(std::string name, Unit* target) { return CanCastSpell(name, target, 0); }
     uint32 GetEquipStatsValue(Player* player);
     bool HasSkill(SkillType skill);
     bool IsAllowedCommand(std::string text);

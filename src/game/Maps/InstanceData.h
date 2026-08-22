@@ -73,6 +73,23 @@ class InstanceData : public ZoneScript
         void SetGuid(uint32 dataIdx, ObjectGuid value) { SetData64(dataIdx, value.GetRawValue()); }
 
         //All-purpose data storage 32 bit
+        // AzerothCore encounter faces, honest defaults. There is no encounter
+        // state machine on this core: NOT_STARTED (0) and an empty mask mean a
+        // ported caller never skips a boss it should fight - it only walks to
+        // one it could have skipped. GetPersistentData mirrors GetData, which
+        // is this core's only per-instance store. ProcessEvent has no general
+        // dispatcher here; scripts wire their events directly, so the default
+        // swallows the call.
+        virtual uint8 GetBossState(uint32 /*id*/) const { return 0; }
+        virtual uint32 GetCompletedEncounterMask() const { return 0; }
+        virtual uint32 GetPersistentData(uint32 type) { return GetData(type); }
+        virtual void ProcessEvent(WorldObject* /*source*/, uint32 /*eventId*/) {}
+        // Cross-faction instances arrived later; on this core the group's
+        // faction is the instance's faction and nothing remaps it.
+        // 2 is TEAM_NEUTRAL in the AzerothCore numbering the ported caller
+        // compares against - the value that says "no faction stamped", which
+        // is the truth here. 0 would read as "stamped Alliance".
+        virtual uint32 GetTeamIdInInstance() const { return 2; }
         virtual uint32 GetData(uint32 /*Type*/) { return 0; }
         virtual void SetData(uint32 /*Type*/, uint32 /*Data*/) {}
 

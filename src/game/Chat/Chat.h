@@ -153,6 +153,8 @@ class ChatHandler
         * \param char const* channelName       : Required only for CHAT_MSG_CHANNEL
         * \param uint8 playerRank              : Used only for Defensive Channels (Value over 0 will show rank name before character name in channel)
         **/
+        // Convenience for module code that formats into std::string first.
+        void SendSysMessage(std::string const& str) { SendSysMessage(str.c_str()); }
         static void BuildChatPacket(
             WorldPacket& data, ChatMsg msgtype, const std::string& message, Language language = LANG_UNIVERSAL, uint32 chatTag = CHAT_TAG_NONE,
             ObjectGuid const& senderGuid = ObjectGuid(), char const* senderName = nullptr,

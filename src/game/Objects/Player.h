@@ -1747,6 +1747,10 @@ class Player final: public Unit
         bool HasDamagingWeaponProc() const;
         void CastItemCombatSpell(Unit* Target, WeaponAttackType attType, float chanceMultiplier = 1.0f);
         void CastItemUseSpell(Item* item, SpellCastTargets const& targets);
+        // AzerothCore appends the client cast counter and a glyph index. The
+        // counter is an echo this call path never needs, glyphs are 3.x.
+        void CastItemUseSpell(Item* item, SpellCastTargets const& targets, uint8 /*castCount*/, uint32 /*glyphIndex*/)
+        { CastItemUseSpell(item, targets); }
 
         // needed by vanish and improved sap
         void CastHighestStealthRank();
@@ -2077,6 +2081,15 @@ class Player final: public Unit
         */
         bool SwitchInstance(uint32 newInstanceId);
         bool TeleportTo(uint32 mapid, float x, float y, float z, float orientation, uint32 options = 0);
+        // AzerothCore's long form appends a unit to face and forceNewInstance.
+        // This core picks the instance copy by binds alone, so the force flag
+        // has nowhere to act: a hop between two copies of the SAME map lands in
+        // the caller's current copy. That narrows one tool - the test
+        // spectator's run-to-run hop on one map - and nothing else; hops across
+        // maps work. Documented at the call site too.
+        bool TeleportTo(uint32 mapid, float x, float y, float z, float orientation,
+                        uint32 options, Unit* /*faceTarget*/, bool /*forceNewInstance*/ = false)
+        { return TeleportTo(mapid, x, y, z, orientation, options); }
         template <class T>
         bool TeleportTo(T const& loc, uint32 options = 0)
         {
@@ -2137,6 +2150,19 @@ class Player final: public Unit
         ObjectGuid const& GetFarSightGuid() const { return GetGuidValue(PLAYER_FARSIGHT); }
 
         void SaveRecallPosition();
+        // AzerothCore-facing reads of the recall slot; the fields stay private.
+        uint32 GetRecallMap() const { return m_recallMap; }
+        float GetRecallX() const { return m_recallX; }
+        float GetRecallY() const { return m_recallY; }
+        float GetRecallZ() const { return m_recallZ; }
+        float GetRecallO() const { return m_recallO; }
+        // Dungeon difficulty query, AzerothCore shape. One difficulty here.
+        Difficulty GetDifficulty(bool /*isRaid*/) const { return DUNGEON_DIFFICULTY_NORMAL; }
+        // The mode switches that came with heroics; nothing to switch here.
+        Difficulty GetDungeonDifficulty() const { return DUNGEON_DIFFICULTY_NORMAL; }
+        Difficulty GetRaidDifficulty() const { return DUNGEON_DIFFICULTY_NORMAL; }
+        void SetDungeonDifficulty(Difficulty) {}
+        void SetRaidDifficulty(Difficulty) {}
         void GetRecallPosition(uint32& map, float& x, float& y, float& z, float& o)
         {
             map = m_recallMap;
@@ -2148,6 +2174,12 @@ class Player final: public Unit
 
         void SetHomebindToLocation(WorldLocation const& loc, uint32 area_id);
         void RelocateToHomebind() { SetLocationMapId(m_homebindMapId); Relocate(m_homebindX, m_homebindY, m_homebindZ); }
+        // Read-only homebind access for modules (mod-dungeon-clear evicts its
+        // test party to the bind point - the same fields the hearthstone uses).
+        uint32 GetHomebindMapId() const { return m_homebindMapId; }
+        float GetHomebindX() const { return m_homebindX; }
+        float GetHomebindY() const { return m_homebindY; }
+        float GetHomebindZ() const { return m_homebindZ; }
         bool TeleportToHomebind(uint32 options = 0, bool hearthCooldown = true);
 
         // currently visible objects at player client
@@ -2165,6 +2197,25 @@ class Player final: public Unit
         void UpdateVisibilityOf(WorldObject const* viewPoint, T* target, UpdateData& data, std::set<WorldObject*>& visibleNow);
 
         Camera& GetCamera() { return m_camera; }
+        // AzerothCore spellings over this core's Camera. apply=true binds the
+        // view to the object, false releases it; GetViewpoint answers what the
+        // camera looks through when that is not the player himself.
+        void SetViewpoint(WorldObject* target, bool apply)
+        {
+            if (apply)
+                m_camera.SetView(target);
+            else
+                m_camera.ResetView();
+        }
+        // AzerothCore rebuilds what this player can see after the viewpoint
+        // moved. The camera does that here when its view changes; a manual nudge
+        // is a no-op because SetView/ResetView already schedule it.
+        void UpdateVisibilityForPlayer() {}
+        WorldObject* GetViewpoint()
+        {
+            WorldObject* body = m_camera.GetBody();
+            return body == (WorldObject*)this ? nullptr : body;
+        }
         void ScheduleCameraUpdate(ObjectGuid guid);
 
         uint32 GetLongSight() const { return m_longSightSpell; }
@@ -2723,6 +2774,25 @@ class Player final: public Unit
         ObjectGuid const& GetSelectedGobj() const { return m_selectedGobj; }
         void SetSelectedGobj(ObjectGuid guid) { m_selectedGobj = guid; }
         ObjectGuid const& GetSelectionGuid() const { return m_curSelectionGuid; }
+        // AzerothCore spelling.
+        void SetSelection(ObjectGuid guid) { SetSelectionGuid(guid); }
+        // AzerothCore spellings.
+        bool CanSeeOrDetect(Unit const* u, bool /*detect*/ = true, bool /*inVisibleList*/ = false, bool /*is3dDistance*/ = true) const
+        { return u && u->IsVisibleForOrDetect(this, this, false); }
+        float GetObjectSize() const { return GetObjectBoundingRadius(); }
+        // AzerothCore's long form carries casting/vehicle flags this core has
+        // no seat for; the coordinates and orientation are the teleport. The
+        // using-declaration keeps the inherited forms visible - declaring an
+        // overload here hides them, and this class calls the Position form on
+        // itself a few hundred lines up.
+        using Unit::NearTeleportTo;
+        bool NearTeleportTo(float x, float y, float z, float o, bool /*casting*/, bool /*vehicleTeleport*/ = false, bool /*withPet*/ = false)
+        { return TeleportTo(GetMapId(), x, y, z, o, TELE_TO_NOT_LEAVE_COMBAT | TELE_TO_NOT_UNSUMMON_PET); }
+        // Instance data IS the instance script on this core; the AzerothCore
+        // face of it (GetBossState and friends) hangs off InstanceData as
+        // virtuals with honest defaults, so this cast-free accessor is safe on
+        // every map.
+        InstanceData* GetInstanceScript() const { return GetMap() ? GetMap()->GetInstanceData() : nullptr; }
         void SetSelectionGuid(ObjectGuid guid) { m_curSelectionGuid = guid; SetTargetGuid(guid); }
         Unit* GetSelectedUnit() { return GetMap()->GetUnit(m_curSelectionGuid); }
         Creature* GetSelectedCreature() { return GetMap()->GetCreature(m_curSelectionGuid); }
@@ -2743,6 +2813,9 @@ class Player final: public Unit
         }
         void ClearResurrectRequestData() { SetResurrectRequestData(ObjectGuid(), 0, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0, 0); }
         bool IsRessurectRequestedBy(ObjectGuid guid) const { return m_resurrectData.resurrectorGuid == guid; }
+        // Correctly spelled alias. AzerothCore writes it with one s, and so does
+        // English; the name above is kept because this tree already calls it.
+        bool isResurrectRequestedBy(ObjectGuid guid) const { return IsRessurectRequestedBy(guid); }
         bool IsRessurectRequested() const { return !m_resurrectData.resurrectorGuid.IsEmpty(); }
         // bot uses cmangos camelCase isRessurectRequested.
         bool isRessurectRequested() const { return IsRessurectRequested(); }

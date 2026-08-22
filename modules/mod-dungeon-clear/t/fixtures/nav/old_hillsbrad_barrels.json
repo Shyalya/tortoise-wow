@@ -1,0 +1,35 @@
+# Escape from Durnholde (map 560) — Durnholde Keep barrel-bombing routes.
+# The 5 houses' barrels are POOLED (pool_template 1163-1167: one barrel per
+# house at a random one of 3 candidate spots), so the event anchors each step on
+# the house's candidate CENTROID. These scenarios prove every candidate spot is
+# navmesh-reachable from the OBJ(2) courtyard anchor and along the visit order
+# (house 5 -> 4 -> 3 -> 2 -> 1), so a stalled barrel step is never nav geometry.
+# Requires a map-560 slice under t/fixtures/mapdata/mmaps (skipped otherwise).
+{"name":"courtyard anchor to house5 centroid","map":560,"sx":2103.23,"sy":93.55,"sz":53.10,"tx":2109.12,"ty":46.99,"tz":53.66,"expectReachable":true}
+{"name":"house5 to house4 centroid","map":560,"sx":2109.12,"sy":46.99,"sz":53.66,"tx":2074.34,"ty":71.89,"tz":53.84,"expectReachable":true}
+{"name":"house4 to house3 centroid","map":560,"sx":2074.34,"sy":71.89,"sz":53.84,"tx":2067.37,"ty":116.14,"tz":54.50,"expectReachable":true}
+{"name":"house3 to house2 centroid (the long NE walk)","map":560,"sx":2067.37,"sy":116.14,"sz":54.50,"tx":2165.47,"ty":252.75,"tz":53.75,"expectReachable":true}
+{"name":"house2 to house1 centroid","map":560,"sx":2165.47,"sy":252.75,"sz":53.75,"tx":2213.15,"ty":257.25,"tz":53.81,"expectReachable":true}
+# after the 5th plant, muster OUTSIDE the now-burning house1 (clear of the fire)
+# before Drake spawns — the party is driven here from the last barrel
+{"name":"house1 to post-barrel muster","map":560,"sx":2213.15,"sy":257.25,"sz":53.81,"tx":2174.63,"ty":220.60,"tz":52.88,"expectReachable":true}
+# every pooled candidate spot, from its own house centroid (pool group in name)
+{"name":"house5 candidate 2119/42","map":560,"sx":2109.12,"sy":46.99,"sz":53.66,"tx":2119.21,"ty":42.49,"tz":53.78,"expectReachable":true}
+{"name":"house5 candidate 2100/44","map":560,"sx":2109.12,"sy":46.99,"sz":53.66,"tx":2100.11,"ty":43.54,"tz":53.56,"expectReachable":true}
+{"name":"house5 candidate 2108/55","map":560,"sx":2109.12,"sy":46.99,"sz":53.66,"tx":2108.03,"ty":54.95,"tz":53.65,"expectReachable":true}
+{"name":"house4 candidate 2080/65","map":560,"sx":2074.34,"sy":71.89,"sz":53.84,"tx":2080.19,"ty":64.74,"tz":53.88,"expectReachable":true}
+{"name":"house4 candidate 2080/74","map":560,"sx":2074.34,"sy":71.89,"sz":53.84,"tx":2080.12,"ty":73.74,"tz":53.72,"expectReachable":true}
+{"name":"house4 candidate 2063/77","map":560,"sx":2074.34,"sy":71.89,"sz":53.84,"tx":2062.71,"ty":77.20,"tz":53.92,"expectReachable":true}
+{"name":"house3 candidate 2067/106","map":560,"sx":2067.37,"sy":116.14,"sz":54.50,"tx":2067.49,"ty":106.07,"tz":54.61,"expectReachable":true}
+{"name":"house3 candidate 2056/112","map":560,"sx":2067.37,"sy":116.14,"sz":54.50,"tx":2056.08,"ty":112.37,"tz":54.61,"expectReachable":true}
+{"name":"house3 candidate 2079/130","map":560,"sx":2067.37,"sy":116.14,"sz":54.50,"tx":2078.53,"ty":129.96,"tz":54.28,"expectReachable":true}
+{"name":"house2 candidate 2169/244","map":560,"sx":2165.47,"sy":252.75,"sz":53.75,"tx":2168.72,"ty":244.45,"tz":53.72,"expectReachable":true}
+{"name":"house2 candidate 2152/249","map":560,"sx":2165.47,"sy":252.75,"sz":53.75,"tx":2151.68,"ty":248.57,"tz":53.87,"expectReachable":true}
+{"name":"house2 candidate 2176/265","map":560,"sx":2165.47,"sy":252.75,"sz":53.75,"tx":2176.01,"ty":265.24,"tz":53.65,"expectReachable":true}
+{"name":"house1 candidate 2214/248","map":560,"sx":2213.15,"sy":257.25,"sz":53.81,"tx":2213.61,"ty":247.54,"tz":53.65,"expectReachable":true}
+{"name":"house1 candidate 2227/252","map":560,"sx":2213.15,"sy":257.25,"sz":53.81,"tx":2226.61,"ty":251.62,"tz":53.80,"expectReachable":true}
+{"name":"house1 candidate 2199/273","map":560,"sx":2213.15,"sy":257.25,"sz":53.81,"tx":2199.23,"ty":272.60,"tz":53.98,"expectReachable":true}
+# objective 3 anchor: OUTSIDE Thrall's prison gate (gossip through the bars) —
+# must be reachable from the courtyard AND from the NE houses where event 2 ends
+{"name":"courtyard anchor to cell gate","map":560,"sx":2103.23,"sy":93.55,"sz":53.10,"tx":2229.11,"ty":116.09,"tz":83.05,"expectReachable":true}
+{"name":"house1 NE to cell gate","map":560,"sx":2213.15,"sy":257.25,"sz":53.81,"tx":2229.11,"ty":116.09,"tz":83.05,"expectReachable":true}

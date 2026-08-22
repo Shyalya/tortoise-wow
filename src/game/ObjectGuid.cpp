@@ -156,3 +156,6 @@ template class ObjectGuidGenerator<HIGHGUID_UNIT>;
 template class ObjectGuidGenerator<HIGHGUID_PET>;
 template class ObjectGuidGenerator<HIGHGUID_DYNAMICOBJECT>;
 template class ObjectGuidGenerator<HIGHGUID_CORPSE>;
+
+// See the declaration: the AzerothCore name for a null guid.
+ObjectGuid const ObjectGuid::Empty = ObjectGuid();

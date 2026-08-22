@@ -2,6 +2,7 @@
 #include "playerbot/strategy/Trigger.h"
 #include <Maps/MoveMap.h>
 
+#include "playerbot/BotSlots.h"
 namespace ai
 {
     template< typename... Args >

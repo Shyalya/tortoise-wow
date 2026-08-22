@@ -345,6 +345,15 @@ namespace ai
         virtual void Set(T value) override { this->value = value; }
         virtual void Update() { }
         virtual void Reset() override { value = defaultValue; }
+        // mod-playerbots hands out a writable reference so a caller can update
+        // the stored value in place instead of Get-modify-Set. Same storage,
+        // one fewer copy; only meaningful on a manually set value, which is
+        // why it lives here and not on Value.
+        // mod-playerbots writes through a reference to the stored value
+        // instead of Get-modify-Set. Only a manually set value has storage
+        // to hand out, so this is not on the Value base - and cannot be:
+        // some instantiations have T already a reference.
+        T& RefGet() { return value; }
 
     protected:
         T value;

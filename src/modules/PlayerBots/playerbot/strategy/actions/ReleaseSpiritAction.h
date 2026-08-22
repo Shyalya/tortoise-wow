@@ -7,6 +7,10 @@
 #include "ReviveFromCorpseAction.h"
 #include "playerbot/TravelMgr.h"
 
+#include "playerbot/BotSlots.h"
+// The base class. Came in through botpch.h inside the bot library; a module
+// including this header from outside has no botpch.
+#include "GenericActions.h"
 namespace ai
 {
     class ReleaseSpiritAction : public ChatCommandAction

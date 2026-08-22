@@ -3706,3 +3706,18 @@ Creature* Map::LoadCreatureSpawnWithGroup(uint32 leaderDbGuid, bool delaySpawn)
 
     return pLeader;
 }
+
+
+// See the declarations in Map.h: the pass-through to the movemap manager for
+// module code that reaches the navmesh through the map.
+#include "Maps/MoveMap.h"
+
+dtNavMesh const* Map::MapCollisionData::MMapDataAccess::GetNavMesh() const
+{
+    return MMAP::MMapFactory::createOrGetMMapManager()->GetNavMesh(mapId);
+}
+
+dtNavMeshQuery const* Map::MapCollisionData::MMapDataAccess::GetNavMeshQuery() const
+{
+    return MMAP::MMapFactory::createOrGetMMapManager()->GetNavMeshQuery(mapId);
+}

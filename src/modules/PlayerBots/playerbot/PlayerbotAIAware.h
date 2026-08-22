@@ -21,5 +21,12 @@ namespace ai
         virtual std::string getName() { return std::string(); }
     protected:
         PlayerbotAI* ai;
+
+        // Second name for the member above, for code ported from
+        // mod-playerbots, which spells it botAI. A reference rather than a
+        // macro: a #define would also rewrite the local variables of that name
+        // that ported files declare for themselves. Those locals shadow this,
+        // which is what should happen.
+        PlayerbotAI* const& botAI = ai;
     };
 }

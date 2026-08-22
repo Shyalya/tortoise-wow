@@ -4512,3 +4512,25 @@ WorldPosition JumpAction::GetPossibleJumpStartForInRange(const WorldPosition& sr
     return WorldPosition();
 }
 
+
+// See the declaration. Horizontal speed and arc height are the values
+// JumpAction uses for its own hops, so a ported jump travels like a native one.
+bool MovementAction::JumpTo(uint32 /*mapId*/, float x, float y, float z, MovementPriority /*priority*/)
+{
+    if (!bot)
+        return false;
+
+    bot->GetMotionMaster()->MoveJump(x, y, z, 10.0f, 5.0f);
+    return true;
+}
+
+// See the declaration. The target-less form asks only whether this bot is in a
+// state that permits movement at all, so it is answered against the bot's own
+// position - the parts of the check that need a destination are skipped.
+bool MovementAction::IsMovingAllowed()
+{
+    if (!bot)
+        return false;
+
+    return IsMovingAllowed(bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+}

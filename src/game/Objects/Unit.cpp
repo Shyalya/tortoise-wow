@@ -12091,3 +12091,6 @@ float Unit::GetScaleForDisplayId(uint32 displayId)
 
     return DEFAULT_OBJECT_SCALE;
 }
+
+// See the declaration: AzerothCore spelling of IsDead.
+bool Unit::isDead() const { return IsDead(); }

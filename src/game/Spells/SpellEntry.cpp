@@ -1208,3 +1208,15 @@ bool SpellEntry::HasAuraOrTriggersAnotherSpellWithAura(AuraType aura) const
     }
     return false;
 }
+
+// See the declarations in the header: this core keeps spell distances in
+// SpellRange.dbc behind rangeIndex, not on the spell.
+float SpellEntry::GetMaxRange(bool /*positive*/) const
+{
+    return ::GetSpellMaxRange(sSpellRangeStore.LookupEntry(rangeIndex));
+}
+
+float SpellEntry::GetMinRange(bool /*positive*/) const
+{
+    return ::GetSpellMinRange(sSpellRangeStore.LookupEntry(rangeIndex));
+}

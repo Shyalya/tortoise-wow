@@ -2,6 +2,7 @@
 #include "playerbot/ServerFacade.h"
 #include "values/ItemUsageValue.h"
 
+#include "playerbot/BotSlots.h"
 char * strstri (const char* str1, const char* str2);
 
 namespace ai

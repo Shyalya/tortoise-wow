@@ -1003,6 +1003,39 @@ class WorldObject : public Object
         bool IsWalking() const { return m_movementInfo.HasMovementFlag(MOVEFLAG_WALK_MODE); }
         bool IsWalkingBackward() const { return m_movementInfo.HasMovementFlag(MOVEFLAG_BACKWARD); }
         bool IsMoving() const { return m_movementInfo.HasMovementFlag(MOVEFLAG_MASK_MOVING); }
+        // AzerothCore spellings, for module code written against that core.
+        bool isMoving() const { return IsMoving(); }
+        float GetExactDist2d(float px, float py) const
+        {
+            float const dx = GetPositionX() - px, dy = GetPositionY() - py;
+            return std::sqrt(dx*dx + dy*dy);
+        }
+        float GetExactDist(float px, float py, float pz) const
+        {
+            float const dx = GetPositionX() - px, dy = GetPositionY() - py, dz = GetPositionZ() - pz;
+            return std::sqrt(dx*dx + dy*dy + dz*dz);
+        }
+        float GetExactDist2d(Position const& p) const { return GetExactDist2d(p.x, p.y); }
+        float GetExactDist(Position const& p) const { return GetExactDist(p.x, p.y, p.z); }
+        float GetExactDist2d(Position const* p) const { return GetExactDist2d(p->x, p->y); }
+        float GetExactDist(Position const* p) const { return GetExactDist(p->x, p->y, p->z); }
+        float GetExactDist2d(WorldObject const* o) const { return GetExactDist2d(o->GetPositionX(), o->GetPositionY()); }
+        float GetExactDistSq(WorldObject const* o) const { float const d = GetExactDist(o); return d * d; }
+        float GetExactDistSq(float px, float py, float pz) const { float const d = GetExactDist(px, py, pz); return d * d; }
+        // AzerothCore appends incOwnRadius/incTargetRadius; this core's check
+        // already includes both radii, which is also that call's default.
+        bool IsWithinDist(WorldObject const* obj, float dist, bool is3D, bool /*incOwnRadius*/, bool /*incTargetRadius*/) const
+        { return IsWithinDist(obj, dist, is3D); }
+        // Dynamic-object identity, AzerothCore spellings.
+        bool IsDynamicObject() const { return GetTypeId() == TYPEID_DYNAMICOBJECT; }
+        class DynamicObject* ToDynObject() { return IsDynamicObject() ? reinterpret_cast<DynamicObject*>(this) : nullptr; }
+        DynamicObject const* ToDynObject() const { return IsDynamicObject() ? reinterpret_cast<DynamicObject const*>(this) : nullptr; }
+        float GetExactDist(WorldObject const* o) const { return GetExactDist(o->GetPositionX(), o->GetPositionY(), o->GetPositionZ()); }
+        // AzerothCore prints objects for debug output; here it is name and guid.
+        std::string ToString() const { return std::string(GetName()) + " (" + GetObjectGuid().GetString() + ")"; }
+        // Phasing arrived with The Burning Crusade. Everything on this core
+        // shares one phase, so ported phase comparisons always match.
+        uint32 GetPhaseMask() const { return 1; }
         bool IsSwimming() const { return m_movementInfo.HasMovementFlag(MOVEFLAG_SWIMMING); }
         bool IsMovingButNotWalking() const { return IsMoving() && !(IsWalking() || IsWalkingBackward()); }
 
@@ -1113,7 +1146,21 @@ class WorldObject : public Object
         GameObject* FindRandomGameObject(uint32 entry, float range) const;
         Player* FindNearestPlayer(float range) const;
         void GetGameObjectListWithEntryInGrid(std::list<GameObject*>& lList, uint32 uiEntry, float fMaxSearchRange) const;
+        // AzerothCore set form, one visit per entry - cold callers, two or
+        // three entries.
+        void GetGameObjectListWithEntryInGrid(std::list<GameObject*>& lList, std::vector<uint32> const& entries, float fMaxSearchRange) const
+        {
+            for (uint32 entry : entries)
+                GetGameObjectListWithEntryInGrid(lList, entry, fMaxSearchRange);
+        }
         void GetCreatureListWithEntryInGrid(std::list<Creature*>& lList, uint32 uiEntry, float fMaxSearchRange) const;
+        // AzerothCore also takes a set of entries in one sweep. One grid visit
+        // per entry here - the callers pass two or three, on cold paths.
+        void GetCreatureListWithEntryInGrid(std::list<Creature*>& lList, std::vector<uint32> const& entries, float fMaxSearchRange) const
+        {
+            for (uint32 entry : entries)
+                GetCreatureListWithEntryInGrid(lList, entry, fMaxSearchRange);
+        }
         void GetAlivePlayerListInRange(WorldObject const* pSource, std::list<Player*>& lList, float fMaxSearchRange) const;
 
         bool isActiveObject() const { return m_isActiveObject || m_viewPoint.hasViewers(); }

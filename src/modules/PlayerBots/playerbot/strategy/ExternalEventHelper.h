@@ -3,6 +3,7 @@
 #include "triggers/WorldPacketTrigger.h"
 #include "playerbot/ChatHelper.h"
 
+#include "playerbot/BotSlots.h"
 namespace ai
 {
     class ExternalEventHelper 

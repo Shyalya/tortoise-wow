@@ -38,6 +38,8 @@ class GroupReference : public Reference<Group, Player>
         GroupReference() : Reference<Group, Player>(), iSubGroup(0) {}
         ~GroupReference() override { unlink(); }
         GroupReference *next() { return (GroupReference*)Reference<Group, Player>::next(); }
+        // AzerothCore spelling of the inherited accessor.
+        Player* GetSource() const { return getSource(); }
         uint8 getSubGroup() const { return iSubGroup; }
         void setSubGroup(uint8 pSubGroup) { iSubGroup = pSubGroup; }
 };

@@ -160,6 +160,11 @@ class SpellAuraHolder
         void SetRemovedOnShapeLost(bool removed) { m_isRemovedOnShapeLost = removed; }
         bool IsInUse() const { return m_in_use;}
         bool IsDeleted() const { return m_deleted;}
+        // AzerothCore spellings. IsRemoved is the same question as IsDeleted;
+        // IsExpired asks whether a timed aura has run out - a permanent one
+        // never has.
+        bool IsRemoved() const { return IsDeleted(); }
+        bool IsExpired() const { return !IsPermanent() && GetAuraDuration() <= 0; }
         bool IsEmptyHolder() const;
 
         void SetDeleted() { m_deleted = true; }
@@ -460,6 +465,10 @@ class Aura
         int32 GetMiscValue() const { return m_spellAuraHolder->GetSpellProto()->EffectMiscValue[m_effIndex]; }
 
         SpellEntry const* GetSpellProto() const { return GetHolder()->GetSpellProto(); }
+        // AzerothCore asks these of the Aura; here the state lives on the
+        // holder, which is what actually gets deleted and timed.
+        bool IsRemoved() const { return GetHolder()->IsDeleted(); }
+        bool IsExpired() const { return GetHolder()->IsExpired(); }
         uint32 GetId() const{ return GetHolder()->GetSpellProto()->Id; }
         ObjectGuid const& GetCastItemGuid() const { return GetHolder()->GetCastItemGuid(); }
         ObjectGuid const& GetCasterGuid() const { return GetHolder()->GetCasterGuid(); }

@@ -2,6 +2,11 @@
 #include "playerbot/strategy/Value.h"
 #include "playerbot/TravelNode.h"
 
+// Declared in MovementActions.h, which includes this header the other way
+// around - a scoped enum with fixed underlying type forward-declares cleanly,
+// and the Set() parameter below only passes it through.
+enum class MovementPriority : uint8;
+
 namespace ai
 {
     class LastMovement
@@ -48,6 +53,18 @@ namespace ai
         }
 
         void setPath(TravelPath path) { lastPath = path; }
+
+        // Ported dungeon-clear movement records where it sent the bot and for
+        // how long, and zeroes the wait to unblock the next order. This tree
+        // never read such a wait (IsWaitingForLastMove answers false, see
+        // MovementActions.h), so the field is bookkeeping the porting code
+        // maintains for its own log lines - kept faithful, not load-bearing.
+        void Set(uint32 mapId, float x, float y, float z, float o, float delay, MovementPriority /*priority*/)
+        {
+            lastMoveShort = WorldPosition(mapId, x, y, z, o);
+            lastdelayTime = delay;
+        }
+        float lastdelayTime = 0.0f;
     public:
         std::vector<uint32> taxiNodes;
         ObjectGuid taxiMaster;

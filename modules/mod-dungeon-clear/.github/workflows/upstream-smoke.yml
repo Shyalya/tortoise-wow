@@ -1,0 +1,102 @@
+# Upstream compile smoke — catches breaking API changes in the upstream staging
+# branches (e.g. CreatureData::id1 -> id) BEFORE they reach the branch you run.
+#
+# Unlike tests.yml (logic regressions on a GitHub-hosted runner against the
+# stable core), this builds the FULL worldserver against the *test-staging*
+# branches of both upstream repos, on YOUR self-hosted runner. test-staging is
+# the leading indicator: breaking renames land there first.
+#
+# Runs on a self-hosted runner registered to this repo. The runner clones into
+# its own _work/ sandbox — it never touches your live /home/jared/azerothcore
+# working tree. Its ccache is a dedicated, persistent dir (separate from the
+# ccache your normal builds use) so the two never cross-pollinate.
+name: upstream-smoke
+
+env:
+  # The two staging branches you track. A break in either fails the smoke.
+  # The playerbots core fork is the true upstream where breaking core renames
+  # (e.g. CreatureData::id1 -> id) land; your local acore test-staging just
+  # tracks this branch, so the smoke pulls from the source directly.
+  CORE_REPO: mod-playerbots/azerothcore-wotlk   # playerbots core fork (public)
+  CORE_REF: test-staging
+  PLAYERBOTS_REPO: mod-playerbots/mod-playerbots
+  PLAYERBOTS_REF: test-staging
+
+  # Dedicated, persistent ccache OUTSIDE the workspace so it survives the fresh
+  # checkout each run and stays isolated from your interactive ~/.ccache.
+  # BASEDIR rewrites absolute paths so hits survive the re-clone; content
+  # compilercheck keeps hits stable across toolchain bumps.
+  CCACHE_DIR: /home/jared/.ccache-dc-smoke
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_MAXSIZE: "8G"
+  CCACHE_COMPILERCHECK: content
+
+on:
+  schedule:
+    - cron: '0 8 * * *'   # 08:00 UTC nightly (~3am CDT) — the real value: upstream drift
+  workflow_dispatch:        # run-now button in the Actions tab
+  push:
+    branches: [ master ]    # also smoke your own pushes against staging
+
+concurrency:
+  group: dc-upstream-smoke           # never overlap two full builds on the box
+  cancel-in-progress: false          # let an in-flight nightly finish
+
+jobs:
+  smoke:
+    runs-on: self-hosted
+    name: full build vs upstream test-staging
+    steps:
+      # 1. Assemble the tree: core at the workspace root, modules underneath.
+      #    Each checkout is a fresh clone into the runner's _work sandbox.
+      - name: Checkout core (${{ env.CORE_REPO }}@${{ env.CORE_REF }})
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.CORE_REPO }}
+          ref: ${{ env.CORE_REF }}
+          path: .
+
+      - name: Checkout mod-playerbots (${{ env.PLAYERBOTS_REF }})
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.PLAYERBOTS_REPO }}
+          ref: ${{ env.PLAYERBOTS_REF }}
+          path: modules/mod-playerbots
+
+      - name: Checkout this module
+        uses: actions/checkout@v5
+        with:
+          path: modules/mod-dungeon-clear
+
+      # 2. Configure exactly like deployment-files/build.sh: clang, mold, static
+      #    scripts+modules, tools off, no tests (this job is a COMPILE smoke).
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=/usr/bin/clang \
+            -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+            -DWITH_WARNINGS=1 \
+            -DTOOLS_BUILD=none \
+            -DSCRIPTS=static \
+            -DMODULES=static \
+            -DBUILD_TESTING=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=mold" \
+            -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=mold"
+
+      # 3. Full worldserver build. Compiles game + scripts + playerbots +
+      #    dungeon-clear and links — so it catches link breaks too, not just
+      #    "no member named id1". ccache makes the no-change nights cheap.
+      - name: Build worldserver
+        run: |
+          ccache --zero-stats
+          cmake --build build --target worldserver -j"$(nproc)"
+          echo "::group::ccache stats (high hit ratio == warm cache)"
+          ccache --show-stats
+          echo "::endgroup::"

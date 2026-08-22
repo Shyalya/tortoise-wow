@@ -14,6 +14,10 @@ namespace ai
 	public:
         NearestUnitsValue(PlayerbotAI* ai, std::string name = "nearest units", float range = sPlayerbotAIConfig.sightDistance, bool ignoreLos = false) :
             ObjectGuidListCalculatedValue(ai, name, 2), range(range), ignoreLos(ignoreLos) {}
+        // mod-playerbots also passes the check interval (milliseconds there,
+        // this base counts the same number), fifth positional argument.
+        NearestUnitsValue(PlayerbotAI* ai, std::string name, float range, bool ignoreLos, int checkInterval) :
+            ObjectGuidListCalculatedValue(ai, name, checkInterval), range(range), ignoreLos(ignoreLos) {}
 
 	public:
         virtual std::list<ObjectGuid> Calculate() override

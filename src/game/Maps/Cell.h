@@ -117,6 +117,10 @@ struct Cell
     template<class T> static void VisitGridObjects(const WorldObject *obj, T &visitor, float radius, bool dont_load = true);
     template<class T> static void VisitWorldObjects(const WorldObject *obj, T &visitor, float radius, bool dont_load = true);
     template<class T> static void VisitAllObjects(const WorldObject *obj, T &visitor, float radius, bool dont_load = true);
+    // AzerothCore spelling; visits both grid and world objects, which is what
+    // VisitAllObjects does.
+    template<class T> static void VisitObjects(const WorldObject *obj, T &visitor, float radius, bool dont_load = true)
+    { VisitAllObjects(obj, visitor, radius, dont_load); }
 
     template<class T> static void VisitGridObjects(float x, float y, Map *map, T &visitor, float radius, bool dont_load = true);
     template<class T> static void VisitWorldObjects(float x, float y, Map *map, T &visitor, float radius, bool dont_load = true);

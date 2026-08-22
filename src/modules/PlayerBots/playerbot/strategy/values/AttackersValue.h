@@ -23,6 +23,10 @@ namespace ai
         virtual std::list<ObjectGuid> Calculate() override;
 
         static bool IsValid(Unit* target, Player* player, Player* owner = nullptr, bool checkInCombat = true, bool validatePossibleTarget = true);
+        // mod-playerbots spelling; the range argument there is folded into the
+        // validity checks here, so it is accepted and dropped.
+        static bool IsPossibleTarget(Unit* target, Player* player, float /*range*/ = 0.0f, bool checkInCombat = true)
+        { return IsValid(target, player, nullptr, checkInCombat); }
         static bool IgnoreTarget(Unit* target, Player* playerToCheckAgainst);
         virtual std::string Format() override;
 

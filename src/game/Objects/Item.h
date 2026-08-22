@@ -252,6 +252,8 @@ class Item : public Object
         void RemoveFromWorld() override;
 
         ItemPrototype const* GetProto() const;
+        // AzerothCore spelling.
+        ItemPrototype const* GetTemplate() const { return GetProto(); }
         bool ChangeEntry(ItemPrototype const* pNewProto);
 
         ObjectGuid const& GetOwnerGuid() const { return GetGuidValue(ITEM_FIELD_OWNER); }

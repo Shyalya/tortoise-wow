@@ -1,0 +1,55 @@
+# Build artifacts
+build/
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.dylib
+
+# Python (tools/)
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Local config
+conf/*.conf
+!conf/*.conf.dist
+.claude/
+
+# Test Deck: local config + runtime state + node
+testdeck/testdeck.toml
+testdeck/.venv/
+testdeck/web/node_modules/
+testdeck/**/__pycache__/
+testdeck/.pytest_cache/
+# `pip install -e .` (what CI does, and anyone working on the backend) writes
+# its metadata straight into the checkout.
+testdeck/*.egg-info/
+
+# TypeScript incremental build cache — a local artifact, not a build output.
+testdeck/web/tsconfig.tsbuildinfo
+
+# AC Command Deck: local config (lives only on feat/ac-command-deck's tree).
+dashboard/*.toml
+
+# streamcast: local config + runtime state (same shape as testdeck above).
+streamcast/streamcast.toml
+streamcast/data/
+streamcast/.venv/
+streamcast/**/__pycache__/
+streamcast/.pytest_cache/
+streamcast/*.egg-info/
+
+# These site-local *.toml files exist nowhere but this checkout. Their ignore
+# rules must live on master, not just on the feature branch that introduced
+# them: off that branch they become plain untracked files, and the next
+# `git clean -fd` / `git stash -u` / `git worktree remove` eats them.
+# .git/info/exclude carries the same three paths as a branch-proof backstop.

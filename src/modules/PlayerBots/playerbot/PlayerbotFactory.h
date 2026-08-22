@@ -1,5 +1,7 @@
 #pragma once
 
+#include "playerbot/BotSlots.h"
+
 class Player;
 class PlayerbotMgr;
 class ChatHandler;

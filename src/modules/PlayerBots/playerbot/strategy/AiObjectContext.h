@@ -7,6 +7,7 @@
 #include "Strategy.h"
 #include <set>
 
+#include "playerbot/BotSlots.h"
 namespace ai
 {
     class UntypedValue;
@@ -102,6 +103,15 @@ namespace ai
         {
             valueContexts.Add(sharedValues);
         }
+        // Siblings of the value form above. OWNERSHIP FOLLOWS THE FLAG: the
+        // receiving NamedObjectContextList deletes every added context whose
+        // IsShared() is false, so pass a fresh per-bot instance (usual case),
+        // or construct the context with shared=true if one instance really is
+        // handed to many bots. Grown for module-provided strategies (dungeon
+        // clear); the alternative was reaching into these protected lists.
+        virtual void AddShared(NamedObjectContext<Strategy>* shared) { strategyContexts.Add(shared); }
+        virtual void AddShared(NamedObjectContext<Action>* shared) { actionContexts.Add(shared); }
+        virtual void AddShared(NamedObjectContext<Trigger>* shared) { triggerContexts.Add(shared); }
         std::list<std::string> Save();
         void Load(std::list<std::string> data);
 

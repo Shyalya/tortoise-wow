@@ -54,6 +54,13 @@ enum PathType
     PATHFIND_FLYPATH        = 0x0040,
     PATHFIND_UNDERWATER     = 0x0080,
     PATHFIND_CASTER         = 0x0100,
+    // AzerothCore flags a path whose START point was off the navmesh. This
+    // finder does not distinguish that case - an unreachable start comes back
+    // as PATHFIND_NOPATH. Zero so a ported `if (type & PATHFIND_FARFROMPOLY_*)`
+    // compiles and is never true; the NOPATH test beside it still catches it.
+    PATHFIND_FARFROMPOLY_START = 0x0000,
+    PATHFIND_FARFROMPOLY_END   = 0x0000,
+    PATHFIND_FARFROMPOLY       = 0x0000,
 };
 
 class PathInfo

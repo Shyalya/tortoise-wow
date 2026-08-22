@@ -1,0 +1,9 @@
+# Normalize line endings to LF (AzerothCore convention).
+* text=auto eol=lf
+
+*.cpp text eol=lf
+*.h   text eol=lf
+*.md  text eol=lf
+*.dist text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf

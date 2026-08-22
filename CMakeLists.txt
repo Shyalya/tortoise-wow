@@ -91,6 +91,7 @@ if(USE_LIBCURL)
   find_package(CURL REQUIRED)
   #add_definitions(-D_HAS_AUTO_PTR_ETC) # for VS2017 ACE support, won't do any harm to other compilers
   #set(CMAKE_CXX_STANDARD 17)
+
   #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /std:c++17")
 endif()
 
@@ -104,11 +105,25 @@ endif()
 
 # Giperion: Enable C++17
 set(CMAKE_CXX_STANDARD 17)
+
+# Detour: virtual query filters. Off, dtQueryFilter::getCost is non-virtual and
+# a derived filter (mod-dungeon-clear routes around no-go zones with one) would
+# compile against the base and silently never be called - paths would ignore
+# every zone the filter exists to avoid. Global on purpose: every translation
+# unit that includes DetourNavMeshQuery.h must agree on the class layout, or
+# this is an ODR break. Costs a virtual call per polygon test in all
+# pathfinding; AzerothCore ships with exactly this on.
+add_definitions(-DDT_VIRTUAL_QUERYFILTER=1)
+
 if(MSVC)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /std:c++17")
 endif(MSVC)
 if(NOT MSVC)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+# The Detour virtual-filter switch rides the same flags line the C++ standard
+# does: add_definitions provably does not survive to the subdirectory targets
+# in this tree (checked in flags.make), this line provably does.
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDT_VIRTUAL_QUERYFILTER=1")
 endif()
 # Giperion: Set Edit and Continue by default for all windows debug builds
 if(MSVC AND NOT USE_ADDRESS_SANITIZER)

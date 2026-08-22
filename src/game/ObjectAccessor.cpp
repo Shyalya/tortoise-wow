@@ -337,3 +337,16 @@ template class HashMapHolder<Player>;
 template class HashMapHolder<Corpse>;
 template class HashMapHolder<Transport>;
 template class HashMapHolder<MasterPlayer>;
+
+
+// See the declarations: AzerothCore resolves these through the accessor; both
+// objects live on the seeker's own map here.
+GameObject* ObjectAccessor::GetGameObject(WorldObject const& obj, ObjectGuid guid)
+{
+    return obj.IsInWorld() ? obj.GetMap()->GetGameObject(guid) : nullptr;
+}
+
+DynamicObject* ObjectAccessor::GetDynamicObject(WorldObject const& obj, ObjectGuid guid)
+{
+    return obj.IsInWorld() ? obj.GetMap()->GetDynamicObject(guid) : nullptr;
+}

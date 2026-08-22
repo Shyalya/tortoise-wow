@@ -458,6 +458,36 @@ class Unit : public WorldObject
         uint32 GetPower(   Powers power) const { return GetUInt32Value(UNIT_FIELD_POWER1   +power); }
         uint32 GetMaxPower(Powers power) const { return GetUInt32Value(UNIT_FIELD_MAXPOWER1+power); }
         float GetPowerPercent(Powers power) const { return GetMaxPower(power) ? ((GetPower(power)*100.0f) / GetMaxPower(power)) : 100.0f; }
+        // AzerothCore spellings.
+        float GetHealthPct() const { return GetHealthPercent(); }
+        Powers getPowerType() const { return GetPowerType(); }
+        bool HasDynamicFlag(uint32 flags) const { return HasFlag(UNIT_DYNAMIC_FLAGS, flags); }
+        bool HasUnitFlag(uint32 flags) const { return HasFlag(UNIT_FIELD_FLAGS, flags); }
+        // AzerothCore plural spelling of RemoveSpellsCausingAura.
+        void RemoveAurasByType(AuraType type) { RemoveSpellsCausingAura(type); }
+        // AzerothCore LOS form with backend selector and ignore flags; this
+        // core has one backend and ignores nothing, so both drop. The
+        // using-declaration is load-bearing: an overload declared here hides
+        // every inherited IsWithinLOSInMap, and the grid notifiers call the
+        // one-argument form on Unit and Creature.
+        using WorldObject::IsWithinLOSInMap;
+        template<class TIgnore, class TChecks>
+        bool IsWithinLOSInMap(WorldObject const* target, TIgnore, TChecks) const { return WorldObject::IsWithinLOSInMap(target); }
+        // AzerothCore spells direct scripted damage as a static taking the
+        // attacker first. Same deal-damage path underneath.
+        static uint32 DealDamage(Unit* attacker, Unit* victim, uint32 damage)
+        {
+            if (!attacker || !victim)
+                return 0;
+            return attacker->DealDamage(victim, damage, nullptr, DIRECT_DAMAGE, SPELL_SCHOOL_MASK_NORMAL, nullptr, false);
+        }
+        float GetPowerPct(Powers power) const { return GetPowerPercent(power); }
+        uint32 GetFaction() const { return GetFactionTemplateId(); }
+        bool IsNonMeleeSpellCast(bool withDelayed, bool skipChanneled = false, bool skipAutorepeat = false) const
+        { return IsNonMeleeSpellCasted(withDelayed, skipChanneled, skipAutorepeat); }
+        bool HasNpcFlag(uint32 flags) const { return HasFlag(UNIT_NPC_FLAGS, flags); }
+        // AzerothCore carries a forced flag; this setter always applies.
+        void SetSpeed(UnitMoveType mtype, float rate, bool /*forced*/ = false) { SetSpeedRate(mtype, rate); }
         // cmangos's 0-arg form uses unit's primary power type.
         float GetPowerPercent() const { return GetPowerPercent(GetPowerType()); }
         void SetPower(   Powers power, uint32 val);
@@ -559,6 +589,18 @@ class Unit : public WorldObject
             return creatureType ? (1 << (creatureType - 1)) : 0;
         }
         bool IsAlive() const { return (m_deathState == ALIVE); }
+        // AzerothCore spelling.
+        bool isDead() const;
+        // AzerothCore starts a fight in one call. Here that is entering combat
+        // with the target and putting it on the threat list at zero, which is
+        // what the engage path does.
+        void EngageWithTarget(Unit* target)
+        {
+            if (!target)
+                return;
+            SetInCombatWith(target);
+            AddThreat(target, 0.0f);
+        }
         bool IsDead() const { return ((m_deathState == DEAD) || (m_deathState == CORPSE)); }
 
         DeathState GetDeathState() const { return m_deathState; }
@@ -630,6 +672,14 @@ class Unit : public WorldObject
         bool IsImmobilizedState() const { return IsRooted() || HasUnitState(UNIT_STAT_STUNNED) || HasAuraType(SPELL_AURA_MOD_ROOT); }
         // InterruptMoving: cmangos action; Penqle uses StopMoving.
         void InterruptMoving(bool /*forceSendStop*/ = false) { StopMoving(false); }
+        // AzerothCore spelling; there is no separate on-current-position form here.
+        void StopMovingOnCurrentPos() { StopMoving(false); }
+        // AzerothCore takes the arc first. Penqle takes the target first.
+        // The using-declaration is load-bearing: declaring an overload here
+        // hides every HasInArc the base has, and the existing (target, arc)
+        // callers a few lines up would resolve to this one and fail to convert.
+        using WorldObject::HasInArc;
+        bool HasInArc(float arc, WorldObject const* target) const { return WorldObject::HasInArc(target, arc); }
         // CanReachWithMeleeAttack: cmangos has it on Unit; Penqle uses CanReachWithMeleeAutoAttack.
         bool CanReachWithMeleeAttack(Unit const* victim) const { return CanReachWithMeleeAutoAttack(victim); }
         // GetControllingPlayer: cmangos returns charmer/owner Player. Stub: charmer if Player, else nullptr.
@@ -1330,6 +1380,8 @@ class Unit : public WorldObject
         ThreatManager& GetThreatManager() { return m_ThreatManager; }
         ThreatManager const& GetThreatManager() const { return m_ThreatManager; }
         // camelCase alias for the bot module.
+        // AzerothCore spelling.
+        ThreatManager& GetThreatMgr() { return getThreatManager(); }
         ThreatManager& getThreatManager() { return m_ThreatManager; }
         ThreatManager const& getThreatManager() const { return m_ThreatManager; }
 
@@ -1548,6 +1600,15 @@ class Unit : public WorldObject
         void SendMovementPacket(uint16 opcode, bool includingSelf = true);
         
         void SetRooted(bool apply);
+        // AzerothCore routes control states through one call. Root maps onto
+        // SetRooted; the other states this signature can carry (stun, confuse,
+        // flee) are aura-driven on this core and no caller in tree asks for
+        // them - asserted rather than silently ignored.
+        void SetControlled(bool apply, uint32 state)
+        {
+            MANGOS_ASSERT(state == UNIT_STAT_ROOT && "SetControlled: only the root state is mapped");
+            SetRooted(apply);
+        }
         void SetRootedReal(bool apply);
 
         void SetWaterWalking(bool apply);

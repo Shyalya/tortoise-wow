@@ -1,0 +1,17 @@
+# Steamvault (map 545) — origin-snap probe for the "stranded follower" deadlock.
+#
+# Live 2026-07-20: multiple bots (Xomja, Zuntun, Shannon, Uyaicine, Tenice, Laya)
+# froze with EVERY DcMoveTo refused by stock SearchForBestPath. The decisive sample
+# is Xomja, refused 45x on a destination only 1.7yd away — which rules out route
+# length, connectivity and search budget, and points at the ORIGIN failing to snap.
+# Xomja sat within 1.7yd of the point below (z -21.7 = walkway level; it looked
+# perfectly normal in-game, standing on the floor).
+#
+# These probe whether that origin resolves against real map data. A reachable=false
+# here means the navmesh genuinely has no usable poly there and the fix belongs in
+# origin recovery; reachable=true means the geometry is FINE and the bug is purely
+# stock's SearchForBestPath giving up (min_length ratchet + 3-sample z search).
+{"name":"SV Xomja strand origin -> Thespia","map":545,"sx":-0.5,"sy":-205.8,"sz":-21.7,"tx":88.4,"ty":-316.1,"tz":-7.8,"expectReachable":true}
+{"name":"SV Xomja strand origin -> its own refused 1.7yd dest","map":545,"sx":-2.0,"sy":-205.0,"sz":-21.7,"tx":-0.5,"ty":-205.8,"tz":-21.7,"expectReachable":true}
+{"name":"SV Zuntun strand origin -> its refused 49.6yd dest","map":545,"sx":-64.3,"sy":-157.3,"sz":-19.9,"tx":-41.5,"ty":-218.3,"tz":-18.5,"expectReachable":true}
+{"name":"SV early-run strand cluster (-64,-159) -> Thespia","map":545,"sx":-64.1,"sy":-158.9,"sz":-20.7,"tx":88.4,"ty":-316.1,"tz":-7.8,"expectReachable":true}

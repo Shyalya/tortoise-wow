@@ -2,6 +2,7 @@
 
 #include "playerbot/strategy/Action.h"
 
+#include "playerbot/BotSlots.h"
 namespace ai
 {
     class AcceptInvitationAction : public Action 

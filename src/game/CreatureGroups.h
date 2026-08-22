@@ -61,6 +61,10 @@ class CreatureGroup
         void DoForAllMembers(Map* pMap, std::function<void(Creature*)>&& pFunc);
 
         ObjectGuid const& GetLeaderGuid() const { return m_leaderGuid; }
+        // AzerothCore numbers its formations. This core keys them by leader
+        // guid; the counter is unique per group and stable for the group's
+        // lifetime, which is everything the callers compare it for.
+        uint32 GetId() const { return m_leaderGuid.GetCounter(); }
         ObjectGuid const& GetOriginalLeaderGuid() const { return m_originalLeaderGuid; }
         std::map<ObjectGuid, CreatureGroupMember*> const& GetMembers() const { return m_members; }
         bool ContainsGuid(ObjectGuid guid) const { return m_members.find(guid) != m_members.end(); }

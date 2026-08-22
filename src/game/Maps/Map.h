@@ -59,6 +59,10 @@ class Group;
 
 class CreatureGroup;
 
+#include <memory>
+
+class dtNavMesh;
+class dtNavMeshQuery;
 class MapPersistentState;
 class WorldPersistentState;
 class DungeonPersistentState;
@@ -434,6 +438,94 @@ class Map : public GridRefManager<NGridType>
         static bool CheckGridIntegrity(Creature* c, bool moved);
 
         uint32 GetInstanceId() const { return i_InstanceId; }
+        // Dungeon difficulty arrived with The Burning Crusade. Every instance
+        // on this core is the only version of itself, so ported difficulty
+        // branches all take the normal arm.
+        // Returns the Difficulty type rather than a raw number so ported code
+        // can pass it straight on. There is only one value on this core.
+        Difficulty GetDifficulty() const { return DUNGEON_DIFFICULTY_NORMAL; }
+        // AzerothCore asks the map; here the terrain answers.
+        bool IsInWater(float x, float y, float z) const { return GetTerrain() && GetTerrain()->IsInWater(x, y, z); }
+        // AzerothCore threads a phase mask and a collision selector through the
+        // same question; one phase here, one backend, both drop. A template so
+        // this header stays ignorant of the module-declared selector type.
+        template<class TCollision>
+        bool IsInWater(uint32 /*phaseMask*/, float x, float y, float z, TCollision) const { return IsInWater(x, y, z); }
+        // Instanced dungeon maps are DungeonMap here; the AzerothCore name for
+        // the downcast. Nullptr outside instances, same as there.
+        class DungeonMap* ToInstanceMap() { return IsDungeon() ? reinterpret_cast<DungeonMap*>(this) : nullptr; }
+        // AzerothCore name; instance data IS the instance script here.
+        // Non-const out of a const map, deliberately: the script belongs to
+        // the running instance, not to this accessor, and AzerothCore hands it
+        // out mutable the same way.
+        InstanceData* GetInstanceScript() const { return const_cast<Map*>(this)->GetInstanceData(); }
+
+        // AzerothCore hands out the navmesh as a shared_ptr so a worker thread
+        // can pin it alive for the length of a job. This core owns its meshes
+        // through raw pointers in MMapData and unloads them on its own schedule,
+        // so there is no ownership to share.
+        //
+        // Returning an empty pointer is deliberate, and it is NOT a stub that
+        // silently does nothing: the one caller checks for empty and falls back
+        // to building the path synchronously, a path it documents as "sync (no
+        // navmesh)". So the behaviour is correct, at the cost of doing that work
+        // on the world thread instead of a worker.
+        //
+        // What must NOT be done here is wrap MMapManager's raw mesh in a
+        // shared_ptr with a no-op deleter. That satisfies the type and breaks the
+        // promise the type exists for - the worker would keep using a mesh this
+        // core is free to unload underneath it. Handing out a real one means
+        // giving MMapData shared ownership first.
+        struct MapCollisionData
+        {
+            uint32 mapId = 0;
+
+            // Real pass-through to the movemap manager: it owns one mesh per map
+            // and a per-thread query, which is exactly what these hand out on
+            // AzerothCore too. Bodies live in Map.cpp so this header stays free
+            // of the Detour and MoveMap includes.
+            struct MMapDataAccess
+            {
+                uint32 mapId = 0;
+                dtNavMesh const* GetNavMesh() const;
+                dtNavMeshQuery const* GetNavMeshQuery() const;
+            };
+            MMapDataAccess GetMMapData() const { return MMapDataAccess{ mapId }; }
+
+            // Deliberately empty - see the ownership note where the worker takes
+            // it: this core owns meshes through raw pointers and cannot promise a
+            // lifetime. The caller has a documented synchronous fallback.
+            std::shared_ptr<dtNavMesh> GetMMapNavMeshSharedPtr() const { return {}; }
+        };
+        MapCollisionData GetMapCollisionData() const { return MapCollisionData{ GetId() }; }
+
+        // AzerothCore keeps a live spawn-id index on the map. This core does
+        // not, so the call builds a snapshot from the object store - same
+        // contents, creatures in loaded grids, keyed by guid counter (the DB
+        // guid for a static spawn). Returned by value: callers range-for over
+        // it, and a snapshot cannot dangle when a grid unloads mid-iteration.
+        // Costs a copy per call; every caller is a per-decision path, not a
+        // per-tick one. Unlike upstream it also lists summons - their counter
+        // is from another guid space, and the callers filter by entry anyway.
+        // Same snapshot as the creature form below, for gameobjects.
+        std::unordered_map<uint32, GameObject*> GetGameObjectBySpawnIdStore()
+        {
+            std::unordered_map<uint32, GameObject*> store;
+            std::shared_lock<std::shared_mutex> lock(m_objectsStore_lock);
+            auto range = m_objectsStore.range<GameObject>();
+            for (auto it = range.first; it != range.second; ++it)
+                store.emplace(it->first.GetCounter(), it->second);
+            return store;
+        }
+        std::unordered_map<uint32, Creature*> GetCreatureBySpawnIdStore()
+        {
+            std::unordered_map<uint32, Creature*> store;
+            std::shared_lock<std::shared_mutex> lock(m_objectsStore_lock);
+            auto range = m_objectsStore.range<Creature>();
+            for (auto it = range.first; it != range.second; ++it)
+                store.emplace(it->first.GetCounter(), it->second);
+            return store;
+        }
         virtual bool CanEnter(Player* /*player*/) { return true; }
         const char* GetMapName() const;
         time_t GetTime() const;
@@ -591,6 +683,16 @@ class Map : public GridRefManager<NGridType>
         // GameObjectCollision
         float GetHeight(float x, float y, float z, bool vmap = true, float maxSearchDist = DEFAULT_HEIGHT_SEARCH) const;
         bool isInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2, bool checkDynLos = true) const;
+        // AzerothCore threads a phase mask, a backend selector and model-ignore
+        // flags through the same call. This core has one phase, one backend and
+        // ignores nothing, so all three are accepted and dropped.
+        // The ignore-flags argument is a template parameter because its type is
+        // declared by the module that needs this overload, not by the core - and
+        // the core has nothing to do with the value either way.
+        template<class TIgnoreFlags>
+        bool isInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2,
+                             uint32 /*phasemask*/, uint32 /*checks*/, TIgnoreFlags /*ignoreFlags*/) const
+        { return isInLineOfSight(x1, y1, z1, x2, y2, z2, true); }
         // First collision with object
         bool GetLosHitPosition(float srcX, float srcY, float srcZ, float& destX, float& destY, float& destZ, float modifyDist) const;
         // cmangos calls this GetHitPosition.

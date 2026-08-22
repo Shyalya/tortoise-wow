@@ -147,6 +147,7 @@ enum PlayerHook
     PLAYERHOOK_GET_ALLOWED_ROLES,
     PLAYERHOOK_SET_FORCED_ROLE,
     PLAYERHOOK_ON_CHAT_COMMAND,
+    PLAYERHOOK_CAN_USE_GROUP_CHAT,
     PLAYERHOOK_END
 };
 
@@ -229,6 +230,15 @@ class PlayerScript : public ScriptObject
         // the message - it is a notification, not a filter.
         virtual void OnChatCommand(Player* /*player*/, uint32 /*type*/, std::string const& /*msg*/,
                                    uint32 /*lang*/, std::string const& /*to*/) {}
+
+        // May this line go out to the group? A module that consumes its own
+        // control traffic (an addon command channel) answers false and the
+        // core drops the line after the module acted on it - without this the
+        // whole party sees every button press, or the old workaround rewrites
+        // the type to a value the opcode switch cannot handle and the log
+        // fills with unknown-message-type lines.
+        virtual bool CanUseGroupChat(Player* /*player*/, uint32 /*type*/, uint32 /*lang*/,
+                                     std::string& /*msg*/) { return true; }
 };
 
 class CreatureScript : public ScriptObject, public UpdatableScript<Creature>

@@ -410,6 +410,14 @@ void WorldSession::HandleMessagechatOpcode(WorldPacket & recv_data)
         {
             script->OnChatCommand(_player, type, msg, lang, to);
         });
+
+        // A module may claim the line for itself - see CanUseGroupChat.
+        bool const suppressed = ScriptRegistry<PlayerScript>::ForEachEnabledHookWithReturn(PLAYERHOOK_CAN_USE_GROUP_CHAT, [&](PlayerScript* script)
+        {
+            return !script->CanUseGroupChat(_player, type, lang, msg);
+        });
+        if (suppressed)
+            return;
     }
 
     // Message handling

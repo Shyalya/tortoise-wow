@@ -125,6 +125,11 @@ class ObjectGuid
 {
     public:                                                 // constructors
         ObjectGuid() : m_guid(0) {}
+
+        // AzerothCore spells the null guid ObjectGuid::Empty. Same thing as a
+        // default-constructed one; the name exists so module code written
+        // against that core reads unchanged.
+        static ObjectGuid const Empty;
         ObjectGuid(uint64 const& guid) : m_guid(guid) {}    // temporary allowed implicit cast, really bad in connection with operator uint64()
         ObjectGuid(HighGuid hi, uint32 entry, uint32 counter) : m_guid(counter ? uint64(counter) | (uint64(entry) << 24) | (uint64(hi) << 48) : 0) {}
         ObjectGuid(HighGuid hi, uint32 counter) : m_guid(counter ? uint64(counter) | (uint64(hi) << 48) : 0) {}
@@ -216,6 +221,8 @@ class ObjectGuid
         static char const* GetTypeName(HighGuid high);
         char const* GetTypeName() const { return !IsEmpty() ? GetTypeName(GetHigh()) : "None"; }
         std::string GetString() const;
+        // AzerothCore spelling.
+        std::string ToString() const { return GetString(); }
 
     private:                                                // internal functions
         static bool HasEntry(HighGuid high)

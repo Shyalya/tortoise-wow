@@ -113,6 +113,17 @@ public:
 	bool IsInPvpProhibitedZone(uint32 id);
 
     bool enabled;
+    // mod-playerbots caps how many bots one account may .add; the dungeon-clear
+    // test runner reads it to size its parties. Zero keeps that gate open, the
+    // same default mod-playerbots ships.
+    uint32 maxAddedBots = 0;
+    // mod-playerbots rest threshold: mana percent above which a bot counts as
+    // rested. Their shipped default.
+    uint32 highMana = 65;
+    // mod-playerbots gear ceiling for auto-equip; 0 is their shipped default
+    // and means unlimited, which is also the only behaviour this tree has.
+    uint32 autoGearScoreLimit = 0;
+    uint32 autoGearQualityLimit = 0;  // like autoGearScoreLimit: 0 = no cap (mod-dungeon-clear reads it for its test sidecar)
     bool allowGuildBots;
     bool allowMultiAccountAltBots;
     uint32 globalCoolDown, reactDelay, maxWaitForMove, expireActionTime, dispelAuraDuration, passiveDelay, repeatDelay,

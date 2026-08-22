@@ -1,0 +1,138 @@
+# Test Deck (testdeck/) — the Python backend suite and the frontend build.
+#
+# The other three workflows in here compile C++ and know nothing about this
+# directory, so nothing ran testdeck's 197 tests on a push. It is a separate
+# job rather than a step in tests.yml because it shares none of that job's
+# cost: no core checkout, no ccache, no build — the whole thing is under a
+# minute on a stock runner.
+#
+# `bash testdeck/t/run_tests.sh` is the local equivalent and stays the thing to
+# run before committing. This adds the one check a working tree cannot make:
+# that the committed dist/ is what web/src actually builds to (see below).
+
+name: testdeck
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'testdeck/**'
+      - '.github/workflows/testdeck.yml'
+  pull_request:
+    paths:
+      - 'testdeck/**'
+      - '.github/workflows/testdeck.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: testdeck-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: testdeck
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    name: backend (py${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # The declared floor and a current interpreter. 3.9 is the one that
+        # earns its slot: it is what pyproject and launch.py promise to run
+        # on, and the syntax that breaks it (match, X | Y annotations) is
+        # invisible to anyone developing on a newer Python.
+        python: [ "3.9", "3.13" ]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # Installed from pyproject rather than by naming packages here, so CI
+      # exercises the version bounds the project actually declares — an
+      # unbounded range slipping in is then a CI change, not a silent one.
+      - name: Install
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      # launch.py runs BEFORE anything is installed, on the host's bare
+      # interpreter, so a syntax error there is invisible to pytest and fatal
+      # to a first run. Same gate run_tests.sh opens with.
+      - name: Launcher parses on a bare interpreter
+        run: python -m py_compile launch.py
+
+      - name: Report the TOML implementation
+        run: python -c "from testdeck import config; print('toml:', config.TOML_IMPL)"
+
+      - name: pytest
+        run: python -m pytest t -q
+
+      # The bundled reader in _toml.py is the last resort for a host with
+      # neither tomllib (3.11+) nor tomli, and nothing else reaches it: pytest
+      # itself depends on tomli below 3.11, so the suite always runs on a real
+      # parser. Point it at the reference config — the file every operator is
+      # told to copy — so at least that much is known to parse.
+      - name: Bundled TOML reader parses the reference config
+        run: |
+          python - <<'PY'
+          from testdeck import _toml
+          data = _toml.loads(open("testdeck.example.toml", encoding="utf-8").read())
+          assert data["server"]["port"] == 8790, data.get("server")
+          assert data["bridge"]["type"] == "soap", data.get("bridge")
+          assert data["auth"]["min_gmlevel"] == 1, data.get("auth")
+          print("bundled reader parsed testdeck.example.toml")
+          PY
+
+  frontend:
+    runs-on: ubuntu-latest
+    name: frontend (dist freshness)
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          # Pinned, not "latest": this job asserts a byte-for-byte match with
+          # a committed build artifact, so the toolchain that produces it has
+          # to be the same one that produced the commit.
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: testdeck/web/package-lock.json
+
+      - name: Install
+        working-directory: testdeck/web
+        run: npm ci
+
+      # `npm run build` is `tsc -b && vite build`, so this is the type-check
+      # gate as well as the bundle.
+      - name: Build
+        working-directory: testdeck/web
+        run: npm run build
+
+      # The check no working tree can make for itself. dist/ is committed so
+      # that end users need only Python — which means an edit to web/src that
+      # ships without a rebuild leaves every tester running the OLD UI, with
+      # nothing anywhere to say so. Vite empties outDir and content-hashes
+      # filenames, so a stale commit shows up as deleted+untracked files, not
+      # just a modified one: --porcelain catches both, `git diff` alone would
+      # miss the new asset.
+      - name: dist/ matches web/src
+        run: |
+          if [ -n "$(git status --porcelain -- dist)" ]; then
+              echo "::error file=testdeck/dist::dist/ is not what web/src builds to."
+              echo
+              echo "Rebuild and commit it:"
+              echo "    cd testdeck/web && npm install && npm run build"
+              echo "    git add ../dist"
+              echo
+              git status --porcelain -- dist
+              git diff --stat -- dist
+              exit 1
+          fi
+          echo "dist/ is current"
+
+      - name: Web smoke
+        run: node t/web_smoke.mjs

@@ -572,6 +572,16 @@ class Creature : public Unit
 
         // CreatureGroups
         CreatureGroup* GetCreatureGroup() const { return m_creatureGroup; }
+        // AzerothCore spelling. Formations and creature groups are one concept
+        // on this core.
+        CreatureGroup* GetFormation() const { return m_creatureGroup; }
+        // AzerothCore spellings.
+        CreatureInfo const* GetCreatureTemplate() const { return GetCreatureInfo(); }
+        bool IsImmuneToPC() const { return HasFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_IMMUNE_TO_PLAYER); }
+        void SetFaction(uint32 faction) { SetFactionTemplateId(faction); }
+        bool isElite() const { return IsElite(); }
+        bool IsEngaged() const { return IsInCombat(); }
+        bool IsSummon() const { return IsTemporarySummon(); }
         void SetCreatureGroup(CreatureGroup* group) { m_creatureGroup = group; }
         void JoinCreatureGroup(Creature* leader, float dist, float angle, uint32 options);
         void LeaveCreatureGroup();
@@ -602,7 +612,7 @@ class Creature : public Unit
         void SaveHomePosition() { SetHomePosition(GetPositionX(), GetPositionY(), GetPositionZ(), GetOrientation()); }
         void SetHomePosition(float x, float y, float z, float o);
         void GetHomePosition(float &x, float &y, float &z, float &o);
-        Position const& GetHomePosition() { return m_homePosition; }
+        Position const& GetHomePosition() const { return m_homePosition; }
         float GetHomePositionO() const { return m_homePosition.o; }
         void ResetHomePosition();
 
@@ -793,6 +803,8 @@ class Creature : public Unit
         uint32 m_spells[CREATURE_MAX_SPELLS];
 
         float GetAttackDistance(Unit const* pl) const;
+        // AzerothCore spelling.
+        float GetAggroRange(Unit const* target) const { return GetAttackDistance(target); }
         float GetDetectionRange() const { return m_detectionDistance; }
 
         void SendAIReaction(AiReaction reactionType);

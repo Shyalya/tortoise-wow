@@ -1,0 +1,7 @@
+# Inert example — comments only, so it never runs with placeholder coords.
+# Copy a line like the one below into a real scenario file and fill the coords
+# from a live slice (see README.md). Delete the leading '#' to activate.
+#
+# {"name":"cathedral entry to nave","map":189,"sx":1690.1,"sy":1053.4,"sz":18.6,"tx":1660.0,"ty":1110.0,"tz":18.6,"expectReachable":true,"expectComplete":true,"maxStepZ":3.0}
+#
+# {"name":"below-ledge mob must be unreachable","map":189,"sx":1690.1,"sy":1053.4,"sz":18.6,"tx":1655.0,"ty":1115.0,"tz":8.0,"expectReachable":false}

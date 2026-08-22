@@ -1,0 +1,239 @@
+# MSVC / Visual Studio compile smoke.
+#
+# The Linux jobs (tests.yml on a hosted runner, upstream-smoke.yml on the
+# self-hosted box) both build with clang against glibc, so an entire class of
+# breakage is invisible to them: code that only fails under MSVC. The forcing
+# case was M_PI — glibc's <math.h> defines it unconditionally, MSVC's only
+# defines it when _USE_MATH_DEFINES was set BEFORE math.h was first included, so
+# a module TU that reached <cmath> first failed with
+#   error C2065: 'M_PI': undeclared identifier
+# plus its cascade inside the core's Position.h
+#   error C2661: 'fmod': no overloaded function takes 1 arguments
+# Neither Linux job could ever have caught it. This one does.
+#
+# WHAT IT COMPILES — mod-dungeon-clear, and nothing else
+# `modules` is one static library holding EVERY enabled module's sources; there
+# is no per-module target, so `--target modules` would drag in mod-playerbots'
+# ~635 TUs beside our ~121. That is ~84% of the work spent on code this repo
+# does not own, and it dominated the wall clock (an hour-plus per run).
+#
+# So this uses the Ninja generator, where every .obj is an addressable target,
+# and builds ONLY mod-dungeon-clear's object files. mod-playerbots stays
+# CONFIGURED — its headers are on the include path, which our sources need,
+# since this module subclasses its engine classes — but never compiles. Same
+# cl.exe, same flags, so error coverage for our code is identical; it just skips
+# work we are not asking about. ccache (which the Visual Studio generator cannot
+# use at all — it ignores compiler launchers) makes warm runs cheaper again.
+#
+# Nothing is linked. Link-time breakage (a missing definition, a duplicate
+# symbol) is NOT covered here; upstream-smoke.yml links a real worldserver on
+# Linux and covers that. Whether mod-playerbots or the core still build under
+# MSVC is deliberately NOT this job's problem — the core fork's own
+# .github/workflows/windows_build.yml already does that.
+#
+name: windows-smoke
+
+on:
+  # An MSVC compile still costs minutes, so on PRs it only runs when something
+  # that can actually break the build changed. Docs/dashboard edits skip it.
+  pull_request:
+    paths:
+      - 'src/**'
+      - 't/**'
+      - '**.cmake'
+      - 'CMakeLists.txt'
+      - '.github/workflows/windows-smoke.yml'
+  push:
+    branches: [ master ]
+    paths:
+      - 'src/**'
+      - 't/**'
+      - '**.cmake'
+      - 'CMakeLists.txt'
+      - '.github/workflows/windows-smoke.yml'
+  # Nightly backstop, offset from upstream-smoke (08:00 UTC) so the two never
+  # contend. Our sources are pinned but the core and playerbots we compile
+  # AGAINST are not, so this catches an upstream header change that breaks our
+  # code on MSVC without anyone touching this repo.
+  schedule:
+    - cron: '0 10 * * *'   # 10:00 UTC (~5am CDT)
+  workflow_dispatch:       # run-now button in the Actions tab
+
+concurrency:
+  group: dc-windows-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Matches tests.yml: the STABLE core + module, not test-staging. Upstream drift
+  # is upstream-smoke.yml's job; this one isolates "is OUR code MSVC-clean".
+  CORE_REPO: mod-playerbots/azerothcore-wotlk
+  CORE_REF: Playerbot
+  PLAYERBOTS_REPO: mod-playerbots/mod-playerbots
+  PLAYERBOTS_REF: master
+
+jobs:
+  windows-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+    runs-on: ${{ matrix.os }}
+    name: msvc compile (${{ matrix.os }})
+    # A fully cold run (both caches empty) measured ~26 min; a warm one is a
+    # fraction of that. The cap is a runaway-billing backstop, not a target.
+    timeout-minutes: 60
+    env:
+      BOOST_ROOT: C:\local\boost_1_87_0
+
+    steps:
+      # 1. Assemble the tree: core at the workspace root, modules underneath —
+      #    the same layout tests.yml and upstream-smoke.yml build.
+      - name: Checkout core (${{ env.CORE_REPO }}@${{ env.CORE_REF }})
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.CORE_REPO }}
+          ref: ${{ env.CORE_REF }}
+          path: .
+
+      - name: Checkout mod-playerbots
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ env.PLAYERBOTS_REPO }}
+          ref: ${{ env.PLAYERBOTS_REF }}
+          path: modules/mod-playerbots
+
+      - name: Checkout this module (PR ref)
+        uses: actions/checkout@v5
+        with:
+          path: modules/mod-dungeon-clear
+
+      # 2. Windows build dependencies. Boost + the MySQL client are ~350 MB of
+      #    download and an installer run, so cache them; the Test-Path guards in
+      #    the next step short-circuit all the work when the cache is warm.
+      #
+      #    This recipe is lifted from the core fork's own .github/workflows/
+      #    windows_build.yml so the two stay on identical dependency versions —
+      #    if that workflow changes its Boost/MySQL pin, mirror it here.
+      - name: Cache Boost & MySQL
+        uses: actions/cache@v5
+        with:
+          path: |
+            C:\local\boost_1_87_0
+            C:\tools\mysql\current
+          key: dc-winsmoke-deps:boost-1.87.0:mysql-8.4.9
+
+      - name: Configure OS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # The hosted image already ships CMake, Visual Studio (native desktop
+          # workload + MSVC) and OpenSSL, so only Boost and the MySQL client
+          # need providing. Fetched directly rather than via chocolatey, whose
+          # pinned packages keep breaking on CI.
+
+          # --- Boost 1.87.0 (msvc-14.3, 64-bit) prebuilt -> BOOST_ROOT ---
+          # Direct-download host; the plain /download URL serves an interstitial.
+          if (-not (Test-Path 'C:\local\boost_1_87_0\boost'))
+          {
+              $boostExe = Join-Path $env:RUNNER_TEMP 'boost.exe'
+              Invoke-WebRequest -Uri 'https://master.dl.sourceforge.net/project/boost/boost-binaries/1.87.0/boost_1_87_0-msvc-14.3-64.exe?viasf=1' -OutFile $boostExe
+              $boostMB = (Get-Item $boostExe).Length / 1MB
+              Write-Host ("Downloaded Boost installer: {0:N1} MB" -f $boostMB)
+              if ($boostMB -lt 50) { throw "Boost installer download looks wrong ($([int]$boostMB) MB) - likely an HTML page." }
+              $boostProc = Start-Process -FilePath $boostExe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/DIR=C:\local\boost_1_87_0' -Wait -PassThru
+              if ($boostProc.ExitCode -ne 0) { throw "Boost installer failed with exit code $($boostProc.ExitCode)." }
+              # Fail fast if the installer "succeeded" without laying down the
+              # expected tree, instead of a cryptic error later in CMake.
+              if (-not (Test-Path 'C:\local\boost_1_87_0\boost\version.hpp')) { throw 'Boost install missing headers at C:\local\boost_1_87_0\boost.' }
+              if (-not (Test-Path 'C:\local\boost_1_87_0\lib64-msvc-14.3')) { throw 'Boost install missing prebuilt libs at C:\local\boost_1_87_0\lib64-msvc-14.3.' }
+          }
+
+          # --- MySQL 8.4 client headers + libs -> C:\tools\mysql\current ---
+          if (-not (Test-Path 'C:\tools\mysql\current\lib\libmysql.lib'))
+          {
+              # The archives CDN keeps every version, unlike dev.mysql.com/get
+              # which only serves current GA. A browser UA is required or Oracle
+              # returns an HTML error page.
+              $mysqlZip = Join-Path $env:RUNNER_TEMP 'mysql.zip'
+              Invoke-WebRequest -Uri 'https://cdn.mysql.com/archives/mysql-8.4/mysql-8.4.9-winx64.zip' -OutFile $mysqlZip -UserAgent 'Mozilla/5.0'
+              $mysqlMB = (Get-Item $mysqlZip).Length / 1MB
+              Write-Host ("Downloaded MySQL zip: {0:N1} MB" -f $mysqlMB)
+              if ($mysqlMB -lt 50) { throw "MySQL zip download looks wrong ($([int]$mysqlMB) MB)." }
+              New-Item -ItemType Directory -Force -Path 'C:\tools\mysql' | Out-Null
+              Expand-Archive -Path $mysqlZip -DestinationPath 'C:\tools\mysql' -Force
+              if (Test-Path 'C:\tools\mysql\current') { Remove-Item -Recurse -Force 'C:\tools\mysql\current' }
+              Rename-Item 'C:\tools\mysql\mysql-8.4.9-winx64' 'C:\tools\mysql\current'
+              # FindMySQL.cmake looks for `libmysql` on Windows (not mysqlclient),
+              # so that is what we assert on.
+              if (-not (Test-Path 'C:\tools\mysql\current\lib\libmysql.lib')) { throw 'MySQL import library missing at C:\tools\mysql\current\lib\libmysql.lib.' }
+              if (-not (Test-Path 'C:\tools\mysql\current\include\mysql.h')) { throw 'MySQL headers missing at C:\tools\mysql\current\include.' }
+          }
+
+          # --- OpenSSL: use the copy already on the runner image ---
+          $opensslRoot = @($env:OPENSSL_ROOT_DIR, 'C:\Program Files\OpenSSL', 'C:\Program Files\OpenSSL-Win64') |
+              Where-Object { $_ -and (Test-Path (Join-Path $_ 'include\openssl\opensslv.h')) } |
+              Select-Object -First 1
+          if (-not $opensslRoot)
+          {
+              throw 'No OpenSSL development install found on the runner image.'
+          }
+          "OPENSSL_ROOT_DIR=$opensslRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Using OpenSSL at $opensslRoot"
+
+      # 3. Ninja + ccache + only our object files.
+      #
+      # ilammy/msvc-dev-cmd puts cl.exe and the MSVC INCLUDE/LIB environment on
+      # PATH, which Ninja needs and the Visual Studio generator would otherwise
+      # handle itself.
+      - name: MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Ensure Ninja
+        shell: bash
+        run: command -v ninja || choco install ninja -y --no-progress
+
+      # ccache CAN be used here (and only here): compiler launchers are ignored
+      # by the Visual Studio generator but honoured by Ninja. Note the Release
+      # build type below rather than RelWithDebInfo — ccache cannot cache an MSVC
+      # build that writes a shared PDB (/Zi), and a compile smoke has no use for
+      # debug info anyway, so the simplest fix is to not generate any.
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: dc-winsmoke-${{ github.ref_name }}
+          variant: ccache
+          max-size: 2G
+
+      - name: Configure (Ninja)
+        shell: bash
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DSCRIPTS=none \
+            -DMODULES=static \
+            -DTOOLS_BUILD=none \
+            -DBUILD_TESTING=OFF \
+            -DWITHOUT_GIT=1 \
+            -DBOOST_ROOT="C:/local/boost_1_87_0" \
+            -DMYSQL_INCLUDE_DIR="C:/tools/mysql/current/include" \
+            -DMYSQL_LIBRARY="C:/tools/mysql/current/lib/libmysql.lib"
+
+      # Under Ninja every object file is its own target, so we can name exactly
+      # the ones belonging to this module and leave mod-playerbots uncompiled.
+      # Discovered rather than hardcoded: the source list is GLOBbed, so any file
+      # added to src/ is picked up with no edit here.
+      - name: Build mod-dungeon-clear objects only
+        shell: bash
+        run: |
+          mapfile -t OBJS < <(ninja -C build -t targets all \
+            | cut -d: -f1 | grep -E 'mod-dungeon-clear.*\.obj$' | sort -u)
+          echo "matched ${#OBJS[@]} mod-dungeon-clear object targets"
+          if [ "${#OBJS[@]}" -eq 0 ]; then
+            echo "::error::no mod-dungeon-clear objects in the Ninja graph - the"
+            echo "::error::object path layout changed; check 'ninja -t targets all'"
+            exit 1
+          fi
+          ninja -C build "${OBJS[@]}"

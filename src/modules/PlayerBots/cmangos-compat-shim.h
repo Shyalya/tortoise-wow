@@ -652,6 +652,9 @@ typedef int ForcedMovement;
 #ifndef FORCED_MOVEMENT_FLIGHT
 #define FORCED_MOVEMENT_FLIGHT 2
 #endif
+#ifndef FORCED_MOVEMENT_NONE
+#define FORCED_MOVEMENT_NONE 0
+#endif
 
 // === SkillLineAbility store proxy ===
 // cmangos exposes sSkillLineAbilityStore (DBCStorage<SkillLineAbilityEntry>);

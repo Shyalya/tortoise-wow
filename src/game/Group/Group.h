@@ -364,6 +364,10 @@ class Group
         void NeedBeforeGreed(Creature* creature, Loot* loot);
         void MasterLoot(Creature* creature, Loot* loot, Player* player);
         bool CountRollVote(Player* player, ObjectGuid const& lootedTarget, uint32 itemSlot, RollVote vote);
+        // AzerothCore exposes the pending rolls; readers only iterate them.
+        Rolls const& GetRolls() const { return RollId; }
+        // and addresses a group by guid where this core uses its id.
+        ObjectGuid GetObjectGuid() const { return ObjectGuid(uint64(GetId())); }
         // Read-only view of a running roll. Playerbots need to see how the
         // humans in the group voted before casting their own vote, without
         // opening up the roll list itself.

@@ -25,6 +25,7 @@
 #include "World.h"
 #include "ObjectMgr.h"
 #include "ScriptMgr.h"
+#include "ScriptObjects.h"
 #include "ObjectGuid.h"
 #include "SpellMgr.h"
 #include "QuestDef.h"
@@ -267,6 +268,18 @@ void Creature::AddToWorld()
         AIM_Initialize();
     if (!bWasInWorld && m_zoneScript)
         m_zoneScript->OnCreatureCreate(this);
+
+    // The backported AllCreatureScript surface never had a caller for
+    // OnCreatureAddWorld - modules registering it were silently dead. Fire it
+    // where AzerothCore does: creature fully in the world, first entry only.
+    // (AllCreatureScript has no per-hook registry; ForEach walks all scripts.)
+    if (!bWasInWorld && IsInWorld())
+    {
+        ScriptRegistry<AllCreatureScript>::ForEach([&](AllCreatureScript* script)
+        {
+            script->OnCreatureAddWorld(this);
+        });
+    }
 }
 
 void Creature::RemoveFromWorld()

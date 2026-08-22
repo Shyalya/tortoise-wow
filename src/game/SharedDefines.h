@@ -78,6 +78,9 @@ enum Classes
     CLASS_ROGUE         = 4,
     CLASS_PRIEST        = 5,
     //CLASS_DEATH_KNIGHT  = 6,                              // not listed in DBC, will be in 3.0
+    // The value is named so ported code that switches on class compiles. No
+    // character on this core can hold it, so those arms are unreachable.
+    CLASS_DEATH_KNIGHT  = 6,
     CLASS_SHAMAN        = 7,
     CLASS_MAGE          = 8,
     CLASS_WARLOCK       = 9,
@@ -1888,14 +1891,33 @@ enum TicketType
 // Used for some dynamic scaling systems, depending on total population
 #define BLIZZLIKE_REALM_POPULATION 2500
 
+#include <cmath>
+
+// Dungeon difficulty arrived with The Burning Crusade. Every instance on this
+// core is the only version of itself. The type exists because Map::GetDifficulty
+// returns it and ported code compares against it; the heroic value is named so
+// those comparisons compile, and nothing here ever reports it.
+enum Difficulty : uint8
+{
+    DUNGEON_DIFFICULTY_NORMAL = 0,
+    DUNGEON_DIFFICULTY_HEROIC = 1,
+    MAX_DUNGEON_DIFFICULTY    = 1
+};
+
 struct Position
 {
     Position() = default;
     Position(float position_x, float position_y, float position_z, float orientation) : x(position_x), y(position_y), z(position_z), o(orientation) {}
-    float x = 0.0f;
-    float y = 0.0f;
-    float z = 0.0f;
-    float o = 0.0f;
+    // AzerothCore lets the orientation default; ported code relies on it.
+    Position(float position_x, float position_y, float position_z) : x(position_x), y(position_y), z(position_z) {}
+    // Anonymous unions give the AzerothCore field names to the same storage,
+    // the way WorldLocation below already does for the cmangos names. Not
+    // references: a reference member deletes the assignment operator and
+    // Position stops being copyable.
+    union { float x = 0.0f; float m_positionX; };
+    union { float y = 0.0f; float m_positionY; };
+    union { float z = 0.0f; float m_positionZ; };
+    union { float o = 0.0f; float m_orientation; };
 
     // cmangos/playerbots port - accessor methods that the bot module calls.
     float GetPositionX() const { return x; }
@@ -1912,6 +1934,60 @@ struct Position
         float dx = x - other.x, dy = y - other.y, dz = z - other.z;
         return dx*dx + dy*dy + dz*dz;
     }
+
+    // AzerothCore spellings, for module code written against that core. Unlike
+    // GetDistance above these return the real distance, not the square - that
+    // is what the name says there and what callers expect.
+    float GetOrientation() const { return o; }
+
+    float GetExactDist2d(float px, float py) const {
+        float dx = x - px, dy = y - py;
+        return std::sqrt(dx*dx + dy*dy);
+    }
+    float GetExactDist2d(Position const& p) const { return GetExactDist2d(p.x, p.y); }
+
+    float GetExactDist(float px, float py, float pz) const {
+        float dx = x - px, dy = y - py, dz = z - pz;
+        return std::sqrt(dx*dx + dy*dy + dz*dz);
+    }
+    float GetExactDist(Position const& p) const { return GetExactDist(p.x, p.y, p.z); }
+
+    void Relocate(float px, float py, float pz) { x = px; y = py; z = pz; }
+    void Relocate(float px, float py, float pz, float po) { Relocate(px, py, pz); o = po; }
+
+    float GetAngle(float px, float py) const {
+        float a = std::atan2(py - y, px - x);
+        return a < 0.0f ? a + 2.0f * float(M_PI) : a;
+    }
+    float GetAngle(Position const& p) const { return GetAngle(p.x, p.y); }
+    template<class T>
+    float GetAngle(T const* o) const { return GetAngle(o->GetPositionX(), o->GetPositionY()); }
+    float GetExactDistSq(float px, float py, float pz) const { float const d = GetExactDist(px, py, pz); return d * d; }
+    float GetExactDistSq(Position const& p) const { return GetExactDistSq(p.x, p.y, p.z); }
+    template<class T>
+    float GetExactDistSq(T const* o) const { return GetExactDistSq(o->GetPositionX(), o->GetPositionY(), o->GetPositionZ()); }
+    // AzerothCore keeps this as a static on Position: fold an angle into
+    // [0, 2pi). Values outside that range come out of arithmetic on
+    // orientations and the client rejects them.
+    static float NormalizeOrientation(float o)
+    {
+        if (o < 0.0f)
+        {
+            float const mod = std::fmod(o, 2.0f * float(M_PI));
+            return mod < 0.0f ? mod + 2.0f * float(M_PI) : mod;
+        }
+        return std::fmod(o, 2.0f * float(M_PI));
+    }
+    float GetExactDist2d(Position const* p) const { return GetExactDist2d(p->x, p->y); }
+    float GetExactDist(Position const* p) const { return GetExactDist(p->x, p->y, p->z); }
+    // Ported code also hands WorldObject-family pointers straight in. A
+    // template rather than overloads per class, because Position cannot see
+    // those types from this header.
+    template<class T>
+    float GetExactDist2d(T const* o) const { return GetExactDist2d(o->GetPositionX(), o->GetPositionY()); }
+    template<class T>
+    float GetExactDist(T const* o) const { return GetExactDist(o->GetPositionX(), o->GetPositionY(), o->GetPositionZ()); }
+
 };
 
 struct WorldLocation

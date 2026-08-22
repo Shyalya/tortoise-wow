@@ -3,6 +3,7 @@
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "playerbot/strategy/Action.h"
 
+#include "playerbot/BotSlots.h"
 namespace ai
 {
     class RandomBotUpdateAction : public Action

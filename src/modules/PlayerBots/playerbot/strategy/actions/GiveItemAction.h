@@ -1,6 +1,7 @@
 #pragma once
 #include "playerbot/strategy/Action.h"
 
+#include "playerbot/BotSlots.h"
 namespace ai
 {
     class GiveItemAction : public Action

@@ -52,6 +52,9 @@ class HostileReference : public Reference<Unit, ThreatManager>
 {
     public:
         HostileReference(Unit* pUnit, ThreatManager *pThreatManager, float pThreat);
+        // AzerothCore calls the hated unit the victim and spells the accessor
+        // GetVictim; here it is the reference target.
+        Unit* GetVictim() const { return getTarget(); }
 
         //=================================================
         void addThreat(float pMod);
@@ -139,6 +142,9 @@ class ThreatManager;
 
 typedef std::list<HostileReference*> ThreatList;
 
+// AzerothCore names the entry a ThreatReference.
+using ThreatReference = HostileReference;
+
 class ThreatContainer
 {
     ThreatList iThreatList;
@@ -219,6 +225,15 @@ public:
 
     // Don't must be used for explicit modify threat values in iterator return pointers
     ThreatList const& getThreatList() const { return iThreatContainer.getThreatList(); }
+    // AzerothCore spellings. Its list is explicitly unsorted; this one is in
+    // insertion order, which is the same promise - neither is ranked by threat.
+    ThreatList const& GetUnsortedThreatList() const { return getThreatList(); }
+    ThreatList const& GetThreatList() const { return getThreatList(); }
+    void ClearAllThreat() { clearReferences(); }
+    // AzerothCore drops this unit out of everyone ELSE's threat list. The
+    // reference objects are shared between both sides, so releasing the ones
+    // this manager holds unlinks them at the far end too.
+    void RemoveMeFromThreatLists() { clearReferences(); }
 private:
     HostileReference* iCurrentVictim;
     Unit* iOwner;

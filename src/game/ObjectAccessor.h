@@ -104,6 +104,21 @@ class ObjectAccessor : public MaNGOS::Singleton<ObjectAccessor, MaNGOS::ClassLev
 
         // Player access
         static Player* FindPlayer(ObjectGuid guid);         // if need player at specific map better use Map::GetPlayer
+        // AzerothCore distinguishes connected-but-still-loading players from
+        // in-world ones; this accessor has a single lookup, so both names land
+        // on it.
+        static Player* FindConnectedPlayer(ObjectGuid guid) { return FindPlayer(guid); }
+        // AzerothCore spelling: the creature-typed lookup through a nearby
+        // object's map. GetUnit does the map walk; the cast keeps the type.
+        // AzerothCore also resolves these two through the accessor; both live
+        // on the seeker's own map here. Bodies in ObjectAccessor.cpp.
+        static GameObject* GetGameObject(WorldObject const& obj, ObjectGuid guid);
+        static DynamicObject* GetDynamicObject(WorldObject const& obj, ObjectGuid guid);
+        static Creature* GetCreature(WorldObject const& obj, ObjectGuid guid)
+        {
+            Unit* u = GetUnit(obj, guid);
+            return u ? u->ToCreature() : nullptr;
+        }
         static Player* FindPlayerNotInWorld(ObjectGuid guid);
         static Player* FindPlayerByName(const char *name);
         static Player* FindPlayerByNameNotInWorld(const char *name);

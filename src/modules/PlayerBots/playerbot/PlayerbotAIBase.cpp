@@ -59,3 +59,10 @@ bool PlayerbotAIBase::IsActive() const
 {
     return (int)aiInternalUpdateDelay < (int)sPlayerbotAIConfig.maxWaitForMove;
 }
+
+// See the declaration: the mod-playerbots name, public where the original is
+// protected.
+void PlayerbotAIBase::SetNextCheckDelay(const uint32 delay)
+{
+    SetAIInternalUpdateDelay(delay);
+}

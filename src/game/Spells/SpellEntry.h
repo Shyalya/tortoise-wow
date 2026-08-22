@@ -575,6 +575,12 @@ public:
     uint32    manaPerSecond = 0;                               // 34
     uint32    manaPerSecondPerLevel = 0;                       // 35
     uint32    rangeIndex = 1;                                  // 36
+    // AzerothCore keeps the distances on the spell itself. Here they live in
+    // SpellRange.dbc behind rangeIndex, so these look them up. The positive
+    // flag selects the friendly range on that core; this DBC carries one pair
+    // for both, so the argument is accepted and ignored.
+    float GetMaxRange(bool /*positive*/ = false) const;
+    float GetMinRange(bool /*positive*/ = false) const;
     float     speed = 0.f;                                     // 37
     //uint32    modalNextSpell;                                  // 38 not used
     uint32    StackAmount = 0;                                 // 39
@@ -1123,6 +1129,8 @@ public:
     float CalculateCustomCoefficient(WorldObject const* caster, DamageEffectType const damageType, float coeff, Spell* spell, bool donePart) const;
     bool CanTriggerWeaponProcs() const;
     SpellCastResult GetErrorAtShapeshiftedCast(uint32 form) const;
+    // AzerothCore spelling of the same question.
+    SpellCastResult CheckShapeshift(uint32 form) const { return GetErrorAtShapeshiftedCast(form); }
     bool IsTargetInRange(WorldObject const* pCaster, WorldObject const* pTarget) const; // to be used in scripts for simple pre-cast range checks
     uint32 GetMechanic() const { return Mechanic; }
     uint32 GetManaCost() const { return manaCost; }

@@ -148,6 +148,12 @@ struct DefaultTargetSelector : public unary_function<Unit*, bool>
 class CreatureAI
 {
     public:
+        // AzerothCore lets a script veto a target. Scripts on this core have no
+        // such hook, so the default answer is the only answer: no veto. The one
+        // caller uses it to spot a mob that is unattackable by script - here
+        // that state is expressed through flags, which the caller checks too.
+        virtual bool CanAIAttack(Unit const* /*target*/) const { return true; }
+
         explicit CreatureAI(Creature* creature) : m_creature(creature), m_bUseAiAtControl(false), m_bMeleeAttack(true), m_bCombatMovement(true), m_uiCastingDelay(CREATURE_CASTING_DELAY), m_uLastAlertTime(0)
         {
             SetSpellsList(creature->GetCreatureInfo()->spell_list_id);
