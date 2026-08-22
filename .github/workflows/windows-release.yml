@@ -1,0 +1,52 @@
+name: Windows Release
+
+# Runs only after a successful Windows Build on main — not on PRs.
+
+on:
+  workflow_run:
+    workflows: [Windows Build]
+    types: [completed]
+    branches: [main]
+
+env:
+  # Bump major/minor here; patch auto-increments (0.1.1, 0.1.2, …) per release.
+  RELEASE_VERSION: '0.1'
+
+jobs:
+  release:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts
+      - name: Determine release version
+        id: version
+        run: |
+          prefix='${{ env.RELEASE_VERSION }}'
+          latest=$(gh release list --limit 100 --json tagName -q '.[].tagName' \
+            | grep -E "^${prefix//./\\.}\\.[0-9]+$" | sort -t. -k3 -n | tail -1 || true)
+          if [ -z "$latest" ]; then
+            tag="${prefix}.1"
+          else
+            patch=$(echo "$latest" | cut -d. -f3)
+            tag="${prefix}.$((patch + 1))"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          files: artifacts/**/*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,7 +1,5 @@
 name: Windows Build
 
-# Flat install zip for tortoise-wow-portable\server\. No client data.
-
 on:
   workflow_dispatch:
   pull_request:
@@ -22,6 +20,7 @@ jobs:
     runs-on: windows-2022
     permissions:
       contents: read
+      statuses: write
 
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +31,54 @@ jobs:
           $sha = (git rev-parse --short HEAD)
           "GITHUB_SHORT_SHA=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "ARCHIVE_NAME=tortoise-wow-windows-server-$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "SQL_ARCHIVE_NAME=tortoise-wow-sql-$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Bundle SQL
+        shell: pwsh
+        run: |
+          $root = $env:GITHUB_WORKSPACE
+          $createDb = Join-Path $root 'sql/create_databases.sql'
+          $baseDir = Join-Path $root 'sql/base'
+          if (-not (Test-Path $createDb)) { throw "Required SQL missing: sql/create_databases.sql" }
+          if (-not (Test-Path $baseDir)) { throw "Required SQL missing: sql/base/" }
+
+          $sqlRoot = Join-Path $root 'sql-bundle/sql'
+          New-Item -ItemType Directory -Force -Path $sqlRoot | Out-Null
+
+          Copy-Item $createDb (Join-Path $sqlRoot 'create_databases.sql')
+          Copy-Item -Recurse $baseDir (Join-Path $sqlRoot 'base')
+
+          $dbUpdates = Join-Path $root 'sql/database_updates'
+          if (Test-Path $dbUpdates) {
+            Copy-Item -Recurse $dbUpdates (Join-Path $sqlRoot 'database_updates')
+          } else {
+            Write-Warning 'sql/database_updates/ missing; bundle will omit migration SQL'
+          }
+
+          $pbWorld = Join-Path $root 'src/modules/PlayerBots/sql/world'
+          $pbChars = Join-Path $root 'src/modules/PlayerBots/sql/characters'
+          $pbOk = (Test-Path $pbWorld) -and (Test-Path $pbChars)
+          if (-not $pbOk) {
+            if (-not (Test-Path $pbWorld)) { Write-Warning "PlayerBots world SQL missing: $pbWorld" }
+            if (-not (Test-Path $pbChars)) { Write-Warning "PlayerBots characters SQL missing: $pbChars" }
+          } else {
+            $pbDestWorld = Join-Path $sqlRoot 'playerbots/world'
+            $pbDestChars = Join-Path $sqlRoot 'playerbots/characters'
+            New-Item -ItemType Directory -Force -Path $pbDestWorld, $pbDestChars | Out-Null
+            Copy-Item -Recurse (Join-Path $pbWorld '*') $pbDestWorld
+            Copy-Item -Recurse (Join-Path $pbChars '*') $pbDestChars
+          }
+
+          @(
+            "commit=$env:GITHUB_SHA"
+            "short=$env:GITHUB_SHORT_SHA"
+            "ref=$env:GITHUB_REF"
+          ) | Set-Content (Join-Path $sqlRoot 'BUILD_INFO.txt')
+
+          $zip = Join-Path $root "$env:SQL_ARCHIVE_NAME.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path (Join-Path $root 'sql-bundle/*') -DestinationPath $zip
+          "SQL_ZIP_PATH=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Cache vcpkg
         uses: actions/cache@v4
@@ -138,22 +185,28 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  release:
-    needs: build
-    # Publish when a PR merges to main (push event). PRs alone only run build.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          path: artifacts
-      - uses: softprops/action-gh-release@v2
+          name: ${{ env.SQL_ARCHIVE_NAME }}
+          path: ${{ env.SQL_ZIP_PATH }}
+          if-no-files-found: error
+          retention-days: 30
+
+      # Branch protection requires this exact context; PR workflow edits may not
+      # register the Actions check name until merge, so report it explicitly.
+      - name: Report required status
+        if: always()
+        uses: actions/github-script@v7
         with:
-          tag_name: main-${{ github.run_number }}
-          name: Windows Server Build ${{ github.run_number }}
-          files: artifacts/**/*.zip
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const state = '${{ job.status }}' === 'success' ? 'success' : 'failure';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state,
+              context: 'Windows Build / build',
+              description: state === 'success'
+                ? 'Windows build succeeded'
+                : 'Windows build failed',
+            });
