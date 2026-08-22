@@ -1,0 +1,20 @@
+[
+  {
+    "id": "goal-1",
+    "description": "Deep-pass expansion of 17_tier_items_and_endgame_gear.md with hundreds of additional raid/dungeon items across all categories (1000+ lines)",
+    "status": "completed",
+    "verification_criteria": "references/17_tier_items_and_endgame_gear.md reaches >1000 lines with categorized tables, exact IDs, and BiS macros for all classes and slots."
+  },
+  {
+    "id": "goal-2",
+    "description": "Author 18_class_talent_specs.md covering 18+ high-performance talent builds including DW Fury/Prot Warrior Tank (0/31/20), Deep Prot, Fury DPS, and all other class specs",
+    "status": "completed",
+    "verification_criteria": "references/18_class_talent_specs.md created with detailed point-by-point allocations, stat priorities, rotations, and explanations for 18+ specs."
+  },
+  {
+    "id": "goal-3",
+    "description": "Integrate 18_class_talent_specs.md into master portal gm_commands.md and update project navigation grids",
+    "status": "completed",
+    "verification_criteria": "gm_commands.md and navigation headers updated to include module 18."
+  }
+]
