@@ -1,8 +1,5 @@
 name: Windows Build
 
-# Flat install zip for tortoise-wow-portable\server\. No client data.
-# Also publishes a matching SQL bundle for portable setup (sql\ tree).
-
 on:
   workflow_dispatch:
   pull_request:
@@ -17,7 +14,6 @@ env:
   VCPKG_ROOT: C:/vcpkg
   VCPKG_DEFAULT_TRIPLET: x64-windows
   INSTALL_DIR: ${{ github.workspace }}/install
-  # Bump major/minor here; patch auto-increments (0.1.1, 0.1.2, …) per release.
   RELEASE_VERSION: '0.1'
 
 jobs:
