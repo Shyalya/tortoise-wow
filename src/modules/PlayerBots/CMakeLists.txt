@@ -188,25 +188,22 @@ if(WIN32)
   # passes it - while botpch.h includes boost/algorithm/string.hpp
   # unconditionally, so the module could not compile at all.
   #
-  # The same components as below: the module reaches for nine Boost libraries
-  # and two of them, filesystem and thread, are compiled rather than
-  # header-only. Windows linked neither, which would have failed at link time
-  # once the headers were finally found.
-  find_package(Boost 1.70 REQUIRED COMPONENTS thread filesystem system)
+  # The same components as below: filesystem and thread need linked libraries;
+  # Boost.System is header-only since 1.69 and no longer ships a stub lib in
+  # 1.89+, so do not list "system" in find_package (FindBoost would fail).
+  find_package(Boost 1.70 REQUIRED COMPONENTS thread filesystem)
   target_link_libraries(${LIBRARY_NAME}
     PRIVATE zlib
     PRIVATE ws2_32
     PRIVATE Boost::thread
     PRIVATE Boost::filesystem
-    PRIVATE Boost::system
   )
 else()
-  find_package(Boost 1.70 REQUIRED COMPONENTS thread filesystem system)
+  find_package(Boost 1.70 REQUIRED COMPONENTS thread filesystem)
   target_link_libraries(${LIBRARY_NAME}
     PRIVATE ZLIB::ZLIB
     PRIVATE Boost::thread
     PRIVATE Boost::filesystem
-    PRIVATE Boost::system
   )
 endif()
 
