@@ -60,7 +60,7 @@ namespace DungeonClearGeometry
         float const dz = b.z - a.z;
         if ((dx * dx + dy * dy + dz * dz) < (LOS_MIN_HOP * LOS_MIN_HOP))
             return true;  // Detour smoothing artifact, too short to matter
-        Map const* map = bot->GetMap();
+        Map const* map = bot->FindMap();
         if (!map)
             return true;  // no map data — don't block routing
         return map->isInLineOfSight(a.x, a.y, a.z + LOS_Z_BUMP,
@@ -73,7 +73,7 @@ namespace DungeonClearGeometry
     {
         if (!bot || pts.size() < 2)
             return pts.size();
-        if (!bot->GetMap())
+        if (!bot->FindMap())
             return pts.size();
 
         std::size_t committed = 0;       // highest index reachable via a clean corridor

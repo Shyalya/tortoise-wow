@@ -29,7 +29,7 @@ void DcPullBrake::OnEnterCombat(Player* bot)
     // hook fires for every player on the realm on every 0->1 combat transition;
     // outside a dungeon there is no scripted pull to brake, and skipping here means
     // an open-world bot never even materialises its pull context.
-    Map const* map = bot->GetMap();
+    Map const* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return;
 

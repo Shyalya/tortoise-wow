@@ -216,7 +216,7 @@ std::vector<DungeonBossInfo> DungeonBossesValue::Calculate()
     if (!bot || !bot->IsInWorld())
         return {};
 
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return {};
 

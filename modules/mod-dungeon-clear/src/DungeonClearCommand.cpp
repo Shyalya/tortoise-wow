@@ -594,7 +594,7 @@ public:
 
         handler->PSendSysMessage("Watching {}", msg);
 
-        Map* tankMap = tank->GetMap();
+        Map* tankMap = tank->FindMap();
         Difficulty const tankDiff = tank->GetDifficulty(tankMap->IsRaid());
         InstanceSave* targetSave = sInstanceSaveMgr->GetInstanceSave(tank->GetInstanceId());
 

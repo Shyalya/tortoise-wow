@@ -45,41 +45,41 @@ namespace DcTestComp
     // Every class/spec that can legitimately fill each role. BuildComp draws
     // from these; a class appears once per role even when it offers several
     // specs for it (e.g. priest disc + holy) so both get exercised over time.
+    // Spec templates below name THIS tree's configured premade paths
+    // (AiPlayerbot.PremadeSpecName.* in aiplayerbot.conf) - the upstream
+    // mod-playerbots names (bear/disc/arms/bm/mm/surv/subtlety/ele/cat) have
+    // no template here and made every draw of those slots a setup failure.
+    // Druid feral covers both the tank and the cat-dps seat on 1.12.
     inline constexpr Slot kTankPool[] = {
-        { 1,  "prot pve", "prot", "tank" },  // warrior
-        { 2,  "prot pve", "prot", "tank" },  // paladin
-        { 11, "bear pve", "bear", "tank" },  // druid
+        { 1,  "protection", "prot",  "tank" },  // warrior
+        { 2,  "protection", "prot",  "tank" },  // paladin
+        { 11, "feral",      "feral", "tank" },  // druid
     };
 
     inline constexpr Slot kHealPool[] = {
-        { 5,  "holy pve",  "holy",  "heal" },  // priest
-        { 5,  "disc pve",  "disc",  "heal" },  // priest
-        { 2,  "holy pve",  "holy",  "heal" },  // paladin
-        { 7,  "resto pve", "resto", "heal" },  // shaman
-        { 11, "resto pve", "resto", "heal" },  // druid
+        { 5,  "holy",        "holy",  "heal" },  // priest
+        { 2,  "holy",        "holy",  "heal" },  // paladin
+        { 7,  "restoration", "resto", "heal" },  // shaman
+        { 11, "restoration", "resto", "heal" },  // druid
     };
 
     inline constexpr Slot kDpsPool[] = {
-        { 1,  "arms pve",     "arms",     "dps" },  // warrior
-        { 1,  "fury pve",     "fury",     "dps" },  // warrior
-        { 2,  "ret pve",      "ret",      "dps" },  // paladin
-        { 3,  "bm pve",       "bm",       "dps" },  // hunter
-        { 3,  "mm pve",       "mm",       "dps" },  // hunter
-        { 3,  "surv pve",     "surv",     "dps" },  // hunter
-        { 4,  "as pve",       "as",       "dps" },  // rogue
-        { 4,  "combat pve",   "combat",   "dps" },  // rogue
-        { 4,  "subtlety pve", "subtlety", "dps" },  // rogue
-        { 5,  "shadow pve",   "shadow",   "dps" },  // priest
-        { 7,  "ele pve",      "ele",      "dps" },  // shaman
-        { 7,  "enh pve",      "enh",      "dps" },  // shaman
-        { 8,  "arcane pve",   "arcane",   "dps" },  // mage
-        { 8,  "fire pve",     "fire",     "dps" },  // mage
-        { 8,  "frost pve",    "frost",    "dps" },  // mage
-        { 9,  "affli pve",    "affli",    "dps" },  // warlock
-        { 9,  "demo pve",     "demo",     "dps" },  // warlock
-        { 9,  "destro pve",   "destro",   "dps" },  // warlock
-        { 11, "balance pve",  "balance",  "dps" },  // druid
-        { 11, "cat pve",      "cat",      "dps" },  // druid
+        { 1,  "fury",          "fury",     "dps" },  // warrior
+        { 2,  "retribution",   "ret",      "dps" },  // paladin
+        { 3,  "beastmastery",  "beast",    "dps" },  // hunter
+        { 3,  "marksmanship",  "marksman", "dps" },  // hunter
+        { 4,  "assassination", "assassin", "dps" },  // rogue
+        { 4,  "combat",        "combat",   "dps" },  // rogue
+        { 5,  "shadow",        "shadow",   "dps" },  // priest
+        { 7,  "enhancement",   "enh",      "dps" },  // shaman
+        { 8,  "arcane",        "arcane",   "dps" },  // mage
+        { 8,  "fire",          "fire",     "dps" },  // mage
+        { 8,  "frost",         "frost",    "dps" },  // mage
+        { 9,  "affliction",    "affli",    "dps" },  // warlock
+        { 9,  "demonology",    "demo",     "dps" },  // warlock
+        { 9,  "destruction",   "destro",   "dps" },  // warlock
+        { 11, "balance",       "balance",  "dps" },  // druid
+        { 11, "feral",         "feral",    "dps" },  // druid (cat seat)
     };
 
     // Deterministically pick a party for the given seed: one tank, one healer,

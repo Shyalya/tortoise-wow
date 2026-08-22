@@ -55,7 +55,7 @@ void DcFirstContact::OnEnterCombat(Player* bot, Unit* enemy)
 
     // Same cheapest-gate-first discipline as DcPullBrake, and for the same reason:
     // this hook fires for every player on the realm on every 0->1 combat transition.
-    Map const* map = bot->GetMap();
+    Map const* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return;
 

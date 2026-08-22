@@ -299,7 +299,7 @@ bool DcTestRunManager::NextWatchTarget(Player* watcher, ObjectGuid* tankOut,
         // Same map copy = this is the run the watcher is on. Compared by
         // Map*, which is per-instance, so two runs of the same dungeon are
         // never confused for each other.
-        if (watcher->IsInWorld() && tank->GetMap() == watcher->GetMap())
+        if (watcher->IsInWorld() && tank->FindMap() == watcher->FindMap())
             current = watchable.size();
         watchable.push_back(job.get());
     }

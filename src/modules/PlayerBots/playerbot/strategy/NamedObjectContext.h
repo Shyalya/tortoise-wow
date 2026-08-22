@@ -286,6 +286,16 @@ namespace ai
             contexts.push_back(context);
         }
 
+        // Same as Add, but the context is consulted FIRST. Module contexts
+        // need this: overriding a stock object by registering the same name
+        // (dungeon clear's "auto release"/"loot roll") only works when the
+        // module context sits ahead of the stock ones in GetObject's walk -
+        // the first Create that answers wins.
+        void AddFront(NamedObjectContext<T>* context)
+        {
+            contexts.push_front(context);
+        }
+
         T* GetObject(const std::string& name, PlayerbotAI* ai)
         {
             for (typename std::list<NamedObjectContext<T>*>::iterator i = contexts.begin(); i != contexts.end(); i++)

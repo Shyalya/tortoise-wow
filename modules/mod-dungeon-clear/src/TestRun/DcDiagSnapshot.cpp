@@ -89,7 +89,7 @@ namespace
     // holders at all — indistinguishable from a genuine flag/ref desync.
     void CaptureCombatHolders(Player* member, DcDiag::MemberSnapshot& m)
     {
-        Map* const map = member->GetMap();
+        Map* const map = member->FindMap();
         m.attackerCount = static_cast<std::uint32_t>(member->getAttackers().size());
 
         bool anyLegitimatePvEHolder = false;
@@ -103,7 +103,7 @@ namespace
             // truncated list could report "no legitimate holder" about a member
             // the hatch is correctly leaving alone.
             bool const alive = other->IsAlive();
-            bool const sameMap = other->GetMap() == map;
+            bool const sameMap = other->FindMap() == map;
             Creature const* evadeCheck = other->ToCreature();
         bool const evading = evadeCheck && evadeCheck->IsInEvadeMode();
             bool const reachChecked = alive && sameMap && !evading;

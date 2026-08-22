@@ -43,12 +43,12 @@ namespace DcCombatFlag
         // ASSERTs on a null map, and the attacker set holds raw pointers we now
         // dereference (the old `.empty()` test never did), so nothing here may
         // touch a unit on its way out of the world.
-        Map const* const map = p->GetMap();
+        Map const* const map = p->FindMap();
         constexpr float radiusSq = DC_ENGAGEMENT_RADIUS * DC_ENGAGEMENT_RADIUS;
 
         auto const inFight = [p, map, radiusSq](Unit const* other)
         {
-            return other && other->IsInWorld() && other->GetMap() == map &&
+            return other && other->IsInWorld() && other->FindMap() == map &&
                    p->GetExactDistSq(other) <= radiusSq;
         };
 
@@ -119,11 +119,11 @@ namespace DcCombatFlag
             return scan;
         }
 
-        Map* const map = p->GetMap();
+        Map* const map = p->FindMap();
         for (HostileReference* ref = ref0; ref; ref = ref->next())
         {
             Unit* const other = ref->getSourceUnit();
-            if (!other || !other->IsAlive() || other->GetMap() != map)
+            if (!other || !other->IsAlive() || other->FindMap() != map)
                 continue;
             Creature* const evadeCheck = other->ToCreature();
             if (evadeCheck && evadeCheck->IsInEvadeMode())

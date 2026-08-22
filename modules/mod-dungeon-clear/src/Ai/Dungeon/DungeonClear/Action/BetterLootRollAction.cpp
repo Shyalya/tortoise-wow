@@ -40,6 +40,11 @@ using namespace ai;
 
 bool DungeonClearBetterLootRollAction::isUseful()
 {
+    // Same mapless guard as StayDeadAction::isUseful - the stock base reads
+    // through the bot's map, and GetMap throws on a mid-teleport bot here.
+    if (!bot || !bot->FindMap())
+        return false;
+
     // Only intercept self-bots (master == bot). A bot driven for a separate
     // human master keeps stock rolling — its vote is its own GUID, no conflict.
     if (DcPlayerbotCompat::IsSelfBot(bot) && DcSettings::GetBool(bot, "BetterLootRolling"))

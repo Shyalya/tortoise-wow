@@ -75,7 +75,7 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     if (!bot || !bot->IsInWorld())
         return std::nullopt;
 
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return std::nullopt;
 

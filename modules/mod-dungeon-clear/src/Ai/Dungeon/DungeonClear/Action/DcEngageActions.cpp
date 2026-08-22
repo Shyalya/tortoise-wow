@@ -1967,7 +1967,7 @@ bool DcObjectiveEngageCombatAction::Execute(Event& /*event*/)
 
 bool DcRunEventAction::Execute(Event& /*event*/)
 {
-    Map* map = bot ? bot->GetMap() : nullptr;
+    Map* map = bot ? bot->FindMap() : nullptr;
     if (!map)
         return false;
 

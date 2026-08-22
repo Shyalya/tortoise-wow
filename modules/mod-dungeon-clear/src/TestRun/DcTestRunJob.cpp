@@ -1358,7 +1358,7 @@ void DcTestRunJob::TickStarting()
 
     if (!_dcOnIssued)
     {
-        _record.instanceId = tank->GetMap()->GetInstanceId();
+        _record.instanceId = tank->FindMap()->GetInstanceId();
         _roster.clear();
         for (DungeonBossInfo const& b : bosses)
         {

@@ -579,7 +579,7 @@ namespace DcActionShared
         // Anchor-route lookup is O(1)-ish and navmesh-only; a registered route
         // means the synchronous build is cheap (no A*), so there's nothing to
         // offload. Sync mode (toggle OFF) always builds inline.
-        Map* map = bot->GetMap();
+        Map* map = bot->FindMap();
         bool hasAnchorRoute = false;
         if (map)
             hasAnchorRoute = DungeonClearRouteRegistry::Get(target.mapId, map->GetDifficulty(),

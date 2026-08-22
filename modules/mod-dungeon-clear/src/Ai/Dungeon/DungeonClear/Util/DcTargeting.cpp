@@ -321,7 +321,7 @@ namespace
             return window;
 
         auto const doors =
-            CollectClosedDoors(bot->GetMap(), bot->GetPositionX(), bot->GetPositionY(),
+            CollectClosedDoors(bot->FindMap(), bot->GetPositionX(), bot->GetPositionY(),
                                maxLookAhead + DC_DOOR_BAND);
 
         window.reserve(segments.size() + 1);
@@ -482,7 +482,7 @@ Unit* DcTargeting::FindBlockingTrashCorridor(Player* bot,
     // Truncate at the first closed door (see FindBlockingTrashOnPath) so a pack
     // on the far side of a shut, navmesh-passable door is never picked.
     auto const doors =
-        CollectClosedDoors(bot->GetMap(), bot->GetPositionX(), bot->GetPositionY(),
+        CollectClosedDoors(bot->FindMap(), bot->GetPositionX(), bot->GetPositionY(),
                            maxLookAhead + DC_DOOR_BAND);
 
     std::vector<Seg2D> segments;
@@ -849,7 +849,7 @@ Unit* DcTargeting::FindNearestReachableHostile(Player* bot)
 {
     if (!bot)
         return nullptr;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return nullptr;
 
@@ -938,7 +938,7 @@ Creature* DcTargeting::FindLiveCreatureOnMap(Player* bot, uint32 entry)
 {
     if (!bot)
         return nullptr;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return nullptr;
 
@@ -976,7 +976,7 @@ bool DcTargeting::IsCreaturePresentOnMap(Player* bot, uint32 entry)
 {
     if (!bot)
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return false;
 
@@ -992,7 +992,7 @@ bool DcTargeting::HasPendingSummonEvent(Player* bot, AiObjectContext* ctx, uint3
 {
     if (!bot || !ctx || !bossEntry)
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return false;
 
@@ -1045,7 +1045,7 @@ InstanceScript* DcTargeting::GetInstanceScript(Player* bot)
 {
     if (!bot)
         return nullptr;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return nullptr;
     InstanceMap* im = map->ToInstanceMap();

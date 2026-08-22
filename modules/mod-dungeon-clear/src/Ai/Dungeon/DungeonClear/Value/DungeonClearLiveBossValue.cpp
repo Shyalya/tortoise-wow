@@ -25,7 +25,7 @@ DungeonClearLiveBoss DungeonClearLiveBossValue::Calculate()
         return out;
     out.entry = next->entry;
 
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return out;
 

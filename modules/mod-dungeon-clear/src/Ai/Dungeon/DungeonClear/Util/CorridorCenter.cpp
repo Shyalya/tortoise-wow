@@ -277,7 +277,7 @@ void CorridorCenter::Center(Player* bot, std::vector<G3D::Vector3>& pts, Params 
     if (!params.enable || !bot || pts.size() < 3 || params.clearance <= 0.0f)
         return;
 
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return;
     dtNavMesh const* navMesh = map->GetMapCollisionData().GetMMapData().GetNavMesh();

@@ -347,7 +347,7 @@ namespace
     {
         if (!bot)
             return false;
-        Map const* map = bot->GetMap();
+        Map const* map = bot->FindMap();
         if (!map)
             return true;  // no map data — don't block the resnap
         return map->isInLineOfSight(bot->GetPositionX(), bot->GetPositionY(),

@@ -118,11 +118,16 @@ constexpr RollVote NOT_VALID      = ROLL_NOT_VALID;
 // call site in this module had to be converted to printf style - see the port
 // commit. A brace left behind prints as a brace, it does not crash.
 
-#define LOG_TRACE(category, ...) sLog.outDebug(__VA_ARGS__)
-#define LOG_DEBUG(category, ...) sLog.outDebug(__VA_ARGS__)
-#define LOG_INFO(category, ...)  sLog.outString(__VA_ARGS__)
-#define LOG_WARN(category, ...)  sLog.outBasic(__VA_ARGS__)
-#define LOG_ERROR(category, ...) sLog.outError(__VA_ARGS__)
+// Route the AC-style {} format strings through the real substitution engine
+// (Acore::StringFormat below) instead of handing them to printf-style sLog
+// raw - that printed literal braces and dropped every argument, which made
+// module logs undiagnosable. Width/precision specs ({:.1f}) still print
+// literally; plain {} is what nearly every call uses.
+#define LOG_TRACE(category, ...) sLog.outDebug("%s", Acore::StringFormat(__VA_ARGS__).c_str())
+#define LOG_DEBUG(category, ...) sLog.outDebug("%s", Acore::StringFormat(__VA_ARGS__).c_str())
+#define LOG_INFO(category, ...)  sLog.outString("%s", Acore::StringFormat(__VA_ARGS__).c_str())
+#define LOG_WARN(category, ...)  sLog.outBasic("%s", Acore::StringFormat(__VA_ARGS__).c_str())
+#define LOG_ERROR(category, ...) sLog.outError("%s", Acore::StringFormat(__VA_ARGS__).c_str())
 
 // --- things AzerothCore has and this core does not ------------------------
 
@@ -136,7 +141,16 @@ inline uint32 getMSTimeDiff(uint32 oldMSTime, uint32 newMSTime)
 
 // The cmangos shim declares GuidSet; the vector form is used only by ported
 // module code, so it lives here rather than there.
-typedef std::vector<ObjectGuid> GuidVector;
+// AC's GuidVector is a std::vector, but every stock value this module reads
+// through GetValue<GuidVector> (possible targets, the NearestUnitsValue
+// family behind far targets, ...) is an ObjectGuidListCalculatedValue on this
+// engine - a CalculatedValue<std::list<ObjectGuid>>. GetValue does a
+// dynamic_cast, so the vector form returned nullptr and the first ->Get()
+// segfaulted (live: DcTargeting::FindPullTarget, one tick after instance
+// entry). Making the alias THE list type keeps producers and consumers in one
+// type world; anything vector-only (operator[], data()) now fails to compile
+// instead of crashing.
+typedef std::list<ObjectGuid> GuidVector;
 
 // --- more AzerothCore names -----------------------------------------------
 
@@ -493,3 +507,15 @@ public:
 };
 
 #define sCharacterCache DcCharacterCacheShim::instance()
+
+// ---- GetMap semantics -------------------------------------------------------
+// This engine's WorldObject::GetMap() THROWS (std::runtime_error) when the
+// object is between maps; AzerothCore's returns whatever pointer it holds and
+// the module null-checks it everywhere. The first port shipped a
+//  here - DO NOT bring it back: the define made every
+// inline function that both module and bot TUs emit diverge in body while
+// keeping one linker-folded copy (COMDAT), and the folded EXCEPTION LANDING
+// PADS (.cold clones) then ran the wrong cleanup during unwinds - a wave of
+// free()/_Unwind_Resume crashes on the map pool threads. The module sources
+// call FindMap() directly instead (mechanical ->FindMap() -> ->FindMap()
+// rewrite); FindMap is byte-for-byte AC's GetMap body: return m_currMap.

@@ -165,8 +165,14 @@ namespace DcTestDriver
                 accountId = sAccountMgr.GetId(account);
                 if (!accountId)
                 {
-                    *why = "created the test driver account '" + account +
-                           "' but cannot read it back — " + ManualSetup(name);
+                    // The INSERT travels through this engine's async DB queue,
+                    // so an immediate read-back legitimately misses the row.
+                    // Un-latch instead of wedging provisioning for good - the
+                    // next attempt finds the account and carries on.
+                    _provisionTried = false;
+                    *why = "test driver account '" + account +
+                           "' is still being written — run 'dc test start' "
+                           "again in a moment";
                     return false;
                 }
                 LOG_INFO("playerbots.dungeonclear",
@@ -362,7 +368,13 @@ namespace DcTestDriver
                 "SELECT guid FROM characters WHERE name = '%s'", escapedName.c_str());
             if (!probe)
                 return;  // still queued — poll again next tick
+            // The row is real now - refresh sObjectMgr's player cache from
+            // it: every name lookup here reads that CACHE, and the refresh at
+            // creation time ran before the async save had landed, so the cache
+            // still thought the character did not exist.
+            uint32 const landedLowGuid = (*probe)[0].GetUInt32();
             delete probe;
+            sObjectMgr.LoadPlayerCacheData(landedLowGuid);
             _awaitingFlush = false;
             LOG_INFO("playerbots.dungeonclear",
                      "TESTDRIVER character save landed — '{}' can log in now",

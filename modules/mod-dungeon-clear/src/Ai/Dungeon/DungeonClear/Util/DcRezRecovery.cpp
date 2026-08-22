@@ -383,7 +383,7 @@ namespace DcRezRecovery
         // every bot mid-fight) never reach the group walk in EvaluateImpl.
         if (!bot || bot->isDead() || bot->IsInCombat() || !IsRezClass(bot))
             return false;
-        Map* map = bot->GetMap();
+        Map* map = bot->FindMap();
         if (!map || !map->IsDungeon())
             return false;
 

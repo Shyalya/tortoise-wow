@@ -76,5 +76,5 @@ NavmeshSnap::Result NavmeshSnap::Snap(Player const* bot, float x, float y, float
 {
     if (!bot)
         return {};
-    return Snap(bot->GetMap(), x, y, z, maxRadius);
+    return Snap(bot->FindMap(), x, y, z, maxRadius);
 }

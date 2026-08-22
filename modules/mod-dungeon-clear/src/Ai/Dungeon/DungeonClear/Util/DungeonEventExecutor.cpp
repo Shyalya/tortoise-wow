@@ -329,7 +329,7 @@ bool DungeonEventExecutor::HasGameObjectLos(Player* bot, GameObject* go)
 {
     if (!bot || !go)
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return false;
     // Eye-bumped, vmap-only ray (same pattern as FindStandoffPoint): sees over
@@ -1168,7 +1168,7 @@ EventDriveOutcome DungeonEventExecutor::Drive(Player* bot, AiObjectContext* cont
     // primary gate is upstream (a gated roster anchor / the Conditional
     // difficulty overload), so reaching here means an authoring slip — skip the
     // event so the clear advances rather than stalling on inert content.
-    if (bot && bot->GetMap() && !DcGateMatches(ev.gate, bot->GetMap()->GetDifficulty()))
+    if (bot && bot->FindMap() && !DcGateMatches(ev.gate, bot->FindMap()->GetDifficulty()))
         return EventDriveOutcome::Skipped;
 
     uint32 const now = getMSTime();
@@ -1305,7 +1305,7 @@ DungeonEvent const* DungeonEventExecutor::FindDueConditionalEvent(Player* bot,
         return nullptr;
 
     Difficulty const difficulty =
-        bot->GetMap() ? bot->GetMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
+        bot->FindMap() ? bot->FindMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
     std::vector<DungeonEvent const*> const conditional =
         DungeonEventRegistry::Conditional(mapId, difficulty);
     if (conditional.empty())
@@ -1339,7 +1339,7 @@ void DungeonEventExecutor::SweepCompletedConditionalEvents(Player* bot,
         return;
 
     Difficulty const difficulty =
-        bot->GetMap() ? bot->GetMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
+        bot->FindMap() ? bot->FindMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
     std::vector<DungeonEvent const*> const conditional =
         DungeonEventRegistry::Conditional(mapId, difficulty);
     if (conditional.empty())

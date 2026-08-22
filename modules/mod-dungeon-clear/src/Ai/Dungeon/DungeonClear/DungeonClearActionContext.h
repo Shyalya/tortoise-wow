@@ -68,14 +68,27 @@ public:
         // the tick a roll window opens, instead of stock's randomized poll.
         // Server-wide, gated by DungeonClear.BetterLootRolling; inert (defers
         // to stock LootRollAction) when off. Last-registration-wins.
-        creators["loot roll"] = &DungeonClearActionContext::better_loot_roll;
+        // KNOWN ISSUE (2026-08-22): the two stock-name overrides below are
+        // DISABLED. Any bot carrying either object crashes the map pool within
+        // ~2 minutes of a test-run start: an exception unwinding out of
+        // Engine::DoNextAction ends in free()/SIGSEGV, with backtraces landing
+        // in a COMDAT-folded .cold clone attributed to TravelValues.h statics.
+        // Ruled out: shared-context ownership (per-bot instances), the
+        // GetMap->FindMap define (removed; sources rewritten), key collisions
+        // (none beyond these two), mapless-bot guards in both isUseful bodies
+        // (kept - they are correct regardless). Still unexplained; needs an
+        // ASan build to find the real thrower/corruptor. Consequences while
+        // disabled: dead dungeon bots release to the graveyard like stock (a
+        // wiped test run freezes and the 600s watchdog evicts it), and loot
+        // rolls stay fully stock.
+        // creators["loot roll"] = &DungeonClearActionContext::better_loot_roll;
 
         // Override mod-playerbots' "auto release" so dead bots stay dead instead
         // of releasing to the graveyard. Dungeon/raid maps only, gated by
         // DungeonClear.PreventBotRelease; inert (defers to stock) when that flag
         // is off or the bot is outside an instance. Last-registration-wins, so
         // this replaces the playerbots creator for every bot of this class.
-        creators["auto release"] = &DungeonClearActionContext::auto_release;
+        // creators["auto release"] = &DungeonClearActionContext::auto_release;
     }
 
 private:

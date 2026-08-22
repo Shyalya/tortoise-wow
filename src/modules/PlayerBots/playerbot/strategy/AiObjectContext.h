@@ -109,9 +109,9 @@ namespace ai
         // or construct the context with shared=true if one instance really is
         // handed to many bots. Grown for module-provided strategies (dungeon
         // clear); the alternative was reaching into these protected lists.
-        virtual void AddShared(NamedObjectContext<Strategy>* shared) { strategyContexts.Add(shared); }
-        virtual void AddShared(NamedObjectContext<Action>* shared) { actionContexts.Add(shared); }
-        virtual void AddShared(NamedObjectContext<Trigger>* shared) { triggerContexts.Add(shared); }
+        virtual void AddShared(NamedObjectContext<Strategy>* shared) { strategyContexts.AddFront(shared); }
+        virtual void AddShared(NamedObjectContext<Action>* shared) { actionContexts.AddFront(shared); }
+        virtual void AddShared(NamedObjectContext<Trigger>* shared) { triggerContexts.AddFront(shared); }
         std::list<std::string> Save();
         void Load(std::list<std::string> data);
 

@@ -95,7 +95,7 @@ namespace DcSocialQuarantine
         if (!anyRegistryZone && !anyScriptedRow)
             return;
 
-        Map* map = bot->GetMap();
+        Map* map = bot->FindMap();
         if (!map)
             return;
 
@@ -193,7 +193,7 @@ namespace DcSocialQuarantine
         if (!anyRegistryZone && !anyScriptedRow)
             return;
 
-        Map* map = bot->GetMap();
+        Map* map = bot->FindMap();
         if (!map)
             return;
 

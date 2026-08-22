@@ -300,7 +300,7 @@ namespace
     {
         if (!bot || !boss)
             return std::nullopt;
-        Map* const map = bot->GetMap();
+        Map* const map = bot->FindMap();
         if (!map)
             return std::nullopt;
 
@@ -2566,7 +2566,7 @@ bool DungeonClearPullManeuverAction::Execute(Event& /*event*/)
                                                                std::sin(bearing);
                     float lz = camp.GetPositionZ();
                     NavmeshSnap::Result const snap =
-                        NavmeshSnap::Snap(bot->GetMap(), lx, ly, lz, 8.0f);
+                        NavmeshSnap::Snap(bot->FindMap(), lx, ly, lz, 8.0f);
                     float const tx = snap.ok ? snap.x : camp.GetPositionX();
                     float const ty = snap.ok ? snap.y : camp.GetPositionY();
                     float const tz = snap.ok ? snap.z : camp.GetPositionZ();

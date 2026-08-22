@@ -154,7 +154,7 @@ namespace
         Player* leader = ObjectAccessor::FindPlayer(guid);
         if (!leader || !leader->IsAlive())
             return nullptr;
-        if (leader->GetMap() != reference->GetMap())
+        if (leader->FindMap() != reference->FindMap())
             return nullptr;
         if (leader->GetGroup() != group)
             return nullptr;
@@ -391,7 +391,7 @@ Player* DcLeaderSignal::FindLeaderTank(Player* reference)
         if (!member || !member->IsAlive())
             continue;
         // Same Map OBJECT, not merely the same map id — see ValidateCachedLeader.
-        if (member->GetMap() != reference->GetMap())
+        if (member->FindMap() != reference->FindMap())
             continue;
         if (!PlayerbotAI::IsTank(member))
             continue;

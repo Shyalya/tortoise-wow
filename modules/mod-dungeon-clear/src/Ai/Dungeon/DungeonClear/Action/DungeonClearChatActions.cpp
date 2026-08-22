@@ -244,7 +244,7 @@ bool DcOnAction::Execute(Event& event)
             botAI->ChangeStrategy("+dungeon clear combat", BOT_STATE_COMBAT);
         return true;
     }
-    if (!bot->GetMap() || !bot->GetMap()->IsDungeon())
+    if (!bot->FindMap() || !bot->FindMap()->IsDungeon())
     {
         DcRefuse(botAI, bot, "Not in a dungeon.");
         return false;
@@ -391,7 +391,7 @@ bool DcSkipAction::Execute(Event& event)
     // so a `dc skip` while one is active should retire THAT event — latch its
     // synthetic key cleared+skipped so it stops firing — rather than skipping the
     // boss behind it. Required events that the bot can't drive are unstuck here.
-    if (Map* map = bot->GetMap())
+    if (Map* map = bot->FindMap())
     {
         if (DungeonEvent const* ev =
                 DungeonEventExecutor::FindDueConditionalEvent(bot, context, map->GetId()))
@@ -579,7 +579,7 @@ bool DcBossesAction::Execute(Event& event)
     };
     // Difficulty-gated events are hidden from the other difficulty's panel.
     Difficulty const panelDifficulty =
-        bot->GetMap() ? bot->GetMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
+        bot->FindMap() ? bot->FindMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
 
     for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId(), panelDifficulty))
     {
@@ -940,7 +940,7 @@ bool DcGoAction::Execute(Event& event)
         std::string query = param;
         std::transform(query.begin(), query.end(), query.begin(), ::tolower);
         Difficulty const goDifficulty =
-            bot->GetMap() ? bot->GetMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
+            bot->FindMap() ? bot->FindMap()->GetDifficulty() : DUNGEON_DIFFICULTY_NORMAL;
         for (DungeonEvent const* ev : DungeonEventRegistry::Conditional(bot->GetMapId(), goDifficulty))
         {
             bool keyMatch = isNumeric &&
@@ -991,7 +991,7 @@ bool DcGoAction::Execute(Event& event)
         return false;
     }
 
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     bool alive = true;
     bool present = false;
     if (map)

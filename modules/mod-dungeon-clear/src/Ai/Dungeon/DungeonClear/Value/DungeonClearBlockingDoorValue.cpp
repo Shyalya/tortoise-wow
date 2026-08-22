@@ -122,7 +122,7 @@ ObjectGuid DungeonClearBlockingDoorValue::Calculate()
     if (!DcRun::Of(context).enabled || DcRun::Of(context).paused)
         return ObjectGuid::Empty;
 
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return ObjectGuid::Empty;
 

@@ -1184,7 +1184,7 @@ bool DungeonClearRegroupCombatAction::Execute(Event& /*event*/)
     if (!tank || tank == bot)
         return false;
 
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return false;
 
@@ -1309,7 +1309,7 @@ bool DungeonClearHealRepositionAction::Execute(Event& /*event*/)
     if (!target || !target->IsAlive())
         return false;
 
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return false;
 
@@ -1377,7 +1377,7 @@ bool DungeonClearHazardVacateAction::Execute(Event& /*event*/)
         return false;
     }
 
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
         return false;
 

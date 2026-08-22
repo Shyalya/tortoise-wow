@@ -839,7 +839,7 @@ namespace
     ObjectiveArriveResult BmDriveWave(Player* bot, AiObjectContext* context,
                                       DungeonBossInfo const& /*info*/)
     {
-        if (!bot || !bot->GetMap())
+        if (!bot || !bot->FindMap())
             return ObjectiveArriveResult::Done;
 
         InstanceScript* inst = DcTargeting::GetInstanceScript(bot);

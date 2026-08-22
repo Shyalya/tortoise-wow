@@ -255,7 +255,7 @@ StridedPathfinder::Result StridedPathfinder::Build(Player* bot, uint32 mapId, ui
         return result;
     }
 
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
     {
         result.failureReason = "no map";

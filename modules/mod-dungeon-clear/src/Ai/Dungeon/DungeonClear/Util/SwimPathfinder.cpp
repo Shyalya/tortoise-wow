@@ -82,7 +82,7 @@ namespace SwimPathfinder
             r.failureReason = "no bot";
             return r;
         }
-        Map* map = bot->GetMap();
+        Map* map = bot->FindMap();
         if (!map)
         {
             r.failureReason = "no map";
@@ -195,7 +195,7 @@ namespace SwimPathfinder
     {
         if (!bot)
             return false;
-        Map* map = bot->GetMap();
+        Map* map = bot->FindMap();
         if (!map)
             return false;
         uint32 const phase = bot->GetPhaseMask();

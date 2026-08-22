@@ -132,7 +132,7 @@ bool DungeonClearIdleTrigger::IsActive()
         return false;
     if (!bot || bot->isDead() || !MayDrive(bot, context))
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -213,7 +213,7 @@ bool DungeonClearAtBossTrigger::IsActive()
         return false;
     if (!bot || bot->isDead() || !MayDrive(bot, context))
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -395,7 +395,7 @@ bool DungeonClearAtObjectiveTrigger::IsActive()
         return false;
     if (!bot || bot->isDead())
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -466,7 +466,7 @@ bool DungeonClearEventDueTrigger::IsActive()
     // Leader drives events; followers stay on follow-tank.
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
     if (!DungeonEventRegistry::HasEvents(map->GetId()))
@@ -487,7 +487,7 @@ bool DungeonClearEventDueCombatTrigger::IsActive()
         return false;
     if (!DcLeaderSignal::IsDungeonClearLeader(bot))
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
     if (!DungeonEventRegistry::HasEvents(map->GetId()))
@@ -656,7 +656,7 @@ bool DungeonClearRoomTrashTrigger::IsActive()
         return false;
     if (!bot || bot->isDead() || !MayDrive(bot, context))
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -698,7 +698,7 @@ bool DungeonClearRoomPreClearHoldTrigger::IsActive()
         return false;
     if (!bot || bot->isDead() || !MayDrive(bot, context))
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -791,7 +791,7 @@ bool DungeonClearRezPartyTrigger::IsActive()
     // so the conditions are stated twice on purpose. Change one, change both.
     if (!bot || bot->isDead() || bot->IsInCombat())
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -807,7 +807,7 @@ bool DungeonClearAllClearedTrigger::IsActive()
         return false;
     if (!IsTerminalDriver(bot))
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -838,7 +838,7 @@ bool DungeonClearRecoverStrandedTrigger::IsActive()
 {
     if (!bot || bot->isDead())
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -854,7 +854,7 @@ bool DungeonClearStalledTrigger::IsActive()
         return false;
     if (!bot || bot->isDead() || !MayDrive(bot, context))
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -875,7 +875,7 @@ bool DungeonClearDoorBlockedTrigger::IsActive()
         return false;
     if (!bot || bot->isDead() || !MayDrive(bot, context))
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -1065,7 +1065,7 @@ bool DungeonClearPullTrigger::IsActive()
         return false;
     if (!bot || bot->isDead())
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -1578,7 +1578,7 @@ bool DungeonClearObjectiveEngageCombatTrigger::IsActive()
         return false;
     if (!bot || bot->isDead() || !bot->IsInCombat())
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
@@ -1694,7 +1694,7 @@ bool DungeonClearBreakStuckCombatTrigger::IsActive()
     // combat with no per-bot reachable target during phase transitions / adds — the
     // precise shape this would misread. Gate it out entirely rather than trust the
     // reachability test there.
-    Map* const map = bot->GetMap();
+    Map* const map = bot->FindMap();
     if (!map || map->IsRaid())
     {
         stuckCombatSinceMs = 0;
@@ -1975,7 +1975,7 @@ bool DungeonClearFilterLootTrigger::IsActive()
 {
     if (!bot || bot->isDead() || bot->IsInCombat())
         return false;
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
     // Fires on EVERY member of a paused run — the leader AND its followers (the

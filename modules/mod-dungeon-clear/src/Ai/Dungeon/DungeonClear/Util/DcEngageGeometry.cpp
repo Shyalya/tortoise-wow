@@ -555,7 +555,7 @@ std::optional<Position> DcEngageGeometry::EnRoutePackAvoidPoint(Player* bot,
 
 bool DcEngageGeometry::EnRouteSweepApplies(Player* bot)
 {
-    Map* const map = bot ? bot->GetMap() : nullptr;
+    Map* const map = bot ? bot->FindMap() : nullptr;
     if (!map || !map->IsDungeon())
         return false;
     // Heroic is excluded whatever the map says: there the same spheres already
@@ -1239,7 +1239,7 @@ bool DcEngageGeometry::ClosedDoorBetween(WorldObject* from, float tx, float ty,
 {
     if (!from)
         return false;
-    Map* map = from->GetMap();
+    Map* map = from->FindMap();
     if (!map)
         return false;
 
@@ -1279,7 +1279,7 @@ bool DcEngageGeometry::ClosedDoorNear(WorldObject* ref, float x, float y, float 
 {
     if (!ref)
         return false;
-    Map* map = ref->GetMap();
+    Map* map = ref->FindMap();
     if (!map)
         return false;
 

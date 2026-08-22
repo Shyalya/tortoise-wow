@@ -179,7 +179,7 @@ namespace
     bool IsWatchable(Player* viewer, Player* target)
     {
         return target && target != viewer && target->IsInWorld() &&
-               target->GetMap() == viewer->GetMap() &&
+               target->FindMap() == viewer->FindMap() &&
                GET_PLAYERBOT_AI(target) && target->IsAlive();
     }
 }
@@ -245,7 +245,7 @@ namespace DcSpectator
         // exists at all. Scan the map for the bot driving a dungeon-clear run,
         // falling back to any alive tank bot. An instance holds one party, so
         // this walks a handful of players, at most once every couple of seconds.
-        Map* map = viewer->GetMap();
+        Map* map = viewer->FindMap();
         if (!map)
             return nullptr;
 
@@ -271,7 +271,7 @@ namespace DcSpectator
     std::vector<ObjectGuid> WatchRoster(Player* viewer)
     {
         std::vector<ObjectGuid> roster;
-        if (!viewer || !viewer->GetMap())
+        if (!viewer || !viewer->FindMap())
             return roster;
 
         // EVERY watchable bot on the map, not just tanks: cycling exists so a
@@ -279,7 +279,7 @@ namespace DcSpectator
         // phase. ResolveWatchTarget's tank preference is about picking a good
         // DEFAULT seat; it must not narrow the set you can reach by hand.
         std::vector<Player*> bots;
-        Map::PlayerList const& players = viewer->GetMap()->GetPlayers();
+        Map::PlayerList const& players = viewer->FindMap()->GetPlayers();
         for (Map::PlayerList::const_iterator it = players.begin(); it != players.end(); ++it)
             if (Player* candidate = it->getSource())
                 if (IsWatchable(viewer, candidate))
@@ -470,7 +470,7 @@ namespace DcSpectator
         // and possessing a WORLD_TRIGGER in the open world has caused issues.
         // (Follow mode carries no such restriction — farsight is the same
         // mechanism Mind Vision uses, and works anywhere.)
-        Map* map = player->GetMap();
+        Map* map = player->FindMap();
         if (!map || !map->IsDungeon())
             return Refuse(whyNot, "Free-fly spectator mode is only available inside a dungeon.");
 
@@ -863,7 +863,7 @@ namespace DcSpectator
             // standing on the tank's map before turning the camera on.
             Player* tank = ObjectAccessor::FindConnectedPlayer(pendingTank);
             if (tank && !player->IsBeingTeleported() && player->IsInWorld() &&
-                tank->IsInWorld() && tank->GetMap() == player->GetMap())
+                tank->IsInWorld() && tank->FindMap() == player->FindMap())
             {
                 std::string whyNot;
                 if (!StartFollow(player, tank, &whyNot))

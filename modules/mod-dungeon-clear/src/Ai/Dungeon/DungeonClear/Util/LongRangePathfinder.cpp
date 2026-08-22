@@ -508,7 +508,7 @@ LongRangePathfinder::Result LongRangePathfinder::Build(Player* bot, float tx, fl
         return result;
     }
 
-    Map* map = bot->GetMap();
+    Map* map = bot->FindMap();
     if (!map)
     {
         result.failureReason = "no map";
