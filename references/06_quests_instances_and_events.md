@@ -4,14 +4,15 @@
 
 ---
 
-### 📚 Complete 16-Module Reference Library
+### 📚 Complete 19-Module Reference Library
 
 | Security & Server | World & Characters | Gameplay & Items | Bots & Modules |
 | :--- | :--- | :--- | :--- |
-| [01. Security & Accounts](./01_security_and_account.md) | [03. Teleports & Movement](./03_teleports_and_movement.md) | [05. Combat & Spells](./05_combat_spells_and_skills.md) | [11. Playerbot Suite](./11_playerbot_suite.md) |
-| [02. Server & Reloads](./02_server_and_reloads.md) | [04. Stats & Visuals](./04_character_stats_and_visuals.md) | **[06. Quests & Instances](./06_quests_instances_and_events.md)** | [12. RandomBot Manager](./12_randombot_manager.md) |
-| [08. Spawning & Editing](./08_spawning_and_world_editing.md) | [07. Items & Economy](./07_items_economy_and_mail.md) | [10. Turtle Custom](./10_turtle_custom_features.md) | [13. Bot Whispers & Macros](./13_bot_whispers_and_macros.md) |
-| [09. Moderation & Anticheat](./09_moderation_tickets_and_anticheat.md) | [16. Diagnostics & Lookups](./16_developer_and_diagnostics.md) | [15. Dungeon Clear AI](./15_dungeon_clear_module.md) | [14. Bot Strategies & Tactics](./14_bot_strategies_and_tactics.md) |
+| [00. Self & Own Character](./00_self_and_player_commands.md) | [03. Teleports & Movement](./03_teleports_and_movement.md) | [06. Quests & Instances](./06_quests_instances_and_events.md) | [11. Playerbot Suite](./11_playerbot_suite.md) |
+| [01. Security & Accounts](./01_security_and_account.md) | [04. Stats & Visuals](./04_character_stats_and_visuals.md) | [07. Items & Economy](./07_items_economy_and_mail.md) | [12. RandomBot Manager](./12_randombot_manager.md) |
+| [02. Server & Reloads](./02_server_and_reloads.md) | [05. Combat & Spells](./05_combat_spells_and_skills.md) | [08. Spawning & Editing](./08_spawning_and_world_editing.md) | [13. Bot Whispers & Macros](./13_bot_whispers_and_macros.md) |
+| [09. Moderation & Anticheat](./09_moderation_tickets_and_anticheat.md) | [10. Turtle Custom](./10_turtle_custom_features.md) | [17. Tier Sets & Gear](./17_tier_items_and_endgame_gear.md) | [14. Bot Strategies & Tactics](./14_bot_strategies_and_tactics.md) |
+| [16. Diagnostics & Lookups](./16_developer_and_diagnostics.md) | [18. Class Talent Specs](./18_class_talent_specs.md) | *(Standalone Manual)* | [15. Dungeon Clear AI](./15_dungeon_clear_module.md) |
 
 ---
 
@@ -34,11 +35,11 @@ Forces an immediate reset on all active raid locks across all online players and
 .server resetallraids
 ```
 
-#### 📜 Macro 3: Instant Quest Auto-Complete & Reward
-Marks all quest objectives complete in character quest log and automatically awards experience, gold, and loot items:
+#### 📜 Macro 3: Instant Quest Auto-Complete & Inspection
+Marks all quest objectives complete in character quest log ready for turn-in:
 ```lua
 .quest complete 870
-.quest reward 870
+.quest status 870
 ```
 
 ---
@@ -52,11 +53,11 @@ Activates the specified world event ID and verifies active event status:
 .event list
 ```
 
-#### 🐾 Macro 5: Hunter Pet Max Loyalty & 300 Training Points
-Sets pet loyalty to Rank 6 (Best Friend) and awards 300 pet training points:
+#### 🐾 Macro 5: Hunter Pet Max Loyalty & Spells
+Sets pet loyalty to Rank 6 (Best Friend) and teaches pet abilities:
 ```lua
 .pet loyalty 6
-.pet tp 300
+.pet learnspell 24597
 ```
 
 ---
@@ -87,18 +88,18 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **What it does**: Marks all objectives complete for quest in character log, ready for turn-in.
   - **Example**: `.quest complete 870`
 
-- `.quest reward <quest_id>`
-  - **Security**: Developer (3)
-  - **What it does**: Automatically turns in quest and grants rewards without visiting the questgiver NPC.
-  - **Example**: `.quest reward 870`
-
 - `.quest remove <quest_id>`
   - **Security**: Developer (3)
   - **What it does**: Removes quest from target character quest log.
   - **Example**: `.quest remove 870`
 
-- `.quest status <quest_id>`
+- `.quest test <quest_id>`
   - **Security**: Developer (3)
+  - **What it does**: Tests quest conditions, criteria, and requirements.
+  - **Example**: `.quest test 870`
+
+- `.quest status <quest_id>`
+  - **Security**: Moderator (2)
   - **What it does**: Displays current quest status and objective counters for character.
   - **Example**: `.quest status 870`
 
@@ -129,6 +130,22 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **Security**: Administrator (4)
   - **What it does**: Forces an immediate write of instance memory state to database.
   - **Example**: `.instance savedata`
+
+---
+
+### 🤖 Autonomous Dungeon Clear & Test Harness (`.dc`)
+
+For full documentation and GM test automation, see **[15. Dungeon Clear AI Module](./15_dungeon_clear_module.md)**:
+
+- `.dc on` / `.dc off`: Activates or disables party tank autonomous dungeon routing and pulls.
+- `.dc status`: Displays live instance run progression, target boss, and party readiness.
+- `.dc bosses`: Lists all instance bosses, encounter kill bitmask, and status.
+- `.dc skip` / `.dc pause` / `.dc pull`: Controls tank movement, skips packs/bosses, or forces pulls.
+- `.dc spectate [follow [name] | next | prev | list]`: Spectator camera control across bots.
+- `.dc test list`: Lists all supported automated test dungeons.
+- `.dc test start <dungeon> [heroic]`: Spawns automated 5-bot party to clear dungeon headlessly.
+- `.dc test watch [next|off]`: Teleports GM camera to follow live automated test runs invisibly.
+- `.dc test stop [all]`: Stops running headless test runs.
 
 ---
 

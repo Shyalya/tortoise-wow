@@ -22,7 +22,9 @@ Copy and paste these macros directly into your World of Warcraft **Macro UI** (`
 ### Category A: Level-Appropriate Random Gear, Enchants & Consumables (Top Priority)
 
 #### 🎲 Macro 1: Randomize & Equip Level-Appropriate Epic Gear + Full Enchants
+
 Automatically equips full **Epic** quality gear scaled to target/own level, applies permanent enchantments, and learns all class spells:
+
 ```lua
 .bot gear * epic
 .bot enchants *
@@ -31,14 +33,18 @@ Automatically equips full **Epic** quality gear scaled to target/own level, appl
 ```
 
 #### 💎 Macro 2: Equip Best-in-Slot Gear (Highest Item Level for Current Level)
+
 Equips the highest stat BiS gear available in the database for current level:
+
 ```lua
 .bot gear * best
 .bot enchants *
 ```
 
 #### 🧪 Macro 3: Restock Level-Appropriate Consumables, Potions & Reagents
+
 Generates flasks, elixirs, bandages, healing/mana potions, class reagents (Ankhs, Soul Shards, Flash Powder), and ammo scaled to current level:
+
 ```lua
 .bot consumes *
 .bot potions *
@@ -48,7 +54,9 @@ Generates flasks, elixirs, bandages, healing/mana potions, class reagents (Ankhs
 ```
 
 #### 🌟 Macro 4: Complete Character/Bot Re-Roll & Initialization (Level 60 Epics)
+
 Completely re-rolls talents, equips randomized Epic armor/weapons, enchants every slot, stocks consumables, and trains all spells:
+
 ```lua
 .bot level * 60
 .bot init * epic
@@ -62,14 +70,18 @@ Completely re-rolls talents, equips randomized Epic armor/weapons, enchants ever
 ### Category B: Bot Party Spawning, Summoning & Management (Middle Priority)
 
 #### 🏃 Macro 5: Instant Party Bot Summon & Follow
+
 Teleports all party bots directly to your feet and locks follow formation:
+
 ```lua
 .bot summon *
 /p follow
 ```
 
 #### 🛡️ Macro 6: Create Tank Warrior Bot (Level 60 Human)
+
 Spawns a brand new tank-specced Warrior bot and readies him for dungeon tanking:
+
 ```lua
 .bot create tank warrior human MainTank 60
 .bot init MainTank epic
@@ -77,7 +89,9 @@ Spawns a brand new tank-specced Warrior bot and readies him for dungeon tanking:
 ```
 
 #### ➕ Macro 7: Login & Invite Alt Character as Bot
+
 Logs in an alternate character from your account and invites them directly to your party:
+
 ```lua
 .bot add AltPriest
 .bot summon AltPriest
@@ -85,7 +99,9 @@ Logs in an alternate character from your account and invites them directly to yo
 ```
 
 #### 🚪 Macro 8: Logout & Save All Party Bots
+
 Dismisses and logs out all party bots cleanly to the database:
+
 ```lua
 .bot remove *
 ```
@@ -95,13 +111,17 @@ Dismisses and logs out all party bots cleanly to the database:
 ### Category C: Configuration & Maintenance (Bottom Section)
 
 #### 📌 Macro 9: Mark Bot to Remain Always Online
+
 Flags bot to stay permanently logged in across server restarts and area changes:
+
 ```lua
 .bot always MainTank
 ```
 
 #### ⚙️ Macro 10: Reload Playerbot Configuration (`aiplayerbot.conf`)
+
 Live reloads AI bot combat settings and heuristics without dropping world connections:
+
 ```lua
 .bot reload
 ```
@@ -113,6 +133,7 @@ Live reloads AI bot combat settings and heuristics without dropping world connec
 Verified against CMaNGOS playerbot engine handlers (`src/modules/PlayerBots/playerbot/PlayerbotMgr.cpp:247-3025`):
 
 ### Target Scope Specifiers
+
 - `<name>`: Targets a single specific character/bot by name (e.g. `.bot gear MainTank epic`).
 - `*`: Targets **all bots in your active party/raid** (e.g. `.bot summon *`).
 - `guild`: Targets **all bots in your guild** (e.g. `.bot init guild epic`).
@@ -122,6 +143,7 @@ Verified against CMaNGOS playerbot engine handlers (`src/modules/PlayerBots/play
 ---
 
 ### 🎒 Level-Scaled Equipment & Quality Selectors (`.bot gear`)
+
 Verified in `PlayerbotMgr.cpp:2868`:
 
 | Quality Flag | Command Example | What it Generates |
@@ -137,7 +159,9 @@ Verified in `PlayerbotMgr.cpp:2868`:
 ---
 
 ### ✨ Permanent Gear Enchants (`.bot enchants`)
+
 Verified in `PlayerbotMgr.cpp:3013`:
+
 - `.bot enchants <target>` / `.bot enchants *`
   - **What it does**: Scans every equipped item slot and applies the highest-tier level-appropriate permanent enchantment (e.g. Crusader, Spell Power, +Stats, Defense).
   - **Example**: `.bot enchants *`
@@ -145,6 +169,7 @@ Verified in `PlayerbotMgr.cpp:3013`:
 ---
 
 ### 🧪 Level-Scaled Consumables & Reagents
+
 Verified in `PlayerbotMgr.cpp:2930-2968`:
 
 - `.bot consumes <target>` / `.bot consumes *`
@@ -174,7 +199,9 @@ Verified in `PlayerbotMgr.cpp:2930-2968`:
 ---
 
 ### 🔄 Character Initialization & Re-Roll (`.bot init`)
+
 Verified in `PlayerbotMgr.cpp:2970`:
+
 - `.bot init <target> [white | green | blue | epic | legendary]`
   - **What it does**: Completely wipes and re-rolls talent build, learns all class abilities, equips full armor/weapon set of chosen quality, and enchants all gear.
   - **Example**: `.bot init * epic`

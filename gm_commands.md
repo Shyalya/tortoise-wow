@@ -34,14 +34,30 @@ To provide deep technical parameters and copy-paste in-game macro templates for 
 
 ---
 
+## 🔑 Command Syntax & Target Wildcard Key
+
+Before executing commands or macros, refer to this syntax key for targeting wildcards and parameters:
+
+| Symbol / Token | Target Meaning | Example Usage | Explanation |
+| :---: | :--- | :--- | :--- |
+| **`*`** | **All Controlled Bots** | `.bot add *` • `.bot level * 60` • `.bot gear * best` • `.bot prep *` | Applies the action to **all bots in your current party** or all alternate characters on your account simultaneously. |
+| **`%t`** | **Current Target** | `.cast %t 133` • `.appear %t` • `/w %t follow` | Substitutes the name or GUID of your **currently selected in-game target** (player, bot, or NPC). |
+| **`[name]`** | **Specific Character Name** | `.bot add Bob` • `.bot remove Alice` • `/w Tankbot flee` | Executes the command specifically on the named player or bot. |
+| **`[#]` / `<id>`** | **Numerical Value / Item ID** | `.levelup 60` • `.additem 19019 1` • `.modify money 10000000` | Specifies levels, item entry IDs, quantities, or currency amounts. |
+| **`[token]`** | **System / Location Token** | `.tele deadmines` • `.dc test start deadmines` | Pre-defined system destination or dungeon identifier. |
+| **`[quality]`** | **Gear Quality Filter** | `.bot gear * epic` • `.bot gear * best` • `.bot gear * rare` | Quality ceiling for level-scaled random item generation. |
+| **`/p @all`** | **Party-Wide Bot Broadcast** | `/p @all tank attack` • `/p @all flee` • `/p @all loot` | Sends tactical instructions to **all party bots** in party chat. |
+| **`/p @<role>`** | **Role / Class Filter** | `/p @tank attack` • `/p @healer drink` • `/p @mage cast blizzard` | Directs party commands to specific combat roles or classes. |
+
+---
+
 ## ⚡ Master Quick-Lookup Macro Cheat Sheet
 
 Copy and paste these macros directly into your World of Warcraft **Macro UI** (`/m`):
 
 ### 🌟 1. Complete Player Power-Boost Suite (Level 60 + Spells + Skills + Travel)
 
-```text
-/script DEFAULT_CHAT_FRAME:AddMessage("Executing Complete Character Power-Boost...", 0, 1, 0);
+```lua
 .levelup 60
 .learn all_myspells
 .learn all_trainer
@@ -56,8 +72,7 @@ Copy and paste these macros directly into your World of Warcraft **Macro UI** (`
 
 ### 🤖 2. Complete Bot Party Bootstrap (Level 60 + BiS Gear + Enchants + Spells + Prep)
 
-```text
-/script DEFAULT_CHAT_FRAME:AddMessage("Bootstrapping Party Bots (Level 60, Gear, Enchants, Spells, Pots, Reagents)...", 0, 1, 0);
+```lua
 .bot add *
 .bot summon *
 .bot level * 60
@@ -72,94 +87,78 @@ Copy and paste these macros directly into your World of Warcraft **Macro UI** (`
 .bot p follow
 ```
 
-### ⚔️ 3. Main Tank Engage & DPS Attack
+### 🏰 3. Autonomous Dungeon Clear Engine & Spectator (.dc)
 
-```text
-/script DEFAULT_CHAT_FRAME:AddMessage("Ordering Main Tank & Party to Engage Target...", 1, 0, 0);
+```lua
+-- In-Dungeon Tank Auto-Pilot (.dc)
+.dc on                                 -- Activates autonomous dungeon routing & pulls on party tank bot
+.dc off                                -- Disables autonomous dungeon clearing
+.dc skip                               -- Skips current targeted mob pack / boss and recalculates route
+.dc pause                              -- Pauses tank bot advance and pulls
+.dc pull                               -- Orders tank bot to immediately pull next pack or target
+.dc status                             -- Shows live dungeon progression, target boss, and party readiness
+.dc bosses                             -- Lists all instance bosses, encounter status (alive/killed/skipped)
+.dc go <boss_name>                     -- Sets direct destination boss target to route toward
+.dc config                             -- Dumps all live DungeonClear.* config values and per-run overrides
+
+-- Spectator Camera Controls (.dc spectate)
+.dc spectate                           -- Toggles free-flying spectator camera
+.dc spectate follow <botname>          -- Rides spectator camera on specified bot (run again to stop)
+.dc spectate next                      -- Cycles spectator camera to next party bot (alias: .dc spectate n)
+.dc spectate prev                      -- Cycles spectator camera to previous party bot (alias: .dc spectate p)
+.dc spectate list                      -- Lists all watchable bots in the current instance (alias: .dc spectate who)
+
+-- Headless 5-Bot Automated Test Runs (.dc test)
+.dc test list                          -- Lists all supported test dungeons, tokens, map IDs, and levels
+.dc test gear <dungeon> [heroic]       -- Displays recommended item level (ilvl) gear ladders and ceilings
+.dc test start <dungeon> [heroic]      -- Starts automated 5-bot clear run with random party comp
+.dc test start <dungeon> party=T,H,D1,D2,D3 -- Starts test run with specific named character roster
+.dc test status                        -- Shows live test run status, boss count, kill bitmask, run duration
+.dc test watch [selector]              -- Enters GM invisible mode, teleports into dungeon, follows tank bot
+.dc test watch next                    -- Tours next active test run in batch campaign without leaving
+.dc test watch off                     -- Stops camera, restores GM visibility, teleports back, drops binds
+.dc test stop [selector|all]           -- Aborts active test run, specific run by ID/token, or all runs
+.dc test plan start <spec>             -- Launches a batched multi-run campaign plan
+.dc test plan status                   -- Displays status of running test plans
+.dc test plan stop [planId|all]        -- Stops active test campaign plans
+```
+
+### ⚔️ 4. Main Tank Engage & DPS Attack
+
+```lua
 /p @all tank attack
 /p @all attack
 /p @all max dps
 ```
 
-### 🛑 4. Emergency Disengage & Flee to Master
+### 🛑 5. Emergency Disengage & Flee to Master
 
-```text
-/script DEFAULT_CHAT_FRAME:AddMessage("EMERGENCY RETREAT - Regrouping on Player!", 1, 0.2, 0.2);
+```lua
 /p @all flee
 /p @all follow
 /p @all stay
 .combatstop
 ```
 
-### 📦 5. Post-Combat Loot & Consumables Restock
+### 📦 6. Post-Combat Loot & Consumables Restock
 
-```text
-/script DEFAULT_CHAT_FRAME:AddMessage("Harvesting Corpses & Restocking Consumables...", 0.5, 1, 0.5);
+```lua
 /p @all loot
 /p @all food
 .bot prep *
 ```
 
-### 🗺️ 6. Enable Autonomous Dungeon Clear Solver
+### 🗺️ 7. Enable Autonomous Dungeon Clear Solver (Party Strategies)
 
-```text
-/script DEFAULT_CHAT_FRAME:AddMessage("Enabling Autonomous Dungeon Clear Engine...", 0, 1, 1);
+```lua
 /p @all co +dungeon clear,avoid aoe,roll,loot,potions
 /p @all nc +gather,food
 /p @all formation near
 ```
 
-### 🛡️ 7. Panic Combat Recovery & Full Reset
+### 🛡️ 8. Panic Combat Recovery & Full Reset
 
-```text
-/script DEFAULT_CHAT_FRAME:AddMessage("PANIC RESET: Godmode On, Combat Dropped, Cooldowns Cleared...", 1, 0.2, 0.2);
-.god on
-.combatstop
-.cooldown
-.replenish
-```
-
----
-
-## 🔧 Bot Leveling & Population Optimization
-
-- **Alt Autologin**: With `AiPlayerbot.BotAutologin = 1` enabled in `run/aiplayerbot.conf`, all alternate characters on your account automatically log in as bots upon joining the realm.
-- **Level Sync**: With `AiPlayerbot.SyncAltLevelToMaster = 1`, all your alt bots level up automatically to match your character.
-- **Kill & Quest XP Rates**: Configured at **2x rate** in `run/mangosd.conf` (`Rate.XP.Kill = 2`, `Rate.XP.Quest = 2`, `Rate.XP.Explore = 2`).
-- **Autonomous Density**: Configured at `AiPlayerbot.botActiveAlone = 50` to maintain vibrant open-world and dungeon life.
-
-```text
-.bank
-.mailbox
-.repairitems
-```
-
-#### 📦 8. Post-Combat Loot & Consumables Restock
-
-Orders bots to loot surrounding corpses, sit to eat/drink, and restocks supplies:
-
-```text
-/p loot
-/p food
-.bot prep *
-```
-
-#### 🗺️ 9. Enable Autonomous Dungeon Clear Solver
-
-Engages the `.dc` solver and configures dungeon combat tactics:
-
-```text
-.dc on
-/p co +dungeon clear,avoid aoe,roll,loot,potions
-/p nc +gather,food
-/p formation near
-```
-
-#### 🛡️ 10. Panic Combat Recovery & Full Reset
-
-Activates godmode, drops combat aggro, clears cooldowns, and restores 100% HP/mana:
-
-```text
+```lua
 .god on
 .combatstop
 .cooldown
@@ -177,7 +176,7 @@ Activates godmode, drops combat aggro, clears cooldowns, and restores 100% HP/ma
 
 ---
 
-## 🧭 Complete 16-Module Navigation Matrix
+## 🧭 Complete Reference Navigation Matrix
 
 | # | Reference Module | Domain & Key Topics | Direct Link |
 | :-: | :--- | :--- | :-: |
@@ -198,6 +197,6 @@ Activates godmode, drops combat aggro, clears cooldowns, and restores 100% HP/ma
 | **15** | [**15. Dungeon Clear AI Module](./references/15_dungeon_clear_module.md)** | Autonomous Route Solver, Pull Governor, Door Policy | [Open 15_dungeon_clear_module.md](./references/15_dungeon_clear_module.md) |
 | **16** | [**16. Diagnostics & Lookups](./references/16_developer_and_diagnostics.md)** | Universal .lookup, .list Inspectors, .debug Tools | [Open 16_developer_and_diagnostics.md](./references/16_developer_and_diagnostics.md) |
 
-<p align="center">
-  [🏠 Master Portal (gm_commands.md)](./gm_commands.md) • [📖 Project Readme](./README.md) • [🎯 Bot Macro Book (13_bot_whispers_and_macros.md)](./references/13_bot_whispers_and_macros.md)
-</p>
+---
+
+[🏠 Master Portal (gm_commands.md)](./gm_commands.md) • [📖 Project Readme](./README.md) • [🎯 Bot Macro Book (13_bot_whispers_and_macros.md)](./references/13_bot_whispers_and_macros.md)

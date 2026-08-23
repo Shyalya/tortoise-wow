@@ -1,11 +1,10 @@
-# Ultragoal Brief: Endgame Item Expansion & 18 Class Talent Specs
+# Ultragoal Brief: Sync Upstream Commits, Database Migration Check, and Release Build
 
-## Core Objective
-1. Expand `references/17_tier_items_and_endgame_gear.md` with an extensive deep-pass of endgame raid and dungeon items across all slots and classes (weapons, off-hands, armor, trinkets, rings, necks, cloaks, world bosses, consumables, and enchants).
-2. Author a brand new comprehensive manual `references/18_class_talent_specs.md` covering 18+ high-tier raid/dungeon talent builds (including Dual-Wield Fury/Prot Warrior Tank 0/31/20, Deep Prot 11/5/35, Fury DPS 17/34/0, Holy/Prot Paladin, Retribution, MM Hunter, Combat Swords/Daggers Rogue, Holy/Disc/Shadow Priest, Resto/Ele/Enh Shaman, Fire/Frost Mage, SM/Ruin & DS/Ruin Warlock, Feral Tank/DPS & Resto Druid).
-3. Synchronize cross-links in `gm_commands.md`, `00_self_and_player_commands.md`, and all navigation headers.
+## Objective
+Pull and merge the latest 6 commits from `origin/playerbots-integration-gh`, verify if any database migrations or schema updates are pending against MariaDB (`tw_world`, `tw_char`), execute a full/incremental CMake Release build with all required flags (`-DBUILD_PLAYERBOTS=ON -DUSE_EXTRACTORS=ON -DALLOW_TURTLE_ADDONS=ON`), and verify server service startup and health.
 
-## Constraints
-- Zero Python script execution.
-- 100% CMaNGOS & Turtle-WoW verified item IDs and talent tree mechanics.
-- All macros formatted inside ```lua fences.
+## Micro-Goals
+1. **goal-1: Service Halt, Stash & Pull/Merge**: Stop systemd units `turtle-mangosd` and `turtle-realmd`, stash local uncommitted modifications, pull fast-forward commits from `origin/playerbots-integration-gh`, pop stashed changes cleanly.
+2. **goal-2: Database Migration Check & Apply**: Inspect for any new SQL updates or schema migrations in `sql/database_updates/` and `sql/base/`, check `tw_world.migrations` and `character_inventory_copy` table integrity, and apply pending migrations if found.
+3. **goal-3: Engine Compilation & Verification**: Run CMake configure and build in Release mode using all required flags, verify build output with 0 errors.
+4. **goal-4: Service Startup & Health Validation**: Reset systemd failure counters, start `turtle-realmd` and `turtle-mangosd`, verify status and startup logs in journalctl.

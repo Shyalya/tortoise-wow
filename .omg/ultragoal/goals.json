@@ -1,20 +1,26 @@
 [
   {
     "id": "goal-1",
-    "description": "Deep-pass expansion of 17_tier_items_and_endgame_gear.md with hundreds of additional raid/dungeon items across all categories (1000+ lines)",
+    "description": "Stop services, stash local changes, pull latest origin/upstream commits, and pop stash",
     "status": "completed",
-    "verification_criteria": "references/17_tier_items_and_endgame_gear.md reaches >1000 lines with categorized tables, exact IDs, and BiS macros for all classes and slots."
+    "verification_criteria": "Services stopped, git pull completed successfully with HEAD at origin/playerbots-integration-gh (86c9dd3), local stash popped cleanly."
   },
   {
     "id": "goal-2",
-    "description": "Author 18_class_talent_specs.md covering 18+ high-performance talent builds including DW Fury/Prot Warrior Tank (0/31/20), Deep Prot, Fury DPS, and all other class specs",
+    "description": "Verify and apply any database updates, schema changes, and integrity checks",
     "status": "completed",
-    "verification_criteria": "references/18_class_talent_specs.md created with detailed point-by-point allocations, stat priorities, rotations, and explanations for 18+ specs."
+    "verification_criteria": "All new or pending SQL migration files in sql/ applied or verified, mandatory tw_char.character_inventory_copy present."
   },
   {
     "id": "goal-3",
-    "description": "Integrate 18_class_talent_specs.md into master portal gm_commands.md and update project navigation grids",
-    "status": "completed",
-    "verification_criteria": "gm_commands.md and navigation headers updated to include module 18."
+    "description": "Configure and compile engine via CMake in Release mode with PlayerBots and Turtle addons enabled",
+    "status": "in-progress",
+    "verification_criteria": "CMake build completes with 0 errors and fresh binaries in build/src/."
+  },
+  {
+    "id": "goal-4",
+    "description": "Restart systemd services (turtle-realmd, turtle-mangosd) and verify operational health",
+    "status": "todo",
+    "verification_criteria": "Services active (running) with clean logs and no startup crashes."
   }
 ]

@@ -5,7 +5,85 @@
 
 ---
 
-## 1. Executive Architecture Overview
+## 1. Master Remote Sync, Merge & Build Pipeline (MANDATORY SEQUENCE)
+
+Whenever syncing from remote (`playerbots-integration-gh`), the AI assistant and operators **MUST** execute the following 9-step pipeline in exact linear order. Never skip steps, never reorder, and never run ad-hoc commands out of sequence.
+
+```bash
+# ----------------------------------------------------------------------
+# STEP 1: Stop running server daemons cleanly
+# ----------------------------------------------------------------------
+systemctl --user stop turtle-mangosd turtle-realmd
+
+# ----------------------------------------------------------------------
+# STEP 2: Stash any local uncommitted files (docs, configs, logs)
+# ----------------------------------------------------------------------
+git stash save "Local modifications before sync"
+
+# ----------------------------------------------------------------------
+# STEP 3: Pull and merge latest commits from origin
+# ----------------------------------------------------------------------
+git pull origin playerbots-integration-gh
+
+# ----------------------------------------------------------------------
+# STEP 4: Restore local files back into the working tree (Pop stash)
+# ----------------------------------------------------------------------
+git stash pop
+
+# ----------------------------------------------------------------------
+# STEP 5: Audit incoming commits for required actions
+# Check if any .sql migrations, .conf files, or DBC files were touched
+# ----------------------------------------------------------------------
+git diff HEAD@{1}..HEAD --stat
+
+# ----------------------------------------------------------------------
+# STEP 6: Database Migrations (STRICTLY CONDITIONAL - ONLY IF SQL IN DIFF)
+# If NO .sql files exist in the diff: SKIP DATABASE COMPLETELY (DO NOT TOUCH DB).
+# If NEW .sql files exist: Apply with --force and record in tw_world.migrations (see Section 4).
+# ----------------------------------------------------------------------
+
+# ----------------------------------------------------------------------
+# STEP 7: Configure and Compile C++ Engine in Release Mode
+# ----------------------------------------------------------------------
+cmake -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=/home/sam/server \
+  -DBUILD_PLAYERBOTS=ON \
+  -DUSE_EXTRACTORS=ON \
+  -DALLOW_TURTLE_ADDONS=ON
+
+cmake --build build -j$(nproc)
+
+# ----------------------------------------------------------------------
+# STEP 8: Clear systemd rate limits and restart services
+# ----------------------------------------------------------------------
+systemctl --user reset-failed turtle-mangosd turtle-realmd
+systemctl --user start turtle-mangosd turtle-realmd
+
+# ----------------------------------------------------------------------
+# STEP 9: Verify operational status and monitor logs
+# ----------------------------------------------------------------------
+systemctl --user status turtle-mangosd turtle-realmd
+journalctl --user -u turtle-mangosd -n 50 --no-pager
+```
+
+---
+
+## 2. Inviolable AI Assistant Guardrails
+
+1. **Strict Command Ordering**:
+   - Always stop daemons **before** pull.
+   - Always stash local modifications **before** pull, and immediately pop stash **after** pull so user work is restored.
+   - Always check commit diff **before** deciding if database or config work is needed.
+   - Always build with required flags (`-DBUILD_PLAYERBOTS=ON -DALLOW_TURTLE_ADDONS=ON -DCMAKE_BUILD_TYPE=Release`).
+2. **Database Protection Lock**:
+   - **NEVER** run unprompted, exploratory, or out-of-order queries (`SELECT`, `SHOW TABLES`, loops, updates) against MariaDB (`tw_world`, `tw_char`, `tw_logon`, `tw_logs`).
+   - Database operations are strictly done in **Step 6** and **ONLY** when new `.sql` migration files are introduced by incoming commits.
+   - If no `.sql` files are in the commit diff, the database **MUST NOT BE TOUCHED**.
+
+---
+
+## 3. Executive Architecture Overview
 
 ```bash
 [ Game Client (1.18.1.7272) ]
@@ -26,117 +104,47 @@
 | **Auth Daemon** | `build/src/realmd/realmd` | Authentication & realm routing service |
 | **Run Working Dir** | `/home/sam/tortoise-wow/run` | Active runtime configs (`mangosd.conf`, `realmd.conf`, `aiplayerbot.conf`) |
 | **Systemd Units** | `~/.config/systemd/user/` | `turtle-mangosd.service`, `turtle-realmd.service`, `turtle-logrotate.timer` |
-| **Database Engine** | MariaDB 11.8 (`127.0.0.1:3306`) | 4 Databases: `tw_world`, `tw_char`, `tw_logon`, `tw_logs` (User: `mangos`) |
+| **Database Engine** | MariaDB 11.8 (`127.0.0.1:3306`) | 4 Databases: `tw_world`, `tw_char`, `tw_logon`, `tw_logs` (User: `mangos:mangos`) |
 
 ---
 
-## 2. Critical Operational & Stability Rules
+## 4. Database Operations & Migration Reference (Done Only If Necessary)
 
-### A. Weekly Honor Maintenance (`tw_char`)
-
-- **Mechanism**: `HonorMaintenancer::DoMaintenance()` executes at the start of each weekly reset. It calls `ObjectMgr::BackupCharacterInventory()` which performs:
-
-  ```sql
-  TRUNCATE `character_inventory_copy`;
-  INSERT INTO `character_inventory_copy` SELECT * FROM `character_inventory`;
-  ```
-
-- **Mandatory Schema**: `tw_char.character_inventory_copy` must always exist:
-
-  ```sql
-  CREATE TABLE IF NOT EXISTS tw_char.character_inventory_copy LIKE tw_char.character_inventory;
-  ```
-
-- **Symptom if missing**: Immediate server abort (`SIGABRT` / `Assertion in HandleMySQLError failed: false`) upon launching when the weekly maintenance threshold has passed.
-
-### B. CMake Compilation & Build Flags
-
-- Always configure with:
-
-  ```bash
-  cmake -B build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=/home/sam/server \
-    -DBUILD_PLAYERBOTS=ON \
-    -DUSE_EXTRACTORS=ON \
-    -DALLOW_TURTLE_ADDONS=ON
-  ```
-
-- **Playerbots**: `BUILD_PLAYERBOTS` defaults to `OFF` upstream. Must be set to `ON`.
-- **Addon Compatibility**: `ALLOW_TURTLE_ADDONS=ON` must remain enabled, or entering the world aborts client-side with "interface corrupt".
-- **Performance**: Always use `Release` mode (`Debug` binaries exceed 600MB and degrade under bot load).
-
-### C. Database Migration Protocol (`tw_world`)
-
-- **AutoUpdate is intentionally disabled** (`Database.AutoUpdate.Enabled = 0`) because `sql/base` snapshot data overlaps with early migration files.
-- When pulling upstream changes:
-  1. Import any new base definitions:
-
-     ```bash
-     mariadb -h 127.0.0.1 -u mangos -pmangos tw_world < sql/base/tw_world_custom_merchant.sql
-     mariadb -h 127.0.0.1 -u mangos -pmangos tw_world < sql/base/tw_world_itemextendedcost.sql
-     ```
-
-  2. Run migration updates with `--force` to skip pre-existing duplicate entries while executing schema modifications:
-
-     ```bash
-     for f in sql/database_updates/world/*.sql; do
-       mariadb --force -h 127.0.0.1 -u mangos -pmangos tw_world < "$f"
-     done
-     ```
-
-  3. Mark migrations as applied:
-
-     ```bash
-     for f in sql/database_updates/world/*.sql; do
-       n=$(basename "$f" .sql)
-       mariadb -h 127.0.0.1 -u mangos -pmangos -e "INSERT IGNORE INTO tw_world.migrations (Name, Hash, AppliedAt) VALUES ('$n','manual',NOW());"
-     done
-     ```
-
-  4. Run character database updates:
-
-     ```bash
-     for f in sql/database_updates/character/*.sql; do
-       mariadb -h 127.0.0.1 -u mangos -pmangos tw_char < "$f"
-     done
-     ```
-
----
-
-## 3. Standard Operating Procedure (Pull, Rebuild, Run)
-
-Whenever updating from remote (`playerbots-integration-gh`):
+### A. Applying World Database Migrations (`tw_world`)
+`Database.AutoUpdate.Enabled = 0` is intentional. When new SQL updates appear in `sql/database_updates/world/`:
 
 ```bash
-# 1. Stop active services
-systemctl --user stop turtle-mangosd turtle-realmd
+# 1. Run new migration with --force (skips duplicate errors safely)
+mariadb --force -h 127.0.0.1 -u mangos -pmangos tw_world < sql/database_updates/world/NEW_FILE.sql
 
-# 2. Stash local changes & pull
-git stash save "Local modifications before sync"
-git pull
-git stash pop
+# 2. Mark migration as applied in tracker table
+mariadb -h 127.0.0.1 -u mangos -pmangos -e "INSERT IGNORE INTO tw_world.migrations (Name, Hash, AppliedAt) VALUES ('NEW_FILE_NAME','manual',NOW());"
+```
 
-# 3. Clean build
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/home/sam/server -DBUILD_PLAYERBOTS=ON -DUSE_EXTRACTORS=ON
-cmake --build build -j$(nproc)
+### B. Applying Character Database Migrations (`tw_char`)
+When new character SQL updates appear in `sql/database_updates/character/`:
 
-# 4. Clear service rate limits & restart
-systemctl --user reset-failed turtle-mangosd turtle-realmd
-systemctl --user start turtle-mangosd turtle-realmd
+```bash
+mariadb -h 127.0.0.1 -u mangos -pmangos tw_char < sql/database_updates/character/NEW_FILE.sql
+```
 
-# 5. Verify status & logs
-systemctl --user status turtle-mangosd turtle-realmd
-journalctl --user -u turtle-mangosd -f
+### C. Weekly Honor Maintenance Table (`tw_char`)
+- `HonorMaintenancer::DoMaintenance()` executes at the start of each weekly reset and requires `character_inventory_copy`.
+- Ensure table exists:
+
+```sql
+CREATE TABLE IF NOT EXISTS tw_char.character_inventory_copy LIKE tw_char.character_inventory;
 ```
 
 ---
 
-## 4. Topic References & Documentation
+## 5. Topic References & Documentation Library
 
-- [Build and Service Lifecycle Standard Operating Procedure](file:///home/sam/tortoise-wow/.omg/memory/build_and_service_lifecycle.md)
-- [Operational Build & Database Rules](file:///home/sam/tortoise-wow/.omg/rules/build_rules.md)
+- [Build and Service Lifecycle SOP](file:///home/sam/tortoise-wow/.omg/memory/build_and_service_lifecycle.md)
+- [Operational Build Rules](file:///home/sam/tortoise-wow/.omg/rules/build_rules.md)
+- [Command Discipline & Safety Rules](file:///home/sam/tortoise-wow/.omg/rules/command_discipline.md)
 - [Systemd Commands Quick Reference](file:///home/sam/tortoise-wow/commands.md)
-- [Linux Installation & Troubleshooting Walkthrough](file:///home/sam/tortoise-wow/INSTALL-LINUX.md)
-- [Playerbots Quickstart Guide](file:///home/sam/tortoise-wow/PLAYERBOTS_QUICKSTART.md)
 - [Game Master (GM) In-Game Commands](file:///home/sam/tortoise-wow/gm_commands.md)
+- [Dungeon Clear AI Module Reference](file:///home/sam/tortoise-wow/references/15_dungeon_clear_module.md)
+- [Playerbots Quickstart Guide](file:///home/sam/tortoise-wow/PLAYERBOTS_QUICKSTART.md)
+- [Linux Installation Walkthrough](file:///home/sam/tortoise-wow/INSTALL-LINUX.md)
