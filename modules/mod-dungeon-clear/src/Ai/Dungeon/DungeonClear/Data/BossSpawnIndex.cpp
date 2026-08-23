@@ -71,11 +71,43 @@ void BossSpawnIndex::Build()
             row.creditEntry = entry;
             byCreditEntry.emplace(entry, std::move(row));
         }
+
+        // Door bosses and friends that only the order table names - they are
+        // bosses to the router even though the curated list skipped them.
+        for (DcBossOrderRow const& orow : DC_BOSS_ORDER_1121)
+        {
+            if (byCreditEntry.count(orow.entry))
+                continue;
+            CreatureInfo const* info = sObjectMgr.GetCreatureTemplate(orow.entry);
+            if (!info)
+                continue;
+
+            EncounterRow row;
+            row.mapId = 0;
+            row.difficulty = DUNGEON_DIFFICULTY_NORMAL;
+            row.encounterIndex = 0;
+            row.name = info->name;
+            row.creditEntry = orow.entry;
+            byCreditEntry.emplace(orow.entry, std::move(row));
+        }
     }
 
     if (byCreditEntry.empty())
         return;
 
+    // Encounter numbering: an authored order wins (DC_BOSS_ORDER_1121,
+    // 1-based there, 0-based here to line up with the mask bits); everything
+    // else on the map numbers upward from just past the authored block.
+    auto orderFor = [](uint32 mapId, uint32 entry) -> uint32
+    {
+        for (DcBossOrderRow const& r : DC_BOSS_ORDER_1121)
+            if (r.mapId == mapId && r.entry == entry)
+                return r.order;
+        return 0;
+    };
+    std::map<uint32, uint32> firstFallback;
+    for (DcBossOrderRow const& r : DC_BOSS_ORDER_1121)
+        firstFallback[r.mapId] = std::max<uint32>(firstFallback[r.mapId], r.order);
     std::map<uint32, uint32> encounterIndexOnMap;
 
     // 2. Walk every creature spawn once. For each spawn whose entry matches a
@@ -100,7 +132,15 @@ void BossSpawnIndex::Build()
 
             DungeonBossInfo info;
             info.entry = entry;
-            info.encounterIndex = encounterIndexOnMap[mapId]++;
+            if (uint32 const order = orderFor(mapId, entry))
+                info.encounterIndex = order - 1;
+            else
+            {
+                uint32& next = encounterIndexOnMap[mapId];
+                if (next == 0)
+                    next = firstFallback.count(mapId) ? firstFallback[mapId] : 0;
+                info.encounterIndex = next++;
+            }
             info.name = row.name;
             info.mapId = mapId;
             info.x = data.position.x;

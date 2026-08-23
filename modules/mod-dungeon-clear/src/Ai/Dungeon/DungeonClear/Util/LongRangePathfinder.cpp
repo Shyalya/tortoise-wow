@@ -353,6 +353,19 @@ LongRangePathfinder::RawResult LongRangePathfinder::BuildCoreFromMesh(
         {
             result.startFarFromPoly = true;
             result.failureReason = "bot off navmesh (no start poly)";
+            // Kept as a permanent diagnostic: a silent start-poly failure is
+            // always a positional anomaly worth a log line (live it exposed a
+            // tank standing at Z=203 over the Deadmines - overworld height
+            // inside the instance map - which no amount of path-log reading
+            // would have revealed).
+            {
+                int loaded = 0;
+                for (int i = 0; i < navMesh->getMaxTiles(); ++i)
+                    if (navMesh->getTile(i) && navMesh->getTile(i)->header)
+                        ++loaded;
+                sLog.outString("[DC-DIAG] no start poly: map=%u pos=(%.1f,%.1f,%.1f) maxTiles=%d loadedTiles=%d",
+                               mapId, sx, sy, sz, navMesh->getMaxTiles(), loaded);
+            }
             return result;
         }
     }

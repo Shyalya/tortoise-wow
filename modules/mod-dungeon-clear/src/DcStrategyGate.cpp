@@ -69,8 +69,22 @@ namespace DcStrategyGate
         // FindMap, not GetMap: the world-sweep hits bots mid-login/teleport
         // (no map yet), and this engine's GetMap ASSERTS on a missing map -
         // the null-tolerant read the next line expects is FindMap.
+        //
+        // And NO DECISION on a mapless or teleporting bot at all. A bot in a
+        // teleport window read as "not in a dungeon", so the sweep STRIPPED
+        // it - and TeardownOnStrip runs DisableDungeonClear, which erases the
+        // leader's `dungeon clear enabled` run flag. The strategy came back
+        // on the next sweep, the flag did not, and every DC trigger sat dark
+        // for the rest of the run (tr-20260822-223938-1: tank went silent at
+        // t~563 right after a far-from-poly NearTeleportTo recovery; watchdog
+        // ended the run 600s later with zero progress). Skip the tick; the
+        // next sweep sees the landed bot.
+        if (bot->IsBeingTeleported())
+            return;
         Map* map = bot->FindMap();
-        bool const inDungeon = map && map->IsDungeon();
+        if (!map)
+            return;
+        bool const inDungeon = map->IsDungeon();
 
         bool const hasNon = botAI->HasStrategy(kNonCombat, BOT_STATE_NON_COMBAT);
         bool const hasCmb = botAI->HasStrategy(kCombat, BOT_STATE_COMBAT);
@@ -90,17 +104,57 @@ namespace DcStrategyGate
             !plan.stripStrayInCombat && !plan.stripStrayInNonCombat)
             return;  // already compliant — the hot path
 
+        // State changes are rare (enter/leave dungeon, post-ResetStrategies
+        // repair) - log them so a silent strategy thief shows up as a stream
+        // of re-installs in the journal instead of nothing at all.
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC-GATE] {}: nonCombat={} combat={} (inDungeon={} hasNon={} hasCmb={})",
+                 bot->GetName(),
+                 plan.nonCombat == Action::Install ? "install" : (plan.nonCombat == Action::Strip ? "strip" : "-"),
+                 plan.combat == Action::Install ? "install" : (plan.combat == Action::Strip ? "strip" : "-"),
+                 inDungeon ? 1 : 0, hasNon ? 1 : 0, hasCmb ? 1 : 0);
+
         // Run the strip cleanup once, before removing any strategy, so the run
         // state is torn down while its values/actions still exist.
         if (plan.teardown)
             TeardownOnStrip(botAI, bot);
 
+        // Install/strip and the stock-driver swap ride ONE ChangeStrategy
+        // call each: the engine batches the trigger rebuild across the
+        // comma list and rebuilds once over the final state. The first cut
+        // issued a second ChangeStrategy right after the first, and a bot
+        // crashed in ProcessTriggers on a half-rebuilt trigger list
+        // seconds later - keep this atomic.
         switch (plan.nonCombat)
         {
-            case Action::Install: botAI->ChangeStrategy("+dungeon clear", BOT_STATE_NON_COMBAT); break;
-            case Action::Strip:   botAI->ChangeStrategy("-dungeon clear", BOT_STATE_NON_COMBAT); break;
-            case Action::None:    break;
+            case Action::Install:
+                botAI->ChangeStrategy("+dungeon clear,-grind,-travel,-rpg,-rpg jump",
+                                      BOT_STATE_NON_COMBAT);
+                break;
+            case Action::Strip:
+                botAI->ChangeStrategy("-dungeon clear,+grind,+travel,+rpg,+rpg jump",
+                                      BOT_STATE_NON_COMBAT);
+                break;
+            case Action::None:
+                break;
         }
+
+        // The relay suppression rides the strategy: a DC party stands on top
+        // of instance entrance/exit triggers, and stock's area-trigger relay
+        // ported the run's tank out through the exit mid-run.
+        // Why the stock drivers get stripped at all: the random-bot
+        // noncombat set carries grind/travel/rpg - movement drivers that
+        // FIGHT the DC advance for the mover. Live, the run's tank was
+        // dragged back up the entrance tunnel toward the exit over and
+        // over (parked at Z 86/101/216 above the floor) and runs crawled
+        // at the entrance for their whole 600s window in that tug-of-war.
+        // AiFactory only strips these for bots with a real human master; a
+        // dc-owned bot needs them gone the same way (swap is in the atomic
+        // ChangeStrategy above).
+        if (plan.nonCombat == Action::Install)
+            botAI->SetSuppressAreaTriggerRelay(true);
+        else if (plan.nonCombat == Action::Strip)
+            botAI->SetSuppressAreaTriggerRelay(false);
         switch (plan.combat)
         {
             case Action::Install: botAI->ChangeStrategy("+dungeon clear combat", BOT_STATE_COMBAT); break;

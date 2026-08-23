@@ -2,6 +2,7 @@
 #define _RandomPlayerbotMgr_H
 
 #include "Common.h"
+#include <unordered_set>
 #include "PlayerbotAIBase.h"
 #include "PlayerbotMgr.h"
 #include "playerbot/PlayerbotAIConfig.h"
@@ -221,6 +222,35 @@ public:
         virtual void OnBotDeleted(uint32 botGuid, uint32 accountId) override;
 
     public:
+        // The ACTIVE rotation set (the ai_playerbot_random_bots 'add' rows
+        // GetBots() caches). Public read-only copy for mod-dungeon-clear's
+        // test roster, which must claim characters from OUTSIDE this set:
+        // the rotation logs these in and out on its own schedule and yanked
+        // a live run's tank mid-dungeon.
+        std::list<uint32> GetActiveRotationBots() { return GetBots(); }
+
+        // Logins owned by an external driver: mod-dungeon-clear's test
+        // harness logs its party in through THIS holder (PlayerbotMgr's
+        // ownership gate refuses foreign characters), but the characters are
+        // bot-account stock, so the random add-event logout policy saw them
+        // as expired strays and reaped them mid-run after the two-minute
+        // group grace ("leader tank vanished"). The owner marks each login
+        // and clears the mark in its teardown.
+        void SetExternallyManaged(uint32 lowGuid, bool on)
+        {
+            if (on)
+                m_externallyManaged.insert(lowGuid);
+            else
+                m_externallyManaged.erase(lowGuid);
+        }
+        bool IsExternallyManaged(uint32 lowGuid) const
+        {
+            return m_externallyManaged.find(lowGuid) != m_externallyManaged.end();
+        }
+    private:
+        std::unordered_set<uint32> m_externallyManaged;
+    public:
+
         static std::string GetCommandTexts(const std::string& command);
         static std::unordered_map<std::string, std::string> GetCommandTexts();
         std::list<std::string> HandleRandomizeFirst(Player* bot);

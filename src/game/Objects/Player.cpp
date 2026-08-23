@@ -2614,6 +2614,14 @@ bool Player::SwitchInstance(uint32 newInstanceId)
 
 bool Player::TeleportTo(uint32 mapid, float x, float y, float z, float orientation, uint32 options)
 {
+    // DIAG(temp, Z-GEIST): a dungeon-clear test tank ended up parked at
+    // Z=203 over the Deadmines (overworld height inside map 36). Every
+    // player teleport into that band logs loudly so a debugger can break on
+    // THIS line - inline-condition breakpoints proved unreliable here.
+    if (mapid == 36 && z > 150.0f)
+        sLog.outError("[Z-GEIST] %s teleport -> map36 %.1f/%.1f/%.1f (opts %u)",
+                      GetName(), x, y, z, options);
+
     if (!MapManager::IsValidMapCoord(mapid, x, y, z, orientation))
     {
         sLog.outError("TeleportTo: invalid map %d or absent instance template.", mapid);

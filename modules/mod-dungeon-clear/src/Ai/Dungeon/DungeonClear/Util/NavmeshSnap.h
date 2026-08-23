@@ -36,6 +36,13 @@ public:
 
     // Convenience overload — uses the bot's current map.
     static Result Snap(Player const* bot, float x, float y, float z, float maxRadius = 30.0f);
+
+    // Column variant: small horizontal box, TALL vertical extent. For a
+    // point parked far above (or below) the mesh - live, a bot grounded on
+    // the OVERWORLD height 150y over the Deadmines floor - where the normal
+    // 10yd vertical search can never see the real ground.
+    static Result SnapColumn(Map const* map, float x, float y, float z,
+                             float halfHeight = 250.0f, float radius = 6.0f);
 };
 
 #endif

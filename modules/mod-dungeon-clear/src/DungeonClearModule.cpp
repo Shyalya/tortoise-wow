@@ -44,6 +44,8 @@
  */
 
 #include "ScriptMgr.h"
+#include "Ai/Dungeon/DungeonClear/Data/BossSpawnIndex.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEncounterMask.h"
 #include "AllCreatureScript.h"
 #include "Cell.h"
 #include "CellImpl.h"
@@ -430,6 +432,8 @@ public:
         // or toggled dc off before polling). Bounds the mailbox; cheap no-op
         // when empty.
         DcPathWorker::Instance().Sweep(DC_ASYNC_PATH_RESULT_TTL_MS);
+        // Drop encounter masks of instances that no longer run (throttled).
+        DcEncounterMask::Sweep();
         // Event-driven status: recompute each clearing tank's status and emit a
         // STATUS/BOSS packet only on change (replaces the addon's old poll).
         // Internally throttled; a cheap no-op when no tank is clearing. Runs on
@@ -523,6 +527,41 @@ public:
 // still-stranded awakened dragonkin so the party drops combat and the run
 // continues. Scoped strictly to the Shade's death on map 109; universal (helps
 // real players too), not gated on DungeonClear.
+// Feeds DcEncounterMask: a dungeon creature death whose entry is in the boss
+// index sets that boss's mask bit for the instance. This IS the kill signal
+// every mask reader consumes - without it no boss ever counts as killed on
+// this core (no KillRewarder/DungeonEncounter path here).
+class DungeonClearEncounterMaskScript : public UnitScript
+{
+public:
+    DungeonClearEncounterMaskScript()
+        : UnitScript("DungeonClearEncounterMaskScript", {
+            UNITHOOK_ON_UNIT_DEATH
+        }) {}
+
+    void OnUnitDeath(Unit* unit, Unit* /*killer*/) override
+    {
+        if (!unit || !unit->IsCreature())
+            return;
+        Map* map = unit->FindMap();
+        if (!map || !map->IsDungeon())
+            return;
+
+        for (DungeonBossInfo const& info :
+             BossSpawnIndex::Get(map->GetId(), DUNGEON_DIFFICULTY_NORMAL))
+        {
+            if (info.entry == unit->GetEntry())
+            {
+                DcEncounterMask::OnBossKilled(map, info.encounterIndex);
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC] boss down: {} (entry {}) — encounter bit {} set for instance {}",
+                         info.name, info.entry, info.encounterIndex, map->GetInstanceId());
+                break;
+            }
+        }
+    }
+};
+
 class DungeonClearEranikusCombatReleaseScript : public UnitScript
 {
 public:
@@ -588,6 +627,7 @@ void AddSC_dungeon_clear_module()
     new DungeonClearReaperScript();
     new DungeonClearZfStraySummonScript();
     new DungeonClearEranikusCombatReleaseScript();
+    new DungeonClearEncounterMaskScript();
 
     // `.dc test` harness: receive each changed STATUS frame for the monitored
     // tank (addon messages only reach real players in the bot's group, and the

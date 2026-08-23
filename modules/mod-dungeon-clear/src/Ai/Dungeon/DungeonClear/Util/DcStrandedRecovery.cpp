@@ -4,6 +4,8 @@
  */
 
 #include "DcStrandedRecovery.h"
+#include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
+#include <cmath>
 
 #include "Ai/Dungeon/DungeonClear/Data/DungeonBossInfo.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
@@ -203,6 +205,29 @@ namespace DcStrandedRecovery
         float const ly = leader->GetPositionY();
         float const lz = leader->GetPositionZ();
 
+        // Altitude sanity BEFORE anything else: if the leader himself is
+        // parked in the air - live, stock movement repeatedly grounded bots
+        // on the OVERWORLD height over the Deadmines entrance (Z 130..216
+        // with the real floor at ~60) - every rescue below would COPY that
+        // height onto the strays it teleports in. Column-snap him back onto
+        // the mesh and let the next tick work from real positions.
+        {
+            NavmeshSnap::Result const column =
+                NavmeshSnap::SnapColumn(leader->GetMap(), lx, ly, lz);
+            if (column.ok && std::fabs(column.z - lz) > 25.0f)
+            {
+                leader->GetMotionMaster()->Clear();
+                leader->NearTeleportTo(column.x, column.y, column.z,
+                                       leader->GetOrientation(),
+                                       /*casting*/ false, /*vehicle*/ false,
+                                       /*withPet*/ true);
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] altitude sanity: column-snapped {:.0f}y back onto the mesh",
+                         leader->GetName(), std::fabs(column.z - lz));
+                return;
+            }
+        }
+
         uint32 moved = 0;
         for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
         {
@@ -215,6 +240,26 @@ namespace DcStrandedRecovery
                 continue;
             if (!GET_PLAYERBOT_AI(member))       // bots only, never a human
                 continue;
+            // Same altitude sanity for a member floating over the mesh -
+            // his Z poisons GetDistance and any rescue that copies it.
+            {
+                float const mz = member->GetPositionZ();
+                NavmeshSnap::Result const column = NavmeshSnap::SnapColumn(
+                    member->GetMap(), member->GetPositionX(), member->GetPositionY(), mz);
+                if (column.ok && std::fabs(column.z - mz) > 25.0f)
+                {
+                    member->GetMotionMaster()->Clear();
+                    member->NearTeleportTo(column.x, column.y, column.z,
+                                           member->GetOrientation(),
+                                           /*casting*/ false, /*vehicle*/ false,
+                                           /*withPet*/ true);
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] altitude sanity: column-snapped {} {:.0f}y onto the mesh",
+                             leader->GetName(), member->GetName(), std::fabs(column.z - mz));
+                    continue;
+                }
+            }
+
             float const strandedDist = leader->GetDistance(member);
             if (strandedDist <= maxSpread)
                 continue;                       // in range — not stranded

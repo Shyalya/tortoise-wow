@@ -291,6 +291,12 @@ Player* LFTManager::TakeFromBotOnlyGroup(uint8 wanted, QueuedPlayer const& waite
         if (!group || bot->InBattleGround() || bot->InBattleGroundQueue())
             continue;
 
+        // Only OUR seed/match groups are up for raiding. Any other bot-only
+        // group belongs to some other system (a dc-test party, an event) and
+        // pulling its members apart broke those live.
+        if (m_lftGroupIds.find(group->GetId()) == m_lftGroupIds.end())
+            continue;
+
         if (m_queue.find(bot->GetObjectGuid()) != m_queue.end())
             continue;
 

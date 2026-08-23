@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearActions.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEncounterMask.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <algorithm>
@@ -1162,10 +1163,10 @@ namespace
             return true;
         if (step.escortDoneBit >= 0)
         {
-            InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
-            if (inst && (inst->GetCompletedEncounterMask() &
-                         (1u << static_cast<uint32>(step.escortDoneBit))))
-                return true;
+            // Bits are DcEncounterMask order-bits on this tree (module-tracked).
+        if (DcEncounterMask::Get(bot->FindMap()) &
+            (1u << static_cast<uint32>(step.escortDoneBit)))
+            return true;
         }
         if (step.instanceDataId >= 0)
         {

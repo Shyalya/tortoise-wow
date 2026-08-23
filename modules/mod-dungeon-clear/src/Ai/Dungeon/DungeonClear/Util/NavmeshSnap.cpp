@@ -78,3 +78,35 @@ NavmeshSnap::Result NavmeshSnap::Snap(Player const* bot, float x, float y, float
         return {};
     return Snap(bot->FindMap(), x, y, z, maxRadius);
 }
+
+NavmeshSnap::Result NavmeshSnap::SnapColumn(Map const* map, float x, float y, float z,
+                                            float halfHeight, float radius)
+{
+    Result result;
+    if (!map)
+        return result;
+
+    Map::MapCollisionData coll = map->GetMapCollisionData();
+    dtNavMeshQuery const* query = coll.GetMMapData().GetNavMeshQuery();
+    if (!query)
+        return result;
+
+    dtQueryFilterExt filter;
+    filter.setIncludeFlags(NAV_GROUND | NAV_WATER | NAV_MAGMA);
+    filter.setExcludeFlags(0);
+
+    float const point[3] = { y, z, x };
+    float const extents[3] = { radius, halfHeight, radius };
+    dtPolyRef ref = 0;
+    float nearest[3] = { 0.0f, 0.0f, 0.0f };
+    if (dtStatusFailed(const_cast<dtNavMeshQuery*>(query)->findNearestPoly(point, extents, &filter, &ref, nearest)) || !ref)
+        return result;
+
+    result.ok = true;
+    result.x = nearest[2];
+    result.y = nearest[0];
+    result.z = nearest[1];
+    float const dx = result.x - x, dy = result.y - y, dz = result.z - z;
+    result.distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+    return result;
+}

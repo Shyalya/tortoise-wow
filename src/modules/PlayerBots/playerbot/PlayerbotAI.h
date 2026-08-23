@@ -748,6 +748,16 @@ public:
         // strategy in AiFactory, and survives ResetStrategies() - which is the
         // whole point, since that runs whenever the master changes, i.e. right
         // when the bot joins the player's group.
+        // Modules set this while a bot runs an activity that stands the
+        // party on top of TELEPORT areatriggers (a dungeon-clear run parks
+        // right at instance entrances/exits): the stock "area trigger" relay
+        // must not port such a bot out mid-run - live, the run's tank walked
+        // into the Deadmines exit trigger and vanished ("leader tank
+        // vanished"; caught by a gdb trap on Player::TeleportTo under
+        // AreaTriggerAction::Execute). See that action for the gate.
+        void SetSuppressAreaTriggerRelay(bool on) { m_suppressAreaTriggerRelay = on; }
+        bool IsAreaTriggerRelaySuppressed() const { return m_suppressAreaTriggerRelay; }
+
         void SetForcedRole(uint8 role) { m_forcedRole = role; }
         uint8 GetForcedRole() const { return m_forcedRole; }
     void UpdateTalentSpec(PlayerTalentSpec spec = PlayerTalentSpec::TALENT_SPEC_INVALID);
@@ -780,6 +790,7 @@ protected:
 	Player* bot;
 	Player* master;
 	uint8 m_forcedRole = 0;
+	bool m_suppressAreaTriggerRelay = false;
 	// GUID-shadow of `master` so we can verify the pointer is still
 	// alive each tick without dereferencing it. Set in SetMaster().
 	// Used by RevalidateMasterPointer() at the top of UpdateAI.

@@ -229,6 +229,26 @@ DcPartyState::SpreadGate DcPartyState::GetSpreadGate(Player* bot, AiObjectContex
         float const setback = DcSettings::GetFloat(bot, "PullSetback");
         float const maxDrag = DcSettings::GetFloat(bot, "PullMaxDrag");
         gate.maxTankGap = gate.maxSpread + std::max(setback, maxDrag);
+
+        // STALE-CAMP FALLBACK - the missing half of the runaway backstop
+        // above. The camp is only ever re-anchored by the stranded-recovery
+        // pass, and that action loses the relevance race against
+        // resting/looting on every tick - so on a plain advance the camp
+        // stays parked where the last maneuver ended while the party walks
+        // on. Members are then measured against ground the party LEFT:
+        // live, bots standing next to the tank read as "out of range" and
+        // the run crawled in a loot/wait cycle at the Deadmines entrance
+        // for its whole 600s window. If the LEADER himself is already
+        // beyond the tank-gap from the camp, that camp is history - measure
+        // against the tank until the pull machinery plants a fresh one.
+        float const leaderCampGap = bot->GetDistance(pull.camp.GetPositionX(),
+                                                     pull.camp.GetPositionY(),
+                                                     pull.camp.GetPositionZ());
+        if (leaderCampGap > gate.maxTankGap)
+        {
+            gate.anchor = nullptr;
+            gate.maxTankGap = 0.0f;
+        }
     }
     return gate;
 }
@@ -390,7 +410,7 @@ bool DcPartyState::HasDeadSameMapMember(Player* bot)
     return false;
 }
 
-bool DcPartyState::IsAnyPartyMemberLooting(Player* bot)
+bool DcPartyState::IsAnyPartyMemberLooting(Player* bot, std::string* whoOut)
 {
     if (!bot)
         return false;
@@ -417,7 +437,11 @@ bool DcPartyState::IsAnyPartyMemberLooting(Player* bot)
         AiObjectContext* memberCtx = memberAI->GetAiObjectContext();
         if (memberCtx->GetValue<bool>(DcKey::Stock::CanLoot)->Get() ||
             memberCtx->GetValue<bool>(DcKey::Stock::HasAvailableLoot)->Get())
+        {
+            if (whoOut)
+                *whoOut = member->GetName();
             return true;
+        }
     }
     return false;
 }

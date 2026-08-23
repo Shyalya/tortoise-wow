@@ -180,7 +180,7 @@ public:
     // since we neither drive nor wait on their looting. Lets the dungeon-clear
     // tank hold its advance after a pull until the whole party has finished
     // looting; the caller bounds the wait with a commit-timeout.
-    static bool IsAnyPartyMemberLooting(Player* bot);
+    static bool IsAnyPartyMemberLooting(Player* bot, std::string* whoOut = nullptr);
 
     // Builds a short, human-readable account of who the tank is waiting on to
     // become pull-ready, using the SAME thresholds IsPartyReady is called with

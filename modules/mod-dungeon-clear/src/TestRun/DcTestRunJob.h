@@ -212,6 +212,11 @@ private:
     void TickTeleporting();
     void TickStarting();
     void TickMonitoring(uint32 dt);
+    // Geo fence + altitude sanity over all party slots. Shared by
+    // TickStarting AND TickMonitoring: b75 accidentally left it only in
+    // TickStarting, so a monitoring-phase wanderer (Westfall grind teleport)
+    // was never fenced back.
+    void SweepPartyGeometry();
     void TrackDeaths(Player* tank);
     void TrackEngagement(Player* tank);
     void TrackPulls(Player* tank);
@@ -362,6 +367,10 @@ private:
     bool _lastInCombat = false;
     ObjectGuid _lastVictim;
     uint32 _lastVictimHpPct = 0;
+    // Party-wide combat fingerprint (see the progress-evidence block): the
+    // tank alone parked out of combat while the party fought made healthy
+    // runs read as frozen.
+    uint32 _lastPartyCombatSig = 0;
 
     uint32 _pausedForMs = 0;
     uint32 _stalledForMs = 0;

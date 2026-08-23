@@ -2301,6 +2301,15 @@ void RandomPlayerbotMgr::MovePlayerBot(uint32 guid, PlayerbotHolder* newHolder)
 
 bool RandomPlayerbotMgr::ProcessBot(uint32 bot)
 {
+    // A test-harness login is not this manager's bot AT ALL: not just exempt
+    // from the timed logout (older guard below), but from Randomize /
+    // ResetStrategies / RandomTeleport too. Live (tr-20260822-215152-1): the
+    // rotation refresh rebuilt a dc run member's strategies every ~90s and
+    // RandomTeleportForLevel ported it out of the Deadmines run onto a
+    // Westfall grind spot mid-run.
+    if (IsExternallyManaged(bot))
+        return false;
+
     Player* player = GetPlayerBot(bot);
     if (player && sPlayerbotAIConfig.IsFreeAltBot(player))
     {
@@ -2321,6 +2330,11 @@ bool RandomPlayerbotMgr::ProcessBot(uint32 bot)
     //Log out bot
     if (!isValid)
     {
+        // An externally-managed login (dc test harness) is not ours to reap -
+        // its owner logs it out in its own teardown.
+        if (IsExternallyManaged(bot))
+            return false;
+
         if (botsAllowedInWorld && player && player->GetGroup())
         {
             SetEventValue(bot, "add", 1, 120);                                 // Delay logout for 2 minutes while in group.
@@ -2418,6 +2432,11 @@ bool RandomPlayerbotMgr::ProcessBot(uint32 bot)
 
 bool RandomPlayerbotMgr::ProcessBot(Player* player)
 {
+    // Same harness guard as the guid overload - this one is the entry point
+    // for callers that already hold the player.
+    if (player && IsExternallyManaged(player->GetGUIDLow()))
+        return false;
+
     if (!player || !player->IsInWorld() || player->IsBeingTeleported() || player->GetSession()->isLogingOut())
         return false;
 

@@ -688,6 +688,10 @@ bool LFTManager::AddPlayerToGroup(Group*& group, ObjectGuid const& leaderGuid, O
         }
     }
 
+    // Formed or adopted by this matcher either way - remember it as OURS
+    // (TakeFromBotOnlyGroup refuses to raid unregistered bot groups).
+    m_lftGroupIds.insert(group->GetId());
+
     if (group->IsMember(memberGuid))
         return true;
 

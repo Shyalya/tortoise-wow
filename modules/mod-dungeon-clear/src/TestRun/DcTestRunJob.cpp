@@ -4,6 +4,8 @@
  */
 
 #include "TestRun/DcTestRunJob.h"
+#include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEncounterMask.h"
 
 #include <algorithm>
 #include <array>
@@ -319,6 +321,13 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
     PlayerbotMgr* mgr = GET_PLAYERBOT_MGR(gm);
     bool const isAlliance = gm->GetTeamId() == TEAM_ALLIANCE;
 
+    // The active rotation set, resolved once: the rotation logs its
+    // currentBots in and out on its own schedule and yanked a live run's
+    // tank mid-dungeon - claimed characters must come from OUTSIDE it.
+    std::unordered_set<uint32> rotationGuids;
+    for (uint32 lowGuid : sRandomPlayerbotMgr.GetActiveRotationBots())
+        rotationGuids.insert(lowGuid);
+
     // Claim one offline bot-account character of `classId`, or Empty if none
     // is free. No addclass pool on this tree - the random-bot accounts are the
     // equivalent supply: every character on them is bot stock, whether or not
@@ -333,6 +342,15 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
             if (!data || data->uiClass != classId)
                 continue;
             if (!sPlayerbotAIConfig.IsInRandomAccountList(data->uiAccount))
+                continue;
+            // NOT a character of the ACTIVE rotation set: the rotation logs
+            // its currentBots in and out on its own schedule and yanked a
+            // live run's tank mid-dungeon (result=aborted, leader tank
+            // vanished). GetBots() is exactly that set; the other ~1600
+            // bot-account characters are ones the rotation never touches
+            // (until a future re-roll picks them - a small window relative
+            // to a run's minutes, and _reservedGuids covers run-vs-run).
+            if (rotationGuids.count(cacheEntry.first))
                 continue;
             if ((Player::TeamForRace(uint8(data->uiRace)) == ALLIANCE) != isAlliance)
                 continue;
@@ -398,6 +416,21 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
         }
         slot.guid = guid;
         usedClasses.insert(slot.classId);
+        // A character parked inside a dungeon map by an earlier broken
+        // run logs BACK IN there - and a login into an instance whose
+        // WMOs are not streamed yet grounds him on the OVERWORLD height
+        // (live: tanks spawning at Z=205 over the Deadmines, the bad
+        // position inherited run-to-run through the character save).
+        // Park the character at its homebind BEFORE the login; the same
+        // CharacterDatabase queue serializes this ahead of the login
+        // query holder, and the provisioning teleport places it properly
+        // afterwards.
+        CharacterDatabase.PExecute(
+            "UPDATE characters c JOIN character_homebind h ON h.guid = c.guid "
+            "SET c.map = h.map, c.position_x = h.position_x, "
+            "c.position_y = h.position_y, c.position_z = h.position_z "
+            "WHERE c.guid = %u AND c.online = 0",
+            slot.guid.GetCounter());
         mgr->AddPlayerBot(slot.guid, gm->GetSession()->GetAccountId());
     }
 
@@ -474,7 +507,24 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::CreateFromRoster(Player* gm,
     // AiPlayerbot.RandomBotAccounts. A real player's character satisfies neither,
     // so the holder only owns its login/logout here.
     for (Slot const& slot : job->_slots)
+    {
+        // A character parked inside a dungeon map by an earlier broken
+        // run logs BACK IN there - and a login into an instance whose
+        // WMOs are not streamed yet grounds him on the OVERWORLD height
+        // (live: tanks spawning at Z=205 over the Deadmines, the bad
+        // position inherited run-to-run through the character save).
+        // Park the character at its homebind BEFORE the login; the same
+        // CharacterDatabase queue serializes this ahead of the login
+        // query holder, and the provisioning teleport places it properly
+        // afterwards.
+        CharacterDatabase.PExecute(
+            "UPDATE characters c JOIN character_homebind h ON h.guid = c.guid "
+            "SET c.map = h.map, c.position_x = h.position_x, "
+            "c.position_y = h.position_y, c.position_z = h.position_z "
+            "WHERE c.guid = %u AND c.online = 0",
+            slot.guid.GetCounter());
         sRandomPlayerbotMgr.AddPlayerBot(slot.guid, 0);
+    }
 
     std::string names;
     for (Slot const& slot : job->_slots)
@@ -787,6 +837,21 @@ void DcTestRunJob::TickProvisioning(bool& provisionBudget)
     // Full roll at the target level first (Randomize includes GiveLevel and
     // re-picks talents), then force the role spec and re-gear for it — the
     // same sequence the `talents spec` chat command uses.
+    // Pin the slot's role BEFORE the factory rebuilds strategies:
+    // IsTank/FindLeaderTank read the INSTALLED strategy set, not the talent
+    // spec, and e.g. a feral druid respecs fine yet never gains the "tank"
+    // strategy on its own - dc on then resolves no leader tank and the run
+    // refuses to start (live: two straight setup failures, both with the
+    // feral tank; warrior/paladin tanks worked because their default
+    // strategy set already carries "tank"). ResetStrategies applies
+    // m_forcedRole last, dungeon-finder style, for every rebuild from here.
+    if (PlayerbotAI* slotAi = GetBotAI(bot))
+        slotAi->SetForcedRole(slot.role == "tank" ? 1 : (slot.role == "heal" ? 2 : 3));
+
+    // Shield this login from the random holder's add-event logout policy for
+    // the run's lifetime (see RandomPlayerbotMgr::SetExternallyManaged).
+    sRandomPlayerbotMgr.SetExternallyManaged(slot.guid.GetCounter(), true);
+
     PlayerbotFactory factory(bot, _level, _gear.quality);
 
     // Strip the equipped set first. Randomize() only wipes items when
@@ -1316,6 +1381,59 @@ void DcTestRunJob::TickTeleporting()
     }
 }
 
+void DcTestRunJob::SweepPartyGeometry()
+{
+    // Altitude sanity, run by the MONITOR because nothing can gate it here:
+    // stock movement repeatedly grounds party members on the OVERWORLD
+    // height over the Deadmines entrance (Z 130..216, real floor ~60). The
+    // AI-side rescue (stranded trigger -> Recover) loses the relevance race
+    // against resting/looting every tick, so the run supervisor drags any
+    // member hovering >25y off the mesh straight back down.
+    for (Slot const& slot : _slots)
+        if (Player* bot = ObjectAccessor::FindPlayer(slot.guid))
+            if (Map* botMap = bot->FindMap())
+            {
+                // Geo fence FIRST, and OUTSIDE the dungeon gate - a wanderer
+                // is by definition NOT on the dungeon map, so a fence nested
+                // under IsDungeon() never sees him (live: a dps strolled to
+                // Elwynn while the fence idled). Bring him back to the tank;
+                // the group bind resolves the same instance copy.
+                if (!botMap->IsDungeon())
+                {
+                    if (Player* tank = ObjectAccessor::FindPlayer(_tankGuid))
+                        if (Map* tankMap = tank->FindMap())
+                            if (tankMap->IsDungeon() && bot != tank && bot->IsAlive() &&
+                                !bot->IsBeingTeleported())
+                            {
+                                LOG_INFO("playerbots.dungeonclear",
+                                         "TESTRUN {} geo fence: {} left the dungeon — teleporting back to the tank",
+                                         _record.runId, bot->GetName());
+                                bot->TeleportTo(tankMap->GetId(), tank->GetPositionX(),
+                                                tank->GetPositionY(), tank->GetPositionZ(),
+                                                bot->GetOrientation());
+                            }
+                    continue;
+                }
+
+                {
+                    float const bz = bot->GetPositionZ();
+                    NavmeshSnap::Result const column = NavmeshSnap::SnapColumn(
+                        botMap, bot->GetPositionX(), bot->GetPositionY(), bz);
+                    if (column.ok && std::fabs(column.z - bz) > 25.0f)
+                    {
+                        bot->GetMotionMaster()->Clear();
+                        bot->NearTeleportTo(column.x, column.y, column.z,
+                                            bot->GetOrientation(),
+                                            /*casting*/ false, /*vehicle*/ false,
+                                            /*withPet*/ true);
+                        LOG_INFO("playerbots.dungeonclear",
+                                 "TESTRUN {} altitude sanity: {} column-snapped {:.0f}y onto the mesh",
+                                 _record.runId, bot->GetName(), std::fabs(column.z - bz));
+                    }
+                }
+            }
+}
+
 void DcTestRunJob::TickStarting()
 {
     Player* tank = FindTank();
@@ -1333,15 +1451,17 @@ void DcTestRunJob::TickStarting()
         if (Player* bot = ObjectAccessor::FindPlayer(slot.guid))
             DcStrategyGate::Reconcile(bot);
 
+    SweepPartyGeometry();
+
+
     AiObjectContext* ctx = tankAI->GetAiObjectContext();
 
     // A reused instance with dead bosses would flash an instant (false)
     // all-clear — refuse it rather than record a fake success.
-    if (InstanceScript* inst = DcTargeting::GetInstanceScript(tank))
-        if (inst->GetCompletedEncounterMask() != 0)
+    if (uint32 const staleMask = DcEncounterMask::Get(tank->FindMap()))
         {
             FailSetup("stale instance: encounters already completed (mask " +
-                      std::to_string(inst->GetCompletedEncounterMask()) + ")");
+                      std::to_string(staleMask) + ")");
             return;
         }
 
@@ -1386,8 +1506,7 @@ void DcTestRunJob::TickStarting()
     tankAI->DoSpecificAction("dc on", Event("dc", "", FindGm()), true);
     if (DcRun::Of(ctx).enabled)
     {
-        if (InstanceScript* inst = DcTargeting::GetInstanceScript(tank))
-            _lastMask = inst->GetCompletedEncounterMask();
+        _lastMask = DcEncounterMask::Get(tank->FindMap());
         _lastAnchors =
             ctx->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get().size();
         LOG_INFO("playerbots.dungeonclear",
@@ -1673,6 +1792,11 @@ bool DcTestRunJob::AnyMemberDead(Player* tank)
 
 void DcTestRunJob::TickMonitoring(uint32 dt)
 {
+    // Repair party geometry BEFORE reading it: fence overworld wanderers
+    // back to the tank and column-snap mid-air members, so the observation
+    // below scores the repaired state.
+    SweepPartyGeometry();
+
     DcTestRun::Observation obs;
     obs.elapsedMs = _monitorMs;
     obs.gmOnline = true;  // GM absence is handled in Tick()
@@ -1746,9 +1870,7 @@ void DcTestRunJob::TickMonitoring(uint32 dt)
         std::optional<DungeonBossInfo> const next =
             ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
 
-        uint32 mask = _lastMask;
-        if (InstanceScript* inst = DcTargeting::GetInstanceScript(tank))
-            mask = inst->GetCompletedEncounterMask();
+        uint32 const mask = tank->FindMap() ? DcEncounterMask::Get(tank->FindMap()) : _lastMask;
         std::size_t const anchors =
             ctx->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get().size();
 
@@ -1816,19 +1938,30 @@ void DcTestRunJob::TickMonitoring(uint32 dt)
         //
         // A real fight moves at least one of those every sample. A wedged one
         // moves none: stuck flag, no victim or a stale one, health frozen.
-        bool const inCombat = tank->IsInCombat();
-        Unit const* victim = tank->GetVictim();
-        ObjectGuid const victimGuid = victim ? victim->GetObjectGuid() : ObjectGuid::Empty;
-        uint32 const victimHpPct =
-            victim ? static_cast<uint32>(victim->GetHealthPct()) : 0u;
-
-        if (inCombat != _lastInCombat || victimGuid != _lastVictim ||
-            victimHpPct != _lastVictimHpPct)
+        // PARTY-wide, not tank-only: live, the tank idled at the entrance
+        // while the dps fought their way forward - a perfectly alive run
+        // that read as frozen because only the tank's combat picture was
+        // sampled. Fold every member's combat state, victim and victim
+        // health into one fingerprint; a wedged run still freezes it (a
+        // stuck flag with a stale victim moves nothing party-wide either).
+        uint32 partySig = 2166136261u;
+        auto fold = [&partySig](uint32 v)
+        {
+            partySig = (partySig ^ v) * 16777619u;
+        };
+        for (Slot const& sigSlot : _slots)
+        {
+            Player* member = ObjectAccessor::FindPlayer(sigSlot.guid);
+            if (!member)
+                continue;
+            fold(member->IsInCombat() ? 1u : 0u);
+            Unit const* mv = member->GetVictim();
+            fold(mv ? mv->GetObjectGuid().GetCounter() : 0u);
+            fold(mv ? static_cast<uint32>(mv->GetHealthPct()) : 0u);
+        }
+        if (partySig != _lastPartyCombatSig)
             progressed = true;
-
-        _lastInCombat = inCombat;
-        _lastVictim = victimGuid;
-        _lastVictimHpPct = victimHpPct;
+        _lastPartyCombatSig = partySig;
 
         // Sampled every monitor step while somebody is still standing, so the
         // wipe verdict below can name what took the party down. Deaths are read
@@ -2184,6 +2317,25 @@ void DcTestRunJob::LogoutBots(Player* gm)
     {
         if (!slot.guid)
             continue;
+
+        // Re-point each bot's master at ITSELF before the logout: the
+        // logout path tells the master goodbye, and the master here is the
+        // driver - whose Player can already be torn down on the abort paths
+        // that reach this teardown (live: SIGSEGV in Object::GetByteValue
+        // under PlayerbotSecurity::LevelFor(master) mid-teardown). A
+        // self-master makes that tell provably safe.
+        {
+            Player* botPlayer = mgr ? mgr->GetPlayerBot(slot.guid) : nullptr;
+            if (!botPlayer)
+                botPlayer = sRandomPlayerbotMgr.GetPlayerBot(slot.guid);
+            if (botPlayer)
+                if (PlayerbotAI* botAi = GetBotAI(botPlayer))
+                    botAi->SetMaster(botPlayer);
+        }
+
+        // Hand the login back to the random holder's normal policy before
+        // logging it out (mark set at provisioning).
+        sRandomPlayerbotMgr.SetExternallyManaged(slot.guid.GetCounter(), false);
 
         if (mgr && mgr->GetPlayerBot(slot.guid))
             mgr->LogoutPlayerBot(slot.guid);

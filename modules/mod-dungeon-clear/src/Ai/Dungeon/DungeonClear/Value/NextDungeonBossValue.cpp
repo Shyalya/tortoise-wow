@@ -4,6 +4,7 @@
  */
 
 #include "NextDungeonBossValue.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEncounterMask.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <algorithm>
@@ -98,23 +99,13 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
     std::unordered_set<uint32> const& cleared =
         AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors);
 
-    // The completed-encounter mask is the authoritative kill signal. It is
-    // set by Map::UpdateEncounterState from the same KillRewarder path that
-    // grants loot and quest credit (KillRewarder.cpp -> UpdateEncounterState),
-    // flipping bit (1 << DungeonEncounter.dbc encounterIndex). BossSpawnIndex
-    // stores that exact DBC encounterIndex, so the bit lines up directly.
-    //
-    // Do NOT use InstanceScript::GetBossState(encounterIndex) here: that
-    // indexes the script's internal bosses[] vector by its own DATA_*
-    // constants — a different index space that only aligns with the DBC
-    // encounterIndex by coincidence. When it doesn't align, a misaligned slot
-    // reading DONE silently skips a live boss, and a slot that never reads
-    // DONE leaves a freshly-killed boss looking alive (the symptom: party
-    // kills a boss but never advances to the next one). The mask is reliable
-    // for every dungeon whose encounters are ENCOUNTER_CREDIT_KILL_CREATURE,
-    // which is precisely the set BossSpawnIndex indexes.
-    InstanceScript* inst = DcTargeting::GetInstanceScript(bot);
-    uint32 const completedMask = inst ? inst->GetCompletedEncounterMask() : 0u;
+    // The completed-encounter mask is the authoritative kill signal. On this
+    // core it is module-tracked (DcEncounterMask, fed by the module's
+    // UNITHOOK_ON_UNIT_DEATH script) - the InstanceData face's
+    // GetCompletedEncounterMask is an honest 0-stub here and must not be
+    // read. The bit is (1 << encounterIndex) with BossSpawnIndex's numbering,
+    // so mask and roster line up by construction.
+    uint32 const completedMask = DcEncounterMask::Get(map);
 
     // Resolve every boss's liveness in a single store pass (shared by the
     // selected-override check and the partition loop below).
@@ -138,9 +129,11 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
                 else if (info.kind == DungeonAnchorKind::Boss &&
                          info.encounterIndex < 32 && (completedMask & (1u << info.encounterIndex)))
                     invalid = true;
-                else if (info.kind == DungeonAnchorKind::Boss && info.doneBossStateIndex >= 0 &&
-                         inst && inst->GetBossState(static_cast<uint32>(info.doneBossStateIndex)) == DONE)
-                    invalid = true;
+                // (Upstream also consulted GetBossState for doneBossStateIndex
+                // bosses - encounters that were not KILL_CREATURE credit there.
+                // On this core DcEncounterMask flags EVERY boss death, so the
+                // mask test above already covers them; GetBossState is a
+                // 0-stub here and must not be read.)
 
                 if (!invalid)
                 {
@@ -208,13 +201,10 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
             continue;
 
         // Non-DBC door-gating boss (e.g. the Mechanar Gatewatchers): no
-        // GetCompletedEncounterMask bit ever flips for it, so its completion is
-        // read from the instance script's own boss-state slot instead. Persistent
-        // for the instance's life, so a re-enable after the kill won't re-target
-        // a boss whose corpse has long despawned. See doneBossStateIndex.
-        if (info.kind == DungeonAnchorKind::Boss && info.doneBossStateIndex >= 0 &&
-            inst && inst->GetBossState(static_cast<uint32>(info.doneBossStateIndex)) == DONE)
-            continue;
+        // (doneBossStateIndex bosses: upstream read the instance script's
+        // boss-state slot because their encounters never flipped a mask bit.
+        // DcEncounterMask flags every boss death on this core, so the mask
+        // check above covers them and the 0-stub GetBossState stays unread.)
 
         BossLiveState const state = LookupLive(liveness, info.entry);
         if (state.present && !state.alive)

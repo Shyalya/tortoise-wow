@@ -4,6 +4,7 @@
  */
 
 #include "TestRun/DcDiagSnapshot.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcEncounterMask.h"
 
 #include <algorithm>
 #include <optional>
@@ -272,8 +273,7 @@ namespace DcDiag
         if (Unit* victim = tank->GetVictim())
             snap.tankVictim = victim->GetName();
 
-        InstanceScript* inst = DcTargeting::GetInstanceScript(tank);
-        snap.completedEncounterMask = inst ? inst->GetCompletedEncounterMask() : 0u;
+        snap.completedEncounterMask = tank->FindMap() ? DcEncounterMask::Get(tank->FindMap()) : 0u;
 
         std::unordered_set<std::uint32_t> const& cleared =
             AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors);
@@ -473,8 +473,10 @@ namespace DcDiag
                 done = true;
                 b.doneVia = "mask";
             }
-            else if (info.kind == DungeonAnchorKind::Boss && info.doneBossStateIndex >= 0 && inst &&
-                     inst->GetBossState(static_cast<uint32>(info.doneBossStateIndex)) == DONE)
+            // (bossState path removed: GetBossState is a 0-stub on this core
+            // and DcEncounterMask flags every boss death, so "mask" above
+            // already covers the doneBossStateIndex bosses.)
+            else if (false)
             {
                 done = true;
                 b.doneVia = "bossState";

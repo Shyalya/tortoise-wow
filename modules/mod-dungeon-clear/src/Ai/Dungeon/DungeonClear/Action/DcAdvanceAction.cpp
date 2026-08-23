@@ -4,6 +4,7 @@
  */
 
 #include "DungeonClearActions.h"
+#include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include <algorithm>
@@ -237,6 +238,27 @@ namespace
         float const x = bot->GetPositionX();
         float const y = bot->GetPositionY();
         float const z = bot->GetPositionZ();
+
+        // Vertical rescue FIRST: the bot may be parked ON AIR far above the
+        // mesh - live, stock movement grounded the DC leader on the
+        // OVERWORLD height (Z=216) over the Deadmines entrance, 150y above
+        // the real floor, and 5yd cardinal hops can never reach that. Ask
+        // the mesh for the nearest poly in a tall column under our XY and
+        // near-teleport onto it.
+        {
+            NavmeshSnap::Result const column = NavmeshSnap::SnapColumn(bot->GetMap(), x, y, z);
+            if (column.ok && std::fabs(column.z - z) > 8.0f)
+            {
+                bot->GetMotionMaster()->Clear();
+                bot->NearTeleportTo(column.x, column.y, column.z, bot->GetOrientation(),
+                                    /*casting*/ false, /*vehicle*/ false, /*withPet*/ true);
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] far-from-poly recovery: column snap {:.0f}y vertically onto the mesh",
+                         bot->GetName(), std::fabs(column.z - z));
+                return true;
+            }
+        }
+
         struct Offset { float dx, dy; };
         Offset const offsets[] = {
             {DC_RECOVERY_OFFSET, 0.0f},
@@ -621,9 +643,11 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
     DcLootPolicy::MaybeGiveUpCampedLoot(botAI, DC_LOOT_CAMP_TIMEOUT_MS, DC_LOOT_GIVEUP_TTL_MS);
     uint32& lootYieldStart =
         context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().lootYieldStartMs;
+    std::string lootHolder;
+    bool const partyLooting = DcPartyState::IsAnyPartyMemberLooting(bot, &lootHolder);
     bool const lootYield =
         AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) || AI_VALUE(bool, DcKey::Stock::CanLoot) ||
-        DcPartyState::IsAnyPartyMemberLooting(bot);
+        partyLooting;
     if (lootYield)
     {
         uint32 const now = getMSTime();
@@ -638,15 +662,34 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
             // next tick removes it so the flags clear. Don't reset lootYieldStart
             // here: keep it expired so we keep advancing until the flags drop.
             DcLootPolicy::GiveUpCurrentLoot(botAI, DC_LOOT_GIVEUP_TTL_MS);
-            LOG_INFO("playerbots.dungeonclear",
-                     "[DC:{}] loot-yield timed out after {}ms -> giving up on corpse, advancing",
-                     bot->GetName(), now - lootYieldStart);
+            // Throttled: this branch runs every tick while the flags stay up
+            // (run 32 logged it 14x back to back). Name WHO keeps them up —
+            // own passive corpse flags vs. a follower camped on a corpse the
+            // tank's give-up cannot clear (IsAnyPartyMemberLooting reads the
+            // follower's flags, GiveUpCurrentLoot only clears our own).
+            uint32 const over = now - lootYieldStart;
+            if (over < DC_LOOT_YIELD_TIMEOUT_MS + 1500 || (over % 8000) < 1500)
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] loot-yield timed out after {}ms -> giving up on corpse, advancing "
+                         "[avail={} can={} party={} holder={}]",
+                         bot->GetName(), over,
+                         AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) ? 1 : 0,
+                         AI_VALUE(bool, DcKey::Stock::CanLoot) ? 1 : 0,
+                         partyLooting ? 1 : 0, lootHolder);
         }
         else
         {
-            LOG_DEBUG("playerbots.dungeonclear",
-                      "[DC:{}] advance yielding: loot in progress ({}ms)",
-                      bot->GetName(), now - lootYieldStart);
+            // DIAG(vis): run 32's tank sat in this yield for whole route TTLs
+            // with the reason invisible (debug-only). ~1 line / 8s at info.
+            uint32 const held = now - lootYieldStart;
+            if ((held % 8000) < 1500)
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] advance yielding {}ms: loot in progress "
+                         "[avail={} can={} party={} holder={}]",
+                         bot->GetName(), held,
+                         AI_VALUE(bool, DcKey::Stock::HasAvailableLoot) ? 1 : 0,
+                         AI_VALUE(bool, DcKey::Stock::CanLoot) ? 1 : 0,
+                         partyLooting ? 1 : 0, lootHolder);
             DcMovement::StopBot(bot, DcMovement::Stop::Hold);
             return Step::ReturnFalse;
         }
@@ -726,15 +769,22 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     // Name the limiting member/reason with the SAME thresholds the gate used, so
     // this line says whether it was spread, HP/mana, or the rest latch instead of
     // leaving all three indistinguishable behind "party not ready / resting".
-    DcPartyState::SpreadGate const gate = DcPartyState::GetSpreadGate(bot, context);
-    DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
-    std::string const why = DcPartyState::DescribePartyNotReady(
-        bot, rest.minHp, rest.minMp,
-        gate.maxSpread, gate.anchor, gate.maxTankGap);
-    LOG_DEBUG("playerbots.dungeonclear",
-              "[DC:{}] advance yielding after {} ticks: party not ready / resting{}",
-              bot->GetName(), appr.partyNotReadyTicks,
-              why.empty() ? " (resting)" : (" — waiting on " + why));
+    // DIAG(vis): run 32's tank stood in THIS gate for whole route TTLs with
+    // the limiting member named only on debug. First halt past the debounce
+    // logs at info, then every ~20 ticks.
+    if (appr.partyNotReadyTicks == DC_PARTY_YIELD_DEBOUNCE_TICKS + 1 ||
+        appr.partyNotReadyTicks % 20 == 0)
+    {
+        DcPartyState::SpreadGate const gate = DcPartyState::GetSpreadGate(bot, context);
+        DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
+        std::string const why = DcPartyState::DescribePartyNotReady(
+            bot, rest.minHp, rest.minMp,
+            gate.maxSpread, gate.anchor, gate.maxTankGap);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] advance yielding after {} ticks: party not ready / resting{}",
+                 bot->GetName(), appr.partyNotReadyTicks,
+                 why.empty() ? " (resting)" : (" — " + why));
+    }
     DcMovement::StopBot(bot, DcMovement::Stop::Hold);
     return Step::ReturnFalse;
 }

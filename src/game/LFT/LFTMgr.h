@@ -1,6 +1,7 @@
 #ifndef MANGOSSERVER_LFTMGR_H
 #define MANGOSSERVER_LFTMGR_H
 
+#include <unordered_set>
 #include <array>
 #include <ctime>
 #include <map>
@@ -24,6 +25,14 @@ enum LFTRoles
 
 class LFTManager
 {
+    // Groups formed (or adopted) by the LFT matcher itself.
+    // TakeFromBotOnlyGroup may only raid THESE: a bot-only group can just as
+    // well belong to someone else - live, LFT ripped the tank out of a
+    // mod-dungeon-clear test party mid-run because the "bot-only means ours"
+    // assumption was never actually checked. Ids of long-gone groups linger
+    // harmlessly (group ids are not recycled within an uptime).
+    std::unordered_set<uint32> m_lftGroupIds;
+
     public:
         LFTManager();
 

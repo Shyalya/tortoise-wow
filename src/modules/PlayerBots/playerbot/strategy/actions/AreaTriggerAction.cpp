@@ -58,6 +58,14 @@ bool AreaTriggerAction::Execute(Event& event)
     uint32 triggerId = movement.lastAreaTrigger;
     movement.lastAreaTrigger = 0;
 
+    // Module gate: while an exit-sensitive run owns this bot, a teleport
+    // trigger underfoot must NOT be relayed (the consume above still clears
+    // it so the trigger cannot fire later either). Non-teleport triggers are
+    // not this action's business anyway - it returns before the relay for
+    // those below.
+    if (ai->IsAreaTriggerRelaySuppressed())
+        return false;
+
     AreaTriggerEntry const* atEntry = sAreaTriggerStore.LookupEntry(triggerId);
     if(!atEntry)
         return false;
