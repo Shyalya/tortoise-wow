@@ -130,15 +130,43 @@ bool DungeonClearIdleTrigger::IsActive()
 {
     if (!IsEnabled(context, bot))
         return false;
+
+    // DIAG(pulse): the run-40/42 stall shows every readable condition green
+    // while the advance never runs. One line / ~15s for enabled bots says
+    // (a) whether the engine still evaluates this trigger at all - if THIS
+    // pulse goes silent with the run stalled, the strategy/trigger wiring
+    // died, not a condition - and (b) which condition kills the tick when
+    // it does run.
+    static uint32 s_lastIdlePulseMs = 0;
+    uint32 const nowPulse = getMSTime();
+    bool const pulse = nowPulse - s_lastIdlePulseMs > 15000;
+    if (pulse)
+        s_lastIdlePulseMs = nowPulse;
+
     if (!bot || bot->isDead() || !MayDrive(bot, context))
+    {
+        if (pulse && bot)
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC-IDLE] {} eval: mayDrive=0 (inCombat={}) -> inactive",
+                     bot->GetName(), bot->IsInCombat() ? 1 : 0);
         return false;
+    }
     Map* map = bot->FindMap();
     if (!map || !map->IsDungeon())
         return false;
 
     std::optional<DungeonBossInfo> next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next.has_value())
+    {
+        if (pulse)
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC-IDLE] {} eval: no next boss -> inactive", bot->GetName());
         return false;
+    }
+    if (pulse)
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC-IDLE] {} eval: enabled, driving, next={} -> checking pull gates",
+                 bot->GetName(), next->name);
 
     // A PULL MANEUVER OWNS THE TANK. Never route it anywhere while the pull FSM
     // is mid-maneuver (Forming/Advancing/Returning/Engage) — the pull decides

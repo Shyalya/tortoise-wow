@@ -400,6 +400,33 @@ namespace DcActionShared
                          ChunkedPathfinder::Result&& built, uint32 now, char const* how,
                          Position const* builtToward = nullptr)
     {
+        // PHANTOM-DECK GUARD. Map 36's navmesh carries the Westfall surface
+        // ~200y above the mine as valid-looking walkable mesh. A route whose
+        // start poly snapped onto that deck builds a "complete" polyline that
+        // runs the deck and ends in mid-air over the boss (live
+        // tr-20260822-232939-1: the whole party marched at Z 263-297 toward
+        // Sneed at Z 49 until the no-progress watchdog fired). The boss's own
+        // spawn Z is ground truth for the target floor: a complete route
+        // whose final point ends far off it never reaches the boss - blank it
+        // to NOPATH so the caller's recovery (floor-banded column snap) runs
+        // instead of walking the deck.
+        if (built.complete && !built.segments.empty() &&
+            !built.segments.back().polyline.empty())
+        {
+            float const endZ = built.segments.back().polyline.back().z;
+            if (std::fabs(endZ - target.z) > 40.0f)
+            {
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] route to {} rejected: ends {:.0f}y off the boss floor "
+                         "(phantom deck) -> forcing recovery",
+                         bot->GetName(), target.name, std::fabs(endZ - target.z));
+                built.segments.clear();
+                built.complete = false;
+                built.reachable = false;
+                built.failureReason = "ends off the boss floor (phantom deck)";
+            }
+        }
+
         ChunkedPathfinder::Result& path =
             ctx->GetValue<ChunkedPathfinder::Result&>(DcKey::LongPath)->Get();
         path = std::move(built);
@@ -805,10 +832,20 @@ bool DcMovementAction::DcMoveTo(uint32 mapId, float x, float y, float z, bool id
                   "not the SearchForBestPath z-search ratchet";
         // Report the z actually attempted (post-snap) plus the raw request, so a
         // destination the snap moved is still traceable back to its caller.
-        DC_PULL_TRACE("[DC:{}] move REFUSED and not moving -> {} (dest {:.1f},{:.1f},{:.1f} "
-                      "[requested z {:.1f}] at {:.1f}yd, prio={})",
-                      bot->GetName(), why, x, y, destZ, z, bot->GetExactDist(x, y, destZ),
-                      static_cast<uint32>(priority));
+        // Promoted TRACE -> throttled INFO (runs 32-40): this line is the
+        // whole answer to "route complete, cursor 0/0, party healthy, bot
+        // standing" and it sat below the live log level the entire hunt.
+        static uint32 s_lastRefusalLogMs = 0;
+        uint32 const nowRefMs = getMSTime();
+        if (nowRefMs - s_lastRefusalLogMs > 3000)
+        {
+            s_lastRefusalLogMs = nowRefMs;
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] move REFUSED and not moving -> {} (dest {:.1f},{:.1f},{:.1f} "
+                     "[requested z {:.1f}] at {:.1f}yd, prio={})",
+                     bot->GetName(), why, x, y, destZ, z, bot->GetExactDist(x, y, destZ),
+                     static_cast<uint32>(priority));
+        }
     }
     return moved;
 }

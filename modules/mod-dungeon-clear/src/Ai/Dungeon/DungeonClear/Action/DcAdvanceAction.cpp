@@ -239,6 +239,44 @@ namespace
         float const y = bot->GetPositionY();
         float const z = bot->GetPositionZ();
 
+        // FLOOR-BANDED rescue first. The symmetric column search below asks
+        // for the poly NEAREST the bot's own Z - a bot standing ON the
+        // phantom terrain deck (map 36 carries the Westfall surface as
+        // valid-looking mesh ~200y above the mine) is answered with the deck
+        // itself and never comes down. The next boss's spawn Z is ground
+        // truth for the target floor: when we are far above it, search a
+        // band around IT and only accept a hit well below us.
+        {
+            PlayerbotAI* const recAI = GET_PLAYERBOT_AI(bot);
+            AiObjectContext* const recCtx = recAI ? recAI->GetAiObjectContext() : nullptr;
+            std::optional<DungeonBossInfo> const nb =
+                recCtx ? recCtx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get()
+                       : std::optional<DungeonBossInfo>{};
+            // +25/band 40, not +70/60: at the ENTRANCE the phantom deck sits
+            // only ~35y over the real floor (Z 89-95 over 60) - the original
+            // +70 gate never saw exactly the spot every run kept regressing
+            // to (live tr-20260823-010638-1: tank parked at Z 95.5 on
+            // (-16,-391) with the gate silent). The >25y-below acceptance
+            // keeps stairs/ramps safe.
+            if (nb.has_value() && z > nb->z + 25.0f)
+            {
+                NavmeshSnap::Result const floorHit = NavmeshSnap::SnapColumn(
+                    bot->GetMap(), x, y, nb->z, /*halfHeight*/ 40.0f, /*radius*/ 8.0f);
+                if (floorHit.ok && z - floorHit.z > 25.0f)
+                {
+                    bot->GetMotionMaster()->Clear();
+                    bot->NearTeleportTo(floorHit.x, floorHit.y, floorHit.z,
+                                        bot->GetOrientation(),
+                                        /*casting*/ false, /*vehicle*/ false, /*withPet*/ true);
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] far-from-poly recovery: floor-banded snap {:.0f}y "
+                             "down off the phantom deck",
+                             bot->GetName(), z - floorHit.z);
+                    return true;
+                }
+            }
+        }
+
         // Vertical rescue FIRST: the bot may be parked ON AIR far above the
         // mesh - live, stock movement grounded the DC leader on the
         // OVERWORLD height (Z=216) over the Deadmines entrance, 150y above
@@ -1204,6 +1242,30 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoLongPathUnreachable
                  "[DC:{}] no navmesh route to {} -> swimming", bot->GetName(), next->name);
         SetPhase(context, "swimming");
         return Step::ReturnTrue;
+    }
+
+    // Short-range mesh-blind push. The tile-wise long-range router refuses
+    // corridors the stock PathGenerator can still thread - live
+    // (tr-20260824-091007-1, 5/8): the Deadmines ship deck holds Greenskin
+    // and VanCleef at Z 40 over the Z 12 quay, the gangplank is walkable
+    // in-game, and the chunked builder reports "no navigable route". Within
+    // a short leash, hand the move to stock MoveTo and let its own A*
+    // climb; the leash and dz gates keep a genuinely unreachable target
+    // falling through to the stall exactly as before.
+    {
+        float const airDist = bot->GetDistance(bossX, bossY, bossZ);
+        if (airDist < 60.0f && std::fabs(bossZ - bot->GetPositionZ()) < 40.0f)
+        {
+            if (DcMoveTo(next->mapId, bossX, bossY, bossZ))
+            {
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] no long-range route to {} at {:.0f}yd -> "
+                         "short-range stock push",
+                         bot->GetName(), next->name, airDist);
+                SetPhase(context, "moving");
+                return Step::ReturnTrue;
+            }
+        }
     }
 
     // The chunked builder couldn't produce any segment. Failure

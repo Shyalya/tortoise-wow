@@ -21,7 +21,7 @@
 -- itself, which is what we want. Repeating them earns field value redundant
 -- at startup and would only drift if the spell data ever changed.
 
-INSERT INTO `spell_proc_event`
+INSERT IGNORE INTO `spell_proc_event`
     (`entry`, `SchoolMask`, `SpellFamilyName`, `SpellFamilyMask0`, `SpellFamilyMask1`,
      `SpellFamilyMask2`, `procFlags`, `procEx`, `ppmRate`, `CustomChance`, `Cooldown`)
 VALUES

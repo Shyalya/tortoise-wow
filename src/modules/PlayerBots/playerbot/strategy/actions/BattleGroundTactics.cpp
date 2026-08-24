@@ -2700,7 +2700,16 @@ bool BGTactics::Execute(Event& event)
     BattleGround *bg = bot->GetBattleGround();
     if (!bg)
     {
-        ai->ResetStrategies();
+        // Self-heal for "left the BG with BG strategies still installed" -
+        // but NEVER inside a dungeon. Live (gdb backtrace, 2026-08-24): a
+        // dungeon-clear tank carried the random-bot bg strategies, this
+        // reset fired EVERY SECOND (reset -> module gate re-installs its
+        // strategies -> bg trigger fires again -> reset), wiping the action
+        // queue each pass - the party crawled and the run's strategy set
+        // never stayed put for more than a tick.
+        Map* map = bot->FindMap();
+        if (!map || !map->IsDungeon())
+            ai->ResetStrategies();
         return false;
     }
 

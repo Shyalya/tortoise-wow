@@ -22,7 +22,7 @@
 -- Slots are numbered in the order the ladder is climbed, so the list reads from
 -- the cheapest rank to the highest rather than by item id.
 
-INSERT INTO `npc_vendor` (`entry`, `slot`, `item`, `maxcount`, `incrtime`, `itemflags`, `condition_id`)
+INSERT IGNORE INTO `npc_vendor` (`entry`, `slot`, `item`, `maxcount`, `incrtime`, `itemflags`, `condition_id`)
 VALUES
     -- Honored
     (80946,  2, 55018, 0, 0, 0, 0),   -- Yellowed Mask

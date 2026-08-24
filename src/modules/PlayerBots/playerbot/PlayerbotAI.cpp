@@ -2188,8 +2188,18 @@ void PlayerbotAI::DoNextAction(bool min)
 
     Group *group = bot->GetGroup();
 
+    // A test-harness login keeps its externally-assigned master. The two
+    // self-heals below both fire on the harness setup (the GM driver is
+    // deliberately neither a group member nor the group leader): the first
+    // cleared the master and RESET STRATEGIES, the harness's react-delay
+    // repair reinstated the master a tick later, and the pair ping-ponged
+    // once per second on every run member (gdb backtrace 2026-08-24,
+    // 500+ resets per bot in 8 minutes, action queue wiped each pass).
+    bool const externallyManagedMaster =
+        sRandomPlayerbotMgr.IsExternallyManaged(bot->GetGUIDLow());
+
     //Remove bot masters not in our group.
-    if (master && master != bot && !HasActivePlayerMaster() && (!group || group->GetLeaderGuid() != master->GetObjectGuid()))
+    if (!externallyManagedMaster && master && master != bot && !HasActivePlayerMaster() && (!group || group->GetLeaderGuid() != master->GetObjectGuid()))
     {
         master = IsRealPlayer() ? bot : nullptr;
         SetMaster(master);
@@ -2197,7 +2207,7 @@ void PlayerbotAI::DoNextAction(bool min)
     }
 
     // test BG master set
-    if ((!master || !HasActivePlayerMaster()) && group && !IsRealPlayer())
+    if (!externallyManagedMaster && (!master || !HasActivePlayerMaster()) && group && !IsRealPlayer())
     {
         //Ideally we want to have the leader as master.
         Player* newMaster = GetGroupMaster();

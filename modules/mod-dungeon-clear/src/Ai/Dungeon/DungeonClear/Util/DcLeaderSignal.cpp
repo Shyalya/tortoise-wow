@@ -349,6 +349,35 @@ Player* DcLeaderSignal::FindLeaderTank(Player* reference)
             return cached;
     }
 
+    // FLAG-BOUND SHORT-CIRCUIT, before any tank election. Exactly one member
+    // carries the run flag (`dungeon clear enabled`), and the flag and the
+    // election must never diverge: live (runs 40/42/43), a mid-run
+    // ResetStrategies (boss-XP level-up -> gear hook) re-loaded a lower-GUID
+    // ex-tank's stored TANK strategy set, IsTank flipped true for it, and the
+    // election moved to a bot WITHOUT the flag - deadlock with every readable
+    // condition green: the elected had no flag (IsEnabled false), the flagged
+    // one was no longer elected (IsDungeonClearLeader false), and the idle
+    // trigger went dark on both while route/enabled/pull all diagnosed
+    // healthy. A flagged, living member on this map IS the leader; the
+    // election below only decides when nobody is flagged (pre-run, or the
+    // flag owner died or left).
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        if (!member || !member->IsAlive())
+            continue;
+        if (member->FindMap() != reference->FindMap())
+            continue;
+        PlayerbotAI* memberAI = GET_PLAYERBOT_AI(member);
+        if (!memberAI || !DcRun::Of(memberAI).enabled)
+            continue;
+        {
+            std::lock_guard<std::mutex> lock(g_leaderCacheMutex);
+            g_leaderCache[key] = LeaderCacheEntry{member->GetObjectGuid(), now};
+        }
+        return member;
+    }
+
     // Candidate set: alive tank BOTS on the reference's map. GetFirstMember walks
     // every member of the group — including all raid sub-groups — so each member
     // sees the same candidate set and elects the same leader.

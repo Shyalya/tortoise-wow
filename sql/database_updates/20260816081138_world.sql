@@ -4,22 +4,22 @@
 -- unberuehrt, dort sitzt sie richtig.
 
 -- 1) fehlende Bedingungen
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 889, 5, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=889 AND `value2`=5);
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 889, 6, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=889 AND `value2`=6);
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 889, 7, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=889 AND `value2`=7);
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 890, 5, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=890 AND `value2`=5);
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 890, 6, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=890 AND `value2`=6);
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 890, 7, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=890 AND `value2`=7);
 

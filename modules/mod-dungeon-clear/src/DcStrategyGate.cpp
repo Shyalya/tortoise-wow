@@ -104,6 +104,22 @@ namespace DcStrategyGate
             !plan.stripStrayInCombat && !plan.stripStrayInNonCombat)
             return;  // already compliant — the hot path
 
+        // DIAG(riddle): every sweep sees hasNon=0 while the DC triggers
+        // demonstrably run - dump what the engine ACTUALLY carries, one line
+        // per ~60s, so the mismatch names itself.
+        {
+            static uint32 s_lastDumpMs = 0;
+            uint32 const nowMs = getMSTime();
+            if (plan.nonCombat == Action::Install && nowMs - s_lastDumpMs > 60000)
+            {
+                s_lastDumpMs = nowMs;
+                if (Engine* nc = botAI->GetEngine(BOT_STATE_NON_COMBAT))
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC-GATE] {} nc engine carries: {}",
+                             bot->GetName(), nc->ListStrategies());
+            }
+        }
+
         // State changes are rare (enter/leave dungeon, post-ResetStrategies
         // repair) - log them so a silent strategy thief shows up as a stream
         // of re-installs in the journal instead of nothing at all.
@@ -128,11 +144,21 @@ namespace DcStrategyGate
         switch (plan.nonCombat)
         {
             case Action::Install:
-                botAI->ChangeStrategy("+dungeon clear,-grind,-travel,-rpg,-rpg jump",
+                botAI->ChangeStrategy("+dungeon clear,-grind,-travel,-rpg,-rpg jump,-follow,-wander,-bg,-battleground",
                                       BOT_STATE_NON_COMBAT);
+                // DIAG(riddle, binary test): does the call bite on THIS
+                // object? after=1 and next sweep still hasNon=0 => something
+                // resets the engines between sweeps (hunt the caller).
+                // after=0 => the add fell through (context cannot resolve
+                // "dungeon clear" for this bot - hunt the registry).
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC-GATE] {} install verdict: afterNon={} afterGrind={}",
+                         bot->GetName(),
+                         botAI->HasStrategy(kNonCombat, BOT_STATE_NON_COMBAT) ? 1 : 0,
+                         botAI->HasStrategy("grind", BOT_STATE_NON_COMBAT) ? 1 : 0);
                 break;
             case Action::Strip:
-                botAI->ChangeStrategy("-dungeon clear,+grind,+travel,+rpg,+rpg jump",
+                botAI->ChangeStrategy("-dungeon clear,+grind,+travel,+rpg,+rpg jump,+follow,+bg,+battleground",
                                       BOT_STATE_NON_COMBAT);
                 break;
             case Action::None:
@@ -151,6 +177,16 @@ namespace DcStrategyGate
         // AiFactory only strips these for bots with a real human master; a
         // dc-owned bot needs them gone the same way (swap is in the atomic
         // ChangeStrategy above).
+        //
+        // -follow/-wander joined the strip after runs 34-36: every bot with a
+        // master carries stock "follow" (or "wander" under
+        // useWanderAsDefaultFollowStrategy), and the run master Dcdriver is
+        // parked OUTSIDE on map 0 - so whenever advance yielded a tick
+        // (loot/rest), follow walked the tank toward the point of the
+        // instance nearest the unreachable master: the ENTRANCE at
+        // (-14,-393). Three runs sawtoothed 50yd forward / 40yd back on
+        // exactly that spot. DC's own follow-tank drives the followers; the
+        // tank needs no follow target at all while a run owns it.
         if (plan.nonCombat == Action::Install)
             botAI->SetSuppressAreaTriggerRelay(true);
         else if (plan.nonCombat == Action::Strip)

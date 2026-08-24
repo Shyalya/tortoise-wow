@@ -5,22 +5,22 @@
 -- tragen und laufen deshalb ueber die Haendlerbedingung.
 
 -- 1) Bedingungen fuer die von beiden Seiten verkauften Waren
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 729, 7, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=729 AND `value2`=7);
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 730, 7, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=730 AND `value2`=7);
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 889, 4, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=889 AND `value2`=4);
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 889, 7, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=889 AND `value2`=7);
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 890, 4, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=890 AND `value2`=4);
-INSERT INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
+INSERT IGNORE INTO `conditions` (`type`, `value1`, `value2`, `value3`, `value4`, `flags`)
 SELECT 5, 890, 7, 0, 0, 0 FROM DUAL WHERE NOT EXISTS
   (SELECT 1 FROM `conditions` WHERE `type`=5 AND `value1`=890 AND `value2`=7);
 

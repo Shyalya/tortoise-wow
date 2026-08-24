@@ -1383,6 +1383,28 @@ void DcTestRunJob::TickTeleporting()
 
 void DcTestRunJob::SweepPartyGeometry()
 {
+    // Ground truth for the instance floor: the next boss's spawn Z, read off
+    // the tank's own AI value. The symmetric column snap below answers a bot
+    // standing ON the phantom terrain deck (map 36 carries the Westfall
+    // surface ~200y above the mine as walkable mesh) with the deck itself -
+    // the boss band is what pulls such a bot back down (live
+    // tr-20260822-232939-1: the whole party marched at Z 263-297 toward
+    // Sneed at Z 49 until the no-progress watchdog fired).
+    float bossFloorZ = 0.0f;
+    bool haveBossFloor = false;
+    if (Player* tank = ObjectAccessor::FindPlayer(_tankGuid))
+        if (PlayerbotAI* tankAI = GET_PLAYERBOT_AI(tank))
+            if (AiObjectContext* tctx = tankAI->GetAiObjectContext())
+            {
+                std::optional<DungeonBossInfo> const nb =
+                    tctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+                if (nb.has_value())
+                {
+                    bossFloorZ = nb->z;
+                    haveBossFloor = true;
+                }
+            }
+
     // Altitude sanity, run by the MONITOR because nothing can gate it here:
     // stock movement repeatedly grounds party members on the OVERWORLD
     // height over the Deadmines entrance (Z 130..216, real floor ~60). The
@@ -1417,6 +1439,35 @@ void DcTestRunJob::SweepPartyGeometry()
 
                 {
                     float const bz = bot->GetPositionZ();
+                    // Boss-band rescue first (see the header note above).
+                    if (bz > bossFloorZ + 25.0f)
+                        LOG_INFO("playerbots.dungeonclear",
+                                 "TESTRUN {} deck-tripwire: {} bz={:.1f} bossZ={:.1f} haveFloor={} teleporting={}",
+                                 _record.runId, bot->GetName(), bz, bossFloorZ,
+                                 haveBossFloor ? 1 : 0, bot->IsBeingTeleported() ? 1 : 0);
+                    if (haveBossFloor && bz > bossFloorZ + 25.0f && !bot->IsBeingTeleported())
+                    {
+                        NavmeshSnap::Result const floorHit = NavmeshSnap::SnapColumn(
+                            botMap, bot->GetPositionX(), bot->GetPositionY(),
+                            bossFloorZ, /*halfHeight*/ 40.0f, /*radius*/ 8.0f);
+                        LOG_INFO("playerbots.dungeonclear",
+                                 "TESTRUN {} deck-tripwire: {} band snap ok={} hitZ={:.1f}",
+                                 _record.runId, bot->GetName(), floorHit.ok ? 1 : 0,
+                                 floorHit.ok ? floorHit.z : 0.0f);
+                        if (floorHit.ok && bz - floorHit.z > 25.0f)
+                        {
+                            bot->GetMotionMaster()->Clear();
+                            bot->NearTeleportTo(floorHit.x, floorHit.y, floorHit.z,
+                                                bot->GetOrientation(),
+                                                /*casting*/ false, /*vehicle*/ false,
+                                                /*withPet*/ true);
+                            LOG_INFO("playerbots.dungeonclear",
+                                     "TESTRUN {} altitude sanity: {} floor-banded {:.0f}y "
+                                     "down off the phantom deck",
+                                     _record.runId, bot->GetName(), bz - floorHit.z);
+                            continue;
+                        }
+                    }
                     NavmeshSnap::Result const column = NavmeshSnap::SnapColumn(
                         botMap, bot->GetPositionX(), bot->GetPositionY(), bz);
                     if (column.ok && std::fabs(column.z - bz) > 25.0f)

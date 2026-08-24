@@ -47,7 +47,7 @@ WHERE `entry` IN (
 -- FILE: lunatic_loot.sql
 -- GENERATED: 20260818211313
 -- ==============================================
-INSERT INTO `conditions`
+INSERT IGNORE INTO `conditions`
 (
     `condition_entry`,
     `type`,

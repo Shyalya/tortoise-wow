@@ -29,7 +29,7 @@
 -- same convention would say 5000. Odd, but it is existing data and cheaper than
 -- it should be, which harms nobody.
 
-INSERT INTO `npc_trainer` (`entry`, `spell`, `spellcost`, `reqskill`, `reqskillvalue`, `reqlevel`)
+INSERT IGNORE INTO `npc_trainer` (`entry`, `spell`, `spellcost`, `reqskill`, `reqskillvalue`, `reqlevel`)
 VALUES (50070, 46057, 50000, 142, 200, 35)
 ON DUPLICATE KEY UPDATE
     `spellcost`     = VALUES(`spellcost`),

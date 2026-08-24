@@ -27,7 +27,7 @@
 -- talent).
 
 -- Talent ranks 2-5: apply on a critical strike only, as rank 1 does.
-INSERT INTO `spell_proc_event`
+INSERT IGNORE INTO `spell_proc_event`
     (`entry`, `SchoolMask`, `SpellFamilyName`, `SpellFamilyMask0`, `SpellFamilyMask1`,
      `SpellFamilyMask2`, `procFlags`, `procEx`, `ppmRate`, `CustomChance`, `Cooldown`)
 VALUES
@@ -38,7 +38,7 @@ VALUES
 ON DUPLICATE KEY UPDATE `procEx` = VALUES(`procEx`);
 
 -- Effect ranks 2-5: spend a charge on any swing, as rank 1 does.
-INSERT INTO `spell_proc_event`
+INSERT IGNORE INTO `spell_proc_event`
     (`entry`, `SchoolMask`, `SpellFamilyName`, `SpellFamilyMask0`, `SpellFamilyMask1`,
      `SpellFamilyMask2`, `procFlags`, `procEx`, `ppmRate`, `CustomChance`, `Cooldown`)
 VALUES

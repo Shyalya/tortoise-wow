@@ -582,6 +582,10 @@ public:
     // cpp can build heartbeat / debug payloads without being
     // a friend class. Read-only.
     Engine* GetCurrentEngine() { return currentEngine; }
+    // Read-only per-state access for module diagnostics (mod-dungeon-clear's
+    // strategy gate dumps what an engine actually carries when HasStrategy
+    // disagrees with observed behavior).
+    Engine* GetEngine(BotState type) { return engines[(uint8)type]; }
 
     // Heartbeat-cadence accumulator used by ::TickHeartbeat.
     // Public so the helper can advance it in-place every UpdateAI tick;

@@ -33,7 +33,7 @@
 
 -- ---------------------------------------------------------------- 90001 Take Cover
 CREATE TEMPORARY TABLE `tmp_spell` LIKE `spell_template`;
-INSERT INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 45425;
+INSERT IGNORE INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 45425;
 UPDATE `tmp_spell` SET
     `entry` = 90001,
     `name` = 'Take Cover',
@@ -42,12 +42,12 @@ UPDATE `tmp_spell` SET
     `effectApplyAuraName1` = 87,  `effectBasePoints1` = -11,
     `effectApplyAuraName2` = 33,  `effectBasePoints2` = -81,
     `durationIndex` = 1;
-INSERT INTO `spell_template` SELECT * FROM `tmp_spell`;
+INSERT IGNORE INTO `spell_template` SELECT * FROM `tmp_spell`;
 DROP TEMPORARY TABLE `tmp_spell`;
 
 -- --------------------------------------------------------------- 90002 Throw Spear
 CREATE TEMPORARY TABLE `tmp_spell` LIKE `spell_template`;
-INSERT INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 21066;
+INSERT IGNORE INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 21066;
 UPDATE `tmp_spell` SET
     `entry` = 90002,
     `name` = 'Throw Spear',
@@ -56,12 +56,12 @@ UPDATE `tmp_spell` SET
     `effectBasePoints1` = 74,
     `effectApplyAuraName2` = 33,  `effectBasePoints2` = -31,
     `durationIndex` = 39;
-INSERT INTO `spell_template` SELECT * FROM `tmp_spell`;
+INSERT IGNORE INTO `spell_template` SELECT * FROM `tmp_spell`;
 DROP TEMPORARY TABLE `tmp_spell`;
 
 -- ----------------------------------------------------- 90003 Rage of Alterac (buff)
 CREATE TEMPORARY TABLE `tmp_spell` LIKE `spell_template`;
-INSERT INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 2652;
+INSERT IGNORE INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 2652;
 UPDATE `tmp_spell` SET
     `entry` = 90003,
     `name` = 'Rage of Alterac',
@@ -72,12 +72,12 @@ UPDATE `tmp_spell` SET
     `durationIndex` = 8,
     `procFlags` = 20,             -- melee swing and melee ability
     `procChance` = 100;
-INSERT INTO `spell_template` SELECT * FROM `tmp_spell`;
+INSERT IGNORE INTO `spell_template` SELECT * FROM `tmp_spell`;
 DROP TEMPORARY TABLE `tmp_spell`;
 
 -- ----------------------------------------------------- 90004 Rage of Alterac (heal)
 CREATE TEMPORARY TABLE `tmp_spell` LIKE `spell_template`;
-INSERT INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 2050;
+INSERT IGNORE INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 2050;
 UPDATE `tmp_spell` SET
     `entry` = 90004,
     `name` = 'Rage of Alterac',
@@ -86,12 +86,12 @@ UPDATE `tmp_spell` SET
     `effectBasePoints1` = 9,
     `effectImplicitTargetA1` = 1,   -- the caster, not a chosen target
     `rangeIndex` = 1;
-INSERT INTO `spell_template` SELECT * FROM `tmp_spell`;
+INSERT IGNORE INTO `spell_template` SELECT * FROM `tmp_spell`;
 DROP TEMPORARY TABLE `tmp_spell`;
 
 -- --------------------------------------------------- 90005 Fiery Temper (equip proc)
 CREATE TEMPORARY TABLE `tmp_spell` LIKE `spell_template`;
-INSERT INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 2652;
+INSERT IGNORE INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 2652;
 UPDATE `tmp_spell` SET
     `entry` = 90005,
     `name` = 'Fiery Temper',
@@ -102,12 +102,12 @@ UPDATE `tmp_spell` SET
     `durationIndex` = 21,         -- permanent, it is worn
     `procFlags` = 16384,          -- successful healing spell
     `procChance` = 10;
-INSERT INTO `spell_template` SELECT * FROM `tmp_spell`;
+INSERT IGNORE INTO `spell_template` SELECT * FROM `tmp_spell`;
 DROP TEMPORARY TABLE `tmp_spell`;
 
 -- ---------------------------------------------------- 90006 Fiery Temper (the buff)
 CREATE TEMPORARY TABLE `tmp_spell` LIKE `spell_template`;
-INSERT INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 45425;
+INSERT IGNORE INTO `tmp_spell` SELECT * FROM `spell_template` WHERE `entry` = 45425;
 UPDATE `tmp_spell` SET
     `entry` = 90006,
     `name` = 'Fiery Temper',
@@ -119,7 +119,7 @@ UPDATE `tmp_spell` SET
     `effectImplicitTargetA2` = 21,
     `rangeIndex` = 5,
     `durationIndex` = 1;
-INSERT INTO `spell_template` SELECT * FROM `tmp_spell`;
+INSERT IGNORE INTO `spell_template` SELECT * FROM `tmp_spell`;
 DROP TEMPORARY TABLE `tmp_spell`;
 
 -- ------------------------------------------------------------------- The items

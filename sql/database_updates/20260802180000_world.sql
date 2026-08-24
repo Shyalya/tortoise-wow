@@ -31,7 +31,7 @@
 -- existing points of interest carry, without exception.
 
 -- ------------------------------------------------------------ Hellador's spawn
-INSERT INTO `creature`
+INSERT IGNORE INTO `creature`
     (`guid`, `id`, `map`, `position_x`, `position_y`, `position_z`, `orientation`,
      `spawntimesecsmin`, `spawntimesecsmax`, `wander_distance`,
      `health_percent`, `mana_percent`, `movement_type`)
@@ -39,7 +39,7 @@ VALUES
     (2902648, 62962, 0, 4440.0, -2824.0, 10.38, 1.0, 300, 300, 0, 100, 100, 0);
 
 -- ------------------------------------------------------------ Points of interest
-INSERT INTO `points_of_interest` (`entry`, `x`, `y`, `icon`, `flags`, `data`, `icon_name`)
+INSERT IGNORE INTO `points_of_interest` (`entry`, `x`, `y`, `icon`, `flags`, `data`, `icon_name`)
 VALUES
     (10101, -9073.82,  338.141, 6, 99, 0, 'Krennan Wildberry'),
     (10102, -2282.58, -252.914, 6, 99, 0, 'Nasnan Hillcreek'),
@@ -55,7 +55,7 @@ VALUES
 ON DUPLICATE KEY UPDATE `icon_name` = VALUES(`icon_name`);
 
 -- ------------------------------------------------------------ Guard menu entries
-INSERT INTO `gossip_menu_option`
+INSERT IGNORE INTO `gossip_menu_option`
     (`menu_id`, `id`, `option_icon`, `option_text`, `option_id`, `npc_option_npcflag`,
      `action_menu_id`, `action_poi_id`, `box_coded`, `condition_id`)
 VALUES
