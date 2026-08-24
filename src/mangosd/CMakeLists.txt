@@ -125,8 +125,8 @@ if(USE_DISCORD_BOT)
   )
 endif()
 
-# playerbots library link gated by BUILD_PLAYERBOTS.
-if(BUILD_PLAYERBOTS)
+# Legacy playerbots library link is used only when that explicit target exists.
+if(TARGET playerbots)
   target_link_libraries(${EXECUTABLE_NAME} playerbots)
 endif()
 
@@ -134,10 +134,10 @@ target_link_libraries(${EXECUTABLE_NAME}
     libdeflate
 )
 
-# Boost lib search path for playerbots' transitive boost references.
+# Boost lib search path for the explicitly selected legacy playerbots target.
 # Boost's prebuilt Windows binaries live under lib64-msvc-<toolset> (or
 # BOOST_LIBRARYDIR if the user set it explicitly).
-if(WIN32 AND BUILD_PLAYERBOTS)
+if(WIN32 AND TARGET playerbots)
     if(DEFINED ENV{BOOST_LIBRARYDIR})
         target_link_directories(${EXECUTABLE_NAME} PRIVATE "$ENV{BOOST_LIBRARYDIR}")
     elseif(DEFINED ENV{BOOST_ROOT})

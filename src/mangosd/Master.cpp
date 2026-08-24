@@ -75,20 +75,6 @@
 #include <crtdbg.h>
 #pragma comment(lib, "dbghelp.lib")
 
-#ifdef BUILD_PLAYERBOTS
-// Forward-decl the SC_PHASE TLS into mangosd so the crash handler can read
-// it without #including any playerbots header (which would pull the whole
-// vendor tree's include chain into mangosd). Definitions live in
-// BotDiagnostics.cpp; writes happen in SC_PHASE iff AiPlayerbot.EnableActionLog=1.
-// The matching read site (Mangosd_WriteCrashDump) guards the read with
-// __try/__except so the TLS being corrupted by the crash we're trying to
-// dump can't crash the dump path itself.
-namespace ai { namespace botdiag {
-    extern thread_local const char* gLastPhaseTag;
-    extern thread_local const char* gLastPhaseBotName;
-}}
-#endif
-
 // Re-entrancy guard: if our handler itself crashes, we must NOT recurse —
 // just let the process die. Per-thread so concurrent crashes are handled.
 static thread_local int g_inCrashHandler = 0;
@@ -182,16 +168,6 @@ static void Mangosd_WriteCrashDump(EXCEPTION_POINTERS* ep, DWORD synthCode, cons
     // and we report "(no phase set)".
     const char* phaseTag = "(no phase set)";
     const char* phaseBot = "(no bot)";
-#ifdef BUILD_PLAYERBOTS
-    __try
-    {
-        if (ai::botdiag::gLastPhaseTag)
-            phaseTag = ai::botdiag::gLastPhaseTag;
-        if (ai::botdiag::gLastPhaseBotName)
-            phaseBot = ai::botdiag::gLastPhaseBotName;
-    }
-    __except (EXCEPTION_EXECUTE_HANDLER) {}
-#endif
 
     char txtFilename[512];
     snprintf(txtFilename, sizeof(txtFilename), "%s.txt", filename);

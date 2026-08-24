@@ -77,24 +77,9 @@
 #include "ZoneScript.h"
 #include "ZoneScriptMgr.h"
 
-// Player-scoped variant of SC_PHASE — stamps the current thread's last-known
-// phase into TLS read by mangosd's crash handler. Symbols defined in
-// BotDiagnostics.cpp; flag check makes it ~free when diagnostics are off.
-#ifdef BUILD_PLAYERBOTS
-namespace ai { namespace botdiag {
-    bool IsActionLogEnabled();
-    extern thread_local const char* gLastPhaseTag;
-    extern thread_local const char* gLastPhaseBotName;
-}}
-#define SC_PHASE_PLAYER(tag) do { \
-    if (ai::botdiag::IsActionLogEnabled()) { \
-        ai::botdiag::gLastPhaseTag     = (tag); \
-        ai::botdiag::gLastPhaseBotName = GetName(); \
-    } \
-} while (0)
-#else
-#define SC_PHASE_PLAYER(tag) do {} while (0)
-#endif
+// Reserved for generic player-update instrumentation. Module diagnostics are
+// kept out of normal core gameplay code.
+#define SC_PHASE_PLAYER(tag) do { (void)sizeof(tag); } while (0)
 // PlayerBotMgr.h + PlayerBotAI.h removed (Penqle stub binned). The bot
 // module pulls in its own PlayerbotMgr.h / PlayerbotAI.h via the playerbots
 // vendor tree. PlayerAI.h is restored as a direct include (was previously
@@ -16736,7 +16721,8 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder *holder)
 
     // check if the character's account in the db and the logged in account match.
     // player should be able to load/delete character only with correct account!
-    // (Penqle's !GetBot() bypass removed — cmangos bots use synthetic sessions.)
+    // (Penqle's legacy session bypass removed — synthetic sessions use the generic
+    // transport capability.)
     if (dbAccountId != GetSession()->GetAccountId())
     {
         sLog.outError("%s loading from wrong account (is: %u, should be: %u)",

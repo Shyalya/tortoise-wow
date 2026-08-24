@@ -6101,7 +6101,7 @@ SpellCastResult Spell::CheckCast(bool strict)
                     return SPELL_FAILED_DONT_REPORT;
                 }
 
-                // Penqle's GetSession()->GetBot() guard removed (stub binned).
+                // Penqle's legacy session bot guard removed (stub binned).
                 // cmangos's bot guard relies on isRealPlayer(); not needed here.
                 if (plrCaster->GetPetGuid() || plrCaster->GetCharmGuid() ||
                     sCharacterDatabaseCache.GetCharacterPetByOwner(plrCaster->GetGUIDLow()))

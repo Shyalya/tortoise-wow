@@ -50,10 +50,14 @@ option(ENABLE_PROFILING "(Windows only) Enable Optick integration, which allows 
 option(ENABLE_LSAN "Enables Leak Sanitizer" OFF)
 # Allow enabling official Turtle addon support
 option(ALLOW_TURTLE_ADDONS "Allow Turtle addons" ON)
-# Build cmangos/playerbots — bot AI vendored under src/modules/PlayerBots/.
-# When ON, mangosd links the bot subsystem; runtime activation is gated by
-# AiPlayerbot.Enabled in aiplayerbot.conf.
-option(BUILD_PLAYERBOTS "Build the cmangos/playerbots subsystem" OFF)
+# Build the native TortoiseBots subsystem. Runtime activation is gated by
+# AiPlayerbot.Enabled in aiplayerbot.conf and the selected native module
+# linkage (for example MODULE_TORTOISEBOTS=static).
+option(BUILD_PLAYERBOTS "Build the native TortoiseBots subsystem" OFF)
+
+# Migration escape hatch for the old vendored CMaNGOS tree. Native builds do
+# not acquire its manager/session/login ownership model accidentally.
+option(BUILD_LEGACY_PLAYERBOTS "Build the legacy vendored CMaNGOS PlayerBots tree" OFF)
 
 ConfigureModuleBuildOptions()
 
@@ -612,7 +616,10 @@ endif()
 set(DEFINITIONS
   ${DEFINITIONS}
   DO_MYSQL
-  TW_SOURCE_MODULES_DIR="${CMAKE_SOURCE_DIR}/modules"
+  # Runtime database updates live beside the installed server, including for
+  # static modules. Using the source checkout here made installed builds look
+  # under a non-existent /src/.../modules path and silently skipped module SQL.
+  TW_SOURCE_MODULES_DIR="${CMAKE_INSTALL_PREFIX}/modules"
 )
 
 if(WIN32)
@@ -687,8 +694,8 @@ if(TARGET mangosd)
   endif()
 endif()
 
-# cmangos/playerbots vendored module
-if (BUILD_PLAYERBOTS)
+# cmangos/playerbots vendored module (explicit migration escape hatch only)
+if (BUILD_PLAYERBOTS AND BUILD_LEGACY_PLAYERBOTS)
     message(STATUS "BUILD_PLAYERBOTS=ON - adding cmangos/playerbots vendored module at src/modules/PlayerBots/")
     set(PCH ${USE_PCH})
     add_subdirectory(src/modules/PlayerBots)

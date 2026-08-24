@@ -82,10 +82,10 @@ bool MapSessionFilter::Process(WorldPacket * packet)
 }
 
 /// WorldSession constructor
-WorldSession::WorldSession(uint32 id, WorldSocket *sock, AccountTypes sec, time_t mute_time, LocaleConstant locale, const std::string& remote_ip, uint32 binaryIp) :
+WorldSession::WorldSession(uint32 id, WorldSocket *sock, AccountTypes sec, time_t mute_time, LocaleConstant locale, const std::string& remote_ip, uint32 binaryIp, SessionTransport transport) :
     m_muteTime(mute_time), m_connected(true), m_disconnectTimer(0), m_who_recvd(false),
     m_ah_list_recvd(false), _scheduleBanLevel(0), m_lastMailOpenTime(0),
-    _accountFlags(0), m_idleTime(WorldTimer::getMSTime()), _player(nullptr), m_Socket(sock), _security(sec), _accountId(id), _logoutTime(0), m_inQueue(false),
+    _accountFlags(0), m_idleTime(WorldTimer::getMSTime()), _player(nullptr), m_Socket(sock), m_transport(transport), _security(sec), _accountId(id), _logoutTime(0), m_inQueue(false),
     m_playerLoading(false), m_playerLogout(false), m_playerRecentlyLogout(false), m_playerSave(false), m_sessionDbcLocale(sWorld.GetAvailableDbcLocale(locale)),
     m_sessionDbLocaleIndex(sObjectMgr.GetIndexForLocale(locale)), m_latency(0), m_tutorialState(TUTORIALDATA_UNCHANGED), m_cheatData(nullptr),
     m_lastReceivedPacketTime(0), m_clientOS(CLIENT_OS_UNKNOWN), m_clientPlatform(CLIENT_PLATFORM_UNKNOWN), _gameBuild(0),
@@ -100,7 +100,7 @@ WorldSession::WorldSession(uint32 id, WorldSocket *sock, AccountTypes sec, time_
         sock->AddReference();
     }
     else
-        m_Address = "<BOT>";
+        m_Address = remote_ip;
 
     // Start every session with the null implementation so that m_antiCheat is
     // never a null pointer. InitAntiCheatSession swaps in the real one during
@@ -112,6 +112,18 @@ WorldSession::WorldSession(uint32 id, WorldSocket *sock, AccountTypes sec, time_
 
     m_lastUpdateTime = WorldTimer::getMSTime();
     _analyser = std::make_unique<AccountAnalyser>(this);
+}
+
+void WorldSession::InitHeadlessSession()
+{
+    MANGOS_ASSERT(IsHeadless());
+    m_connected = true;
+    m_disconnectTimer = 0;
+    m_playerLoading = false;
+    m_headlessLoginRequested = false;
+    m_playerLogout = false;
+    m_playerSave = false;
+    m_clientMoverGuid.Clear();
 }
 
 /// WorldSession destructor
@@ -340,7 +352,7 @@ void WorldSession::LogUnprocessedTail(WorldPacket *packet)
 
 bool WorldSession::ForcePlayerLogoutDelay()
 {
-    // The bot-system gate (sPlayerBotMgr.ForceLogoutDelay()) was removed with the
+    // The legacy bot-system logout gate was removed with the
     // Penqle stub. The hardcore-protection delay logic below is non-bot-specific
     // (it handles network-blip resilience) so we keep it active for any in-world
     // player.
@@ -369,6 +381,17 @@ bool WorldSession::Update(PacketFilter& updater)
 
     ///- Retrieve packets from the receive queue and call the appropriate handlers
     ProcessPackets(updater);
+
+    // A Headless session has no character-screen timeout and no network socket
+    // whose absence means disconnect. Its lifetime is owned by World's
+    // character-GUID registry; explicit module logout removes it there.
+    if (IsHeadless())
+    {
+        if (!_player && !m_playerLoading && m_headlessLoginRequested)
+            return false;
+        m_lastUpdateTime = WorldTimer::getMSTime();
+        return true;
+    }
 
     if(CharacterScreenIdleKick(sessionUpdateTime))
         return false;
@@ -399,7 +422,7 @@ bool WorldSession::Update(PacketFilter& updater)
     //logout procedure should happen only in World::UpdateSessions() method!!!
     if (updater.ProcessLogout())
     {
-        // Penqle stub's m_bot/PB_STATE_OFFLINE early-logout removed. cmangos
+        // Penqle stub's bot-specific early-logout state removed. cmangos
         // adds its own logout handling for offline bots 
         if (_clientHashComputeStep == HASH_COMPUTED && GetPlayer())
             _clientHashComputeStep = HASH_NOTIFIED;
@@ -410,10 +433,14 @@ bool WorldSession::Update(PacketFilter& updater)
             m_Socket->RemoveReference();
             m_Socket = nullptr;
 
-            ///- Reset the online field in the account table if client is disconnected
+            ///- Reset the online field only for a network session. Headless
+            /// sessions do not own the account-keyed online state.
             static SqlStatementID id;
-            SqlStatement stmt = LoginDatabase.CreateStatement(id, "UPDATE account SET current_realm = ?, online = 0 WHERE id = ?");
-            stmt.PExecute(uint32(0), GetAccountId());
+            if (!IsHeadless() && !sWorld.HasOtherSessionForAccount(GetAccountId(), this))
+            {
+                SqlStatement stmt = LoginDatabase.CreateStatement(id, "UPDATE account SET current_realm = ?, online = 0 WHERE id = ?");
+                stmt.PExecute(uint32(0), GetAccountId());
+            }
 
             // Character stays IG for 2 minutes
             return ForcePlayerLogoutDelay();
@@ -421,7 +448,7 @@ bool WorldSession::Update(PacketFilter& updater)
 
         ///- If necessary, log the player out
         time_t currTime = time(nullptr);
-        // Bot-driven forceConnection / m_bot guards removed (Penqle stub binned).
+        // Bot-driven forceConnection guards removed (Penqle stub binned).
         // cmangos's bot session handling re-introduces equivalent guards.
         if ((!m_Socket || (ShouldLogOut(currTime) && !m_playerLoading)))
             LogoutPlayer(true);
@@ -444,7 +471,7 @@ bool WorldSession::Update(PacketFilter& updater)
 
 bool WorldSession::CanProcessPackets() const
 {
-    // sPlayerBotMgr.IsChatBot() clause removed — Penqle stub binned. cmangos's
+    // Legacy chat-bot clause removed — Penqle stub binned. cmangos's
     // bot system uses isRealPlayer() guards in instead.
     return (m_Socket && !m_Socket->IsClosed());
 }
@@ -752,8 +779,11 @@ void WorldSession::LogoutPlayer(bool Save)
         // No SQL injection as AccountID is uint32
         static SqlStatementID id;
 
-        SqlStatement stmt = LoginDatabase.CreateStatement(id, "UPDATE account SET current_realm = ?, online = 0 WHERE id = ?");
-        stmt.PExecute(uint32(0), GetAccountId());
+        if (!IsHeadless() && !sWorld.HasOtherSessionForAccount(GetAccountId(), this))
+        {
+            SqlStatement stmt = LoginDatabase.CreateStatement(id, "UPDATE account SET current_realm = ?, online = 0 WHERE id = ?");
+            stmt.PExecute(uint32(0), GetAccountId());
+        }
 
         ///- If the player is in a guild, update the guild roster and broadcast a logout message to other guild members
         if (Guild* guild = sGuildMgr.GetGuildById(_player->GetGuildId()))

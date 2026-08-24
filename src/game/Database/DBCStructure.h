@@ -45,7 +45,7 @@
 struct AreaTriggerEntry
 {
     uint32    id;                                           // 0
-    uint32    mapid;                                        // 1
+    union { uint32 mapid; uint32 mapId; };                  // 1
     float     x;                                            // 2
     float     y;                                            // 3
     float     z;                                            // 4
@@ -712,7 +712,7 @@ struct TaxiPathNodeEntry
                                                             // 0        m_ID
     uint32    path;                                         // 1        m_PathID
     uint32    index;                                        // 2        m_NodeIndex
-    uint32    mapid;                                        // 3        m_ContinentID
+    union { uint32 mapid; uint32 mapId; };                  // 3        m_ContinentID
     float     x;                                            // 4        m_LocX
     float     y;                                            // 5        m_LocY
     float     z;                                            // 6        m_LocZ

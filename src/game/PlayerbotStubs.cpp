@@ -16,16 +16,20 @@
 #include "WorldPacket.h"
 #include "Chat/Chat.h"
 
-// The single call the core makes into the module: it registers the hook
-// objects. Nothing to register when the module is not there.
-void World::InitPlayerbotsAtStartup()         {}
+#if defined(__GNUC__) || defined(__clang__)
+#define TORTOISE_BOT_STUB_WEAK __attribute__((weak))
+#else
+#define TORTOISE_BOT_STUB_WEAK
+#endif
 
-void BotActionLog_LogCastStart  (WorldObject*, uint32, uint64, uint32)         {}
-void BotActionLog_LogCastResult (WorldObject*, uint32, uint8, const char*)     {}
-void BotActionLog_LogDamage     (Unit*, Unit*, uint32, uint32, const char*)    {}
-void BotActionLog_LogAuraAttempt(Unit*, uint32, int32, uint64)                 {}
-void BotActionLog_LogAuraApply  (Unit*, uint32, int32, uint64)                 {}
-void BotActionLog_LogAuraRemove (Unit*, uint32, uint64)                        {}
+TORTOISE_BOT_STUB_WEAK void BotActionLog_LogCastStart  (WorldObject*, uint32, uint64, uint32)      {}
+TORTOISE_BOT_STUB_WEAK void BotActionLog_LogCastResult (WorldObject*, uint32, uint8, const char*)  {}
+TORTOISE_BOT_STUB_WEAK void BotActionLog_LogDamage     (Unit*, Unit*, uint32, uint32, const char*) {}
+TORTOISE_BOT_STUB_WEAK void BotActionLog_LogAuraAttempt(Unit*, uint32, int32, uint64)              {}
+TORTOISE_BOT_STUB_WEAK void BotActionLog_LogAuraApply  (Unit*, uint32, int32, uint64)              {}
+TORTOISE_BOT_STUB_WEAK void BotActionLog_LogAuraRemove (Unit*, uint32, uint64)                     {}
+
+#undef TORTOISE_BOT_STUB_WEAK
 
 // ChatHandler bot-command stubs. Chat.cpp registers `.bot`, `.rndbot`,
 // `.ahbot`, and `.perfmon` in the command table unconditionally (no

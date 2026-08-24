@@ -68,6 +68,10 @@ class Config
     // for a profile configs
     std::string GetStringDefaultInSection(const char* name, const char* section, const char* def);
     float GetFloatDefault(const char* name, const char* section, const float def);
+    // Return the names of all values whose key is exactly prefix or begins
+    // with prefix followed by a dot. Values are read from every imported
+    // section, matching GetStringDefault's lookup semantics.
+    std::vector<std::string> GetValues(std::string const& prefix);
     void GetRootSections(std::vector<std::string>& OutSectionList);
     void GetSections(const char* SectionName, std::vector<std::string>& OutSectionList);
     void GetKeys(const char* SectionName, std::vector<std::string>& OutKeysList);

@@ -22,6 +22,7 @@
 #include "Config.h"
 
 #include "Policies/SingletonImp.h"
+#include <algorithm>
 #include <vector>
 
 INSTANTIATE_SINGLETON_2(Config, Config::Lock);
@@ -248,4 +249,44 @@ float Config::GetFloatDefault(const char* name, const char* section, const float
     std::string rawValue = GetStringDefaultInSection(name, section, "invalid");
     if (rawValue == "invalid") return def;
     return atof(rawValue.c_str());
+}
+
+std::vector<std::string> Config::GetValues(std::string const& prefix)
+{
+    GuardType guard(m_configLock);
+    std::vector<std::string> values;
+
+    if (!mConf || prefix.empty())
+        return values;
+
+    ACE_TString sectionName;
+    ACE_TString valueName;
+    ACE_Configuration::VALUETYPE valueType;
+    ACE_Configuration_Section_Key const& rootKey = mConf->root_section();
+
+    int sectionIndex = 0;
+    while (mConf->enumerate_sections(rootKey, sectionIndex, sectionName) == 0)
+    {
+        ACE_Configuration_Section_Key sectionKey;
+        if (mConf->open_section(rootKey, sectionName.c_str(), 0, sectionKey) == 0)
+        {
+            int valueIndex = 0;
+            while (mConf->enumerate_values(sectionKey, valueIndex, valueName, valueType) == 0)
+            {
+                std::string const key = valueName.c_str();
+                bool const exact = key == prefix;
+                bool const child = key.size() > prefix.size() &&
+                    key.compare(0, prefix.size(), prefix) == 0 &&
+                    key[prefix.size()] == '.';
+                if (exact || child)
+                    values.push_back(key);
+                ++valueIndex;
+            }
+        }
+        ++sectionIndex;
+    }
+
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+    return values;
 }

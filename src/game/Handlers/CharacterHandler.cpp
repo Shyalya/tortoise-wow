@@ -124,7 +124,10 @@ public:
     void HandlePlayerLoginCallback(QueryResult * /*dummy*/, SqlQueryHolder * holder)
     {
         if (!holder) return;
-        WorldSession *session = sWorld.FindSession(((LoginQueryHolder*)holder)->GetAccountId());
+        LoginQueryHolder* loginHolder = (LoginQueryHolder*)holder;
+        WorldSession *session = loginHolder->GetTransport() == SessionTransport::Headless
+            ? sWorld.FindHeadlessSession(loginHolder->GetGuid())
+            : sWorld.FindSession(loginHolder->GetAccountId());
         if (!session)
         {
             delete holder;
@@ -538,13 +541,16 @@ uint32 WorldSession::GetBasePriority() const
 void WorldSession::LoginPlayer(ObjectGuid loginPlayerGuid)
 {
     ASSERT(loginPlayerGuid.IsPlayer());
-    LoginQueryHolder *holder = new LoginQueryHolder(GetAccountId(), loginPlayerGuid);
+    if (m_playerLoading)
+        return;
+    LoginQueryHolder *holder = new LoginQueryHolder(GetAccountId(), loginPlayerGuid, GetTransport());
     if (!holder->Initialize())
     {
         delete holder;                                      // delete all unprocessed queries
         return;
     }
     m_playerLoading = true;
+    m_headlessLoginRequested = IsHeadless();
     CharacterDatabase.DelayQueryHolderUnsafe(&chrHandler, &CharacterHandler::HandlePlayerLoginCallback, holder);
 }
 
@@ -652,8 +658,14 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
             });
         }
 
-        pCurrChar->GetSession()->SetPlayer(nullptr);
+        WorldSession* previousSession = pCurrChar->GetSession();
+        if (previousSession->IsHeadless())
+            sWorld.ForgetHeadlessSession(previousSession);
+        previousSession->SetPlayer(nullptr);
         pCurrChar->SetSession(this);
+
+        if (previousSession->IsHeadless())
+            delete previousSession;
 
         // Need to attach packet bcaster to the new socket
         pCurrChar->m_broadcaster->ChangeSocket(GetSocket());
@@ -790,7 +802,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
 
     // --- Beginners guild (custom): put new guildless real players into the
     //     configured welcome guild on their first login. Bots are excluded
-    //     through GetPlayerbotAI, and only up to level 5. ---
+    //     through the legacy bot hook, and only up to level 5. ---
     if (sConfig.GetBoolDefault("BeginnersGuilds", false)
         && pCurrChar->GetGuildId() == 0
         && !Script_IsAIControlled(pCurrChar)
@@ -939,11 +951,8 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
     }
 
     auto maskVar = pCurrChar->GetPlayerVariable(PlayerVariables::PendingChallengeMask);
-    // Bot sessions must never go through challenge setup — they predate TurtleWoW's hardcore
-    // system and have no concept of it. Skip and clear any stale mask so it doesn't re-fire.
-    const std::string& remoteAddr = pCurrChar->GetSession()->GetRemoteAddress();
-    const bool isBotSession = (remoteAddr == "disconnected/bot" || remoteAddr == "<BOT>");
-    if (isBotSession)
+    const bool isHeadlessSession = pCurrChar->GetSession()->IsHeadless();
+    if (isHeadlessSession)
     {
         if (maskVar)
             pCurrChar->SetPlayerVariable(PlayerVariables::PendingChallengeMask, "0");
@@ -1033,6 +1042,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
     sDBLogger.LogCharAction({ pCurrChar->GetGUIDLow(), GetAccountId(), LogCharAction::ActionLogin, {} });
 
     m_playerLoading = false;
+    m_headlessLoginRequested = false;
     m_clientMoverGuid = pCurrChar->GetObjectGuid();
     delete holder;
     if (alreadyOnline)

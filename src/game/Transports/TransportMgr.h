@@ -82,7 +82,7 @@ struct TransportTemplate
 };
 
 
-struct TransportAnimation;  // Defined in src/modules/PlayerBots/cmangos-compat-shim.h.
+struct TransportAnimation;  // Defined by the module compatibility layer.
 
 class TransportMgr
 {

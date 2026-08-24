@@ -34,6 +34,7 @@
 #include "MapNodes/AbstractPlayer.h"
 #include "WhisperTargetLimits.h"
 #include "Analysis/AccountAnalyser.hpp"
+#include "SessionTransport.h"
 
 
 #include <optional>
@@ -67,8 +68,7 @@ class BehaviorAnalyzer;
 class MasterPlayer;
 
 struct OpcodeHandler;
-// PlayerBotEntry forward decl removed — Penqle's PlayerBots stub binned in
-// cmangos's bot module adds its own forward decls in the host-hooks pass.
+// Legacy bot-entry forward declaration removed; session transport is generic.
 
 enum ClientOSType
 {
@@ -307,7 +307,7 @@ class WorldSession
 {
     friend class CharacterHandler;
     public:
-        WorldSession(uint32 id, WorldSocket *sock, AccountTypes sec, time_t mute_time, LocaleConstant locale, const std::string& remote_ip, uint32 binaryIp);
+        WorldSession(uint32 id, WorldSocket *sock, AccountTypes sec, time_t mute_time, LocaleConstant locale, const std::string& remote_ip, uint32 binaryIp, SessionTransport transport = SessionTransport::Network);
         ~WorldSession();
 
         bool PlayerLoading() const { return m_playerLoading; }
@@ -375,6 +375,11 @@ class WorldSession
         void SetMasterPlayer(MasterPlayer *plr) { m_masterPlayer = plr; }
         void LoginPlayer(ObjectGuid playerGuid);
         WorldSocket* GetSocket() { return m_Socket; }
+        WorldSocket const* GetSocket() const { return m_Socket; }
+        SessionTransport GetTransport() const { return m_transport; }
+        bool IsHeadless() const { return m_transport == SessionTransport::Headless; }
+        bool HasNetworkTransport() const { return m_transport == SessionTransport::Network && m_Socket != nullptr; }
+        void InitHeadlessSession();
         void SetFingerprintBanned() { m_fingerprintBanned = true; }
         bool IsFingerprintBanned() const { return m_fingerprintBanned; }
 
@@ -570,8 +575,8 @@ class WorldSession
         time_t GetLastPubChanMsgTime() { return m_lastPubChannelMsgTime; }
         void SetLastPubChanMsgTime(time_t time) { m_lastPubChannelMsgTime = time; }
 
-        // Bot system — Penqle stub removed. cmangos/playerbots adds its own
-        // GetPlayerbotAI() / GetPlayerbotMgr() / SetNoAnticheat() on Player.
+        // Legacy bot accessors and bot-specific anticheat hooks are not part of
+        // the generic session interface.
 
         // Player online / socket offline system
         void SetDisconnectedSession(); // Remove from World::m_session. Used when an account gets disconnected.
@@ -1032,6 +1037,7 @@ class WorldSession
         ObjectGuid m_clientMoverGuid;
         uint32 m_moveRejectTime;
         WorldSocket *m_Socket;
+        SessionTransport m_transport;
         std::string m_Address;
         uint32 m_BinaryAddress = 0;
 
@@ -1048,6 +1054,7 @@ class WorldSession
         bool m_inQueue;                                     // session wait in auth.queue
         bool m_hadQueue = false;                            // true if the session was in a queue this session.
         bool m_playerLoading;                               // code processed in LoginPlayer
+        bool m_headlessLoginRequested = false;
         bool m_playerLogout;                                // code processed in LogoutPlayer
         bool m_playerRecentlyLogout;
         bool m_playerSave;
@@ -1066,7 +1073,7 @@ class WorldSession
         uint32 _floodPacketsCount[FLOOD_MAX_OPCODES_TYPE];
 
         std::unordered_map<uint32, std::pair<uint32, uint32>> m_requeuePacketCount;
-        // m_bot field removed — Penqle stub binned (cmangos port).
+        // Legacy bot field removed; ownership is module-local.
         uint32 m_lastReceivedPacketTime;
         ClientIdentifiersMap _clientIdentifiers;
         std::string     _clientHash;

@@ -3895,7 +3895,7 @@ bool Unit::AddSpellAuraHolder(SpellAuraHolder *holder)
 
     // bot logging suite — hook aura applies. The
     // wrapper checks if `this` is a bot Player; non-bots cost only the
-    // GetPlayerbotAI() null check. Resolves at final mangosd link.
+            // Legacy AI null check; module AI ownership is resolved at its seam.
     {
         extern void BotActionLog_LogAuraApply(Unit* target, uint32 spellId, int32 durationMs, uint64 casterGuidRaw);
         int32 durMs = holder->GetAuraMaxDuration();

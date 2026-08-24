@@ -602,12 +602,10 @@ source_group("HttpApi"
 )
 
 
-# playerbots host-hook stubs for non-bot builds.
-# When BUILD_PLAYERBOTS=OFF, the host-hook call sites need stub implementations.
-# With BUILD_PLAYERBOTS=ON, real implementations are in playerbots.lib.
-if(NOT BUILD_PLAYERBOTS)
-    list(APPEND game_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/PlayerbotStubs.cpp)
-endif()
+# Keep the tiny generic compatibility unit in every build. Native modules
+# override the weak diagnostics hooks and consume the generic command symbols;
+# the core remains linkable when no PlayerBots module is enabled.
+list(APPEND game_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/PlayerbotStubs.cpp)
 
 add_library(game STATIC
   ${game_SRCS}

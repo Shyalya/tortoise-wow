@@ -252,6 +252,20 @@ void World::InternalShutdown()
 		m_sessions.erase(m_sessions.begin());
 	}
 
+    while (!m_pendingHeadlessSessions.empty())
+    {
+        auto itr = m_pendingHeadlessSessions.begin();
+        delete itr->second;
+        m_pendingHeadlessSessions.erase(itr);
+    }
+
+    while (!m_headlessSessions.empty())
+    {
+        auto itr = m_headlessSessions.begin();
+        delete itr->second;
+        m_headlessSessions.erase(itr);
+    }
+
 	CliCommandHolder* command = nullptr;
 	while (cliCmdQueue.next(command))
 		delete command;
@@ -313,6 +327,104 @@ bool World::RemoveSession(uint32 id)
 void World::AddSession(WorldSession* s)
 {
     addSessQueue.add(s);
+}
+
+bool World::AddHeadlessSession(WorldSession* session, ObjectGuid characterGuid)
+{
+    if (!session || !session->IsHeadless() || !characterGuid.IsPlayer())
+    {
+        delete session;
+        return false;
+    }
+
+    if (Player* player = sObjectAccessor.FindPlayer(characterGuid))
+    {
+        WorldSession* current = player->GetSession();
+        if (!current || !current->IsHeadless())
+        {
+            delete session;
+            return false;
+        }
+    }
+
+    if (m_headlessSessions.find(characterGuid) != m_headlessSessions.end() ||
+        m_pendingHeadlessSessions.find(characterGuid) != m_pendingHeadlessSessions.end())
+    {
+        delete session;
+        return false;
+    }
+
+    m_pendingHeadlessSessions.emplace(characterGuid, session);
+    return true;
+}
+
+WorldSession* World::FindHeadlessSession(ObjectGuid characterGuid) const
+{
+    auto itr = m_headlessSessions.find(characterGuid);
+    return itr == m_headlessSessions.end() ? nullptr : itr->second;
+}
+
+bool World::HasOtherSessionForAccount(uint32 accountId, WorldSession const* excluded) const
+{
+    for (auto const& entry : m_sessions)
+        if (entry.second && entry.second != excluded && entry.second->GetAccountId() == accountId)
+            return true;
+
+    for (auto const& entry : m_headlessSessions)
+        if (entry.second && entry.second != excluded && entry.second->GetAccountId() == accountId)
+            return true;
+
+    for (auto const& entry : m_pendingHeadlessSessions)
+        if (entry.second && entry.second != excluded && entry.second->GetAccountId() == accountId)
+            return true;
+
+    return false;
+}
+
+bool World::HasPendingHeadlessSession(ObjectGuid characterGuid) const
+{
+    return m_pendingHeadlessSessions.find(characterGuid) != m_pendingHeadlessSessions.end();
+}
+
+bool World::CancelPendingHeadlessSession(ObjectGuid characterGuid)
+{
+    auto itr = m_pendingHeadlessSessions.find(characterGuid);
+    if (itr == m_pendingHeadlessSessions.end())
+        return false;
+
+    delete itr->second;
+    m_pendingHeadlessSessions.erase(itr);
+    return true;
+}
+
+bool World::RemoveHeadlessSession(ObjectGuid characterGuid, bool save)
+{
+    auto itr = m_headlessSessions.find(characterGuid);
+    if (itr == m_headlessSessions.end())
+        return CancelPendingHeadlessSession(characterGuid);
+
+    WorldSession* session = itr->second;
+    m_headlessSessions.erase(itr);
+    if (session->GetPlayer())
+        session->LogoutPlayer(save);
+    delete session;
+    return true;
+}
+
+bool World::ForgetHeadlessSession(WorldSession* session)
+{
+    if (!session)
+        return false;
+
+    for (auto itr = m_headlessSessions.begin(); itr != m_headlessSessions.end(); ++itr)
+    {
+        if (itr->second == session)
+        {
+            m_headlessSessions.erase(itr);
+            return true;
+        }
+    }
+    return false;
 }
 
 void World::AddSession_(WorldSession* s)
@@ -2343,9 +2455,6 @@ void LoadPlayerEggLoot();
 	sObjectMgr.LoadPlayerPhaseFromDb();
     sLog.outString("Caching player pets...");
 	sCharacterDatabaseCache.LoadAll();
-    // Penqle's "Loading player bot manager... / sPlayerBotMgr.Load()" removed.
-    // cmangos's RandomPlayerbotMgr is instantiated by InitPlayerbotsAtStartup(), called near
-    // the end of this function.
     sLog.outString("Loading faction change reputations...");
 	sObjectMgr.LoadFactionChangeReputations();
     sLog.outString("Loading faction change spells...");
@@ -2437,17 +2546,6 @@ void LoadPlayerEggLoot();
         if (honorUpdateFile)
             honorUpdateFile << "0";
     }
-
-    // Initialize bot config + managers. InitPlayerbotsAtStartup (HostHooks.cpp) loads
-    // aiplayerbot.conf, instantiates sPlayerbotAIConfig / sRandomPlayerbotMgr / sAhBot, and runs
-    // PlayerbotAIConfig::Initialize() — which builds the equipment cache (RandomItemMgr::Init →
-    // BuildEquipCache, scans sItemStorage) and validates the premade talent specs (LoadTalentSpecs,
-    // reads Talent.dbc). It MUST run after LoadDBCStores() and LoadItemPrototypes() above, otherwise
-    // those caches build against empty data on first boot. No-op if AiPlayerbot.Enabled = 0.
-    // The module registers its hook objects here; the work it used to do in
-    // FinalizePlayerbotsPostPlayerInfo() now runs from WorldScript::OnStartup
-    // just below, which is the same point in the sequence.
-    InitPlayerbotsAtStartup();
 
     // Moved here from the tail of DetectDBCLang(). That helper runs right after
     // LoadDBCStores() and well before LoadItemPrototypes(), so a module doing any
@@ -3800,6 +3898,21 @@ void World::UpdateSessions(uint32 diff)
     while (addSessQueue.next(sess))
         AddSession_(sess);
 
+    // Headless sessions are character-identity keyed and deliberately bypass
+    // the account-keyed network session/queue/population machinery.
+    for (auto itr = m_pendingHeadlessSessions.begin(); itr != m_pendingHeadlessSessions.end(); )
+    {
+        if (m_headlessSessions.find(itr->first) != m_headlessSessions.end())
+        {
+            delete itr->second;
+            itr = m_pendingHeadlessSessions.erase(itr);
+            continue;
+        }
+
+        m_headlessSessions.emplace(itr->first, itr->second);
+        itr = m_pendingHeadlessSessions.erase(itr);
+    }
+
     ///- Then send an update signal to remaining ones
     time_t time_now = time(nullptr);
 
@@ -3841,6 +3954,20 @@ void World::UpdateSessions(uint32 diff)
         {
             itr++;
         }
+    }
+
+    for (auto itr = m_headlessSessions.begin(); itr != m_headlessSessions.end(); )
+    {
+        WorldSession* session = itr->second;
+        WorldSessionFilter updater(session);
+        session->AddActiveTime(diff);
+        if (!session->Update(updater))
+        {
+            delete session;
+            itr = m_headlessSessions.erase(itr);
+        }
+        else
+            ++itr;
     }
 }
 

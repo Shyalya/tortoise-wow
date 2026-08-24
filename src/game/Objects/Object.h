@@ -826,6 +826,7 @@ class WorldObject : public Object
 
         void SetRawPosition(Position&& pos) { m_position = std::move(pos); }
         Position const& GetPosition() const { return m_position; }
+        Position const& getPosition() const { return GetPosition(); }
         float GetPositionX() const { return m_position.x; }
         float GetPositionY() const { return m_position.y; }
         float GetPositionZ() const { return m_position.z; }
@@ -876,6 +877,7 @@ class WorldObject : public Object
         uint32 GetZoneId() const;
         uint32 GetAreaId() const;
         void GetZoneAndAreaId(uint32& zoneid, uint32& areaid) const;
+        void getZoneAndAreaId(uint32& zoneid, uint32& areaid) const { GetZoneAndAreaId(zoneid, areaid); }
         void LoadMapCellsAround(float dist) const;
 
         InstanceData* GetInstanceData() const;
@@ -902,6 +904,7 @@ class WorldObject : public Object
         // Penqle has (target, SizeFactor); ignore the bool, ignore the calc enum (taken as int because
         // DistanceCalculation enum is defined in the bot's shim header, not visible here).
         float GetDistance(WorldObject const* obj, bool /*is3D*/, int /*distance_calc*/) const { return GetDistance(obj); }
+        float getDistance(WorldObject const* obj, bool is3D = true, int distance_calc = 0) const { return GetDistance(obj, is3D, distance_calc); }
         float GetDistance(WorldLocation const& position, SizeFactor distcalc = SizeFactor::BoundingRadius) const { return GetDistance(position.x, position.y, position.z, distcalc); }
         float GetDistance(Position const& position, SizeFactor distcalc = SizeFactor::BoundingRadius) const { return GetDistance(position.x, position.y, position.z, distcalc); }
         // IsFriend/IsEnemy on WorldObject (forward to Unit dispatch).
@@ -916,6 +919,7 @@ class WorldObject : public Object
             float d = GetDistance(x, y, z, distcalc == 0 ? SizeFactor::None : (distcalc == 2 ? SizeFactor::CombatReach : SizeFactor::BoundingRadius));
             return distcalc == 0 ? d * d : d;
         }
+        float getDistance(float x, float y, float z, int distcalc = 0) const { return GetDistance(x, y, z, distcalc); }
         float GetDistance(WorldObject const* obj, int distcalc) const {
             float d = GetDistance(obj, distcalc == 0 ? SizeFactor::None : (distcalc == 2 ? SizeFactor::CombatReach : SizeFactor::BoundingRadius));
             return distcalc == 0 ? d * d : d;

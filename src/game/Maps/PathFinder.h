@@ -79,6 +79,8 @@ class PathInfo
         float getArea(float /*x*/, float /*y*/, float /*z*/) const { return 0.0f; }
         // 4-arg form: getArea(mapId, x, y, z).
         float getArea(uint32 /*mapId*/, float /*x*/, float /*y*/, float /*z*/) const { return 0.0f; }
+        float GetArea(float x, float y, float z) const { return getArea(x, y, z); }
+        float GetArea(uint32 mapId, float x, float y, float z) const { return getArea(mapId, x, y, z); }
         // ComputePathToRandomPoint: cmangos has it; Penqle doesn't. Stub returns false.
         bool ComputePathToRandomPoint(Vector3 const& /*center*/, float /*radius*/) { return false; }
         // getFlags: cmangos returns nav-flags at point. Stub returns 0.
@@ -96,6 +98,7 @@ class PathInfo
 
         inline PointsArray& getFullPath() { return m_pathPoints; }
         inline PointsArray const& getPath() const { return m_pathPoints; }
+        inline PointsArray const& GetPath() const { return getPath(); }
         inline PathType getPathType() const { return PathType(m_type); }
         // Nostalrius
         bool UpdateForCaster(Unit* pTarget, float castRange);

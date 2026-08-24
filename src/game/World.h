@@ -926,10 +926,6 @@ class World
         // Penqle's LFGQueue lives in LFG/LFGMgr.h. Forward to sLFGMgr.
         // Forward-declare LFGQueue at this scope to avoid requiring full LFGMgr.h include.
         class LFGQueue& GetLFGQueue();
-        // The one call the core still makes into the bot module: it registers the
-        // module hook objects. The per-tick driver is WorldScript::OnUpdate and the
-        // post-load work is WorldScript::OnStartup, both fired from World.cpp.
-        void InitPlayerbotsAtStartup();
         uint32 GetCurrentMSTime() const;
         // GetMaxDiff: cmangos exposes max diff for performance dashboard. Stub returns 0.
         uint32 GetMaxDiff() const { return 0; }
@@ -958,6 +954,13 @@ class World
         const SessionMap& GetAllSessions() const { return m_sessions; }
         WorldSession* FindSession(uint32 id) const;
         void AddSession(WorldSession *s);
+        bool AddHeadlessSession(WorldSession* session, ObjectGuid characterGuid);
+        WorldSession* FindHeadlessSession(ObjectGuid characterGuid) const;
+        bool HasOtherSessionForAccount(uint32 accountId, WorldSession const* excluded = nullptr) const;
+        bool HasPendingHeadlessSession(ObjectGuid characterGuid) const;
+        bool CancelPendingHeadlessSession(ObjectGuid characterGuid);
+        bool RemoveHeadlessSession(ObjectGuid characterGuid, bool save = true);
+        bool ForgetHeadlessSession(WorldSession* session);
         bool RemoveSession(uint32 id);
         /// Get the number of current active sessions
         void UpdateMaxSessionCounters();
@@ -1391,6 +1394,8 @@ class World
         uint32 m_lastDiff = 0;
         SessionMap m_sessions;
         SessionSet m_disconnectedSessions;
+        std::map<ObjectGuid, WorldSession*> m_headlessSessions;
+        std::map<ObjectGuid, WorldSession*> m_pendingHeadlessSessions;
         robin_hood::unordered_map<uint32 /*accountId*/, time_t /*last logout*/> m_accountsLastLogout;
         bool CanSkipQueue(WorldSession const* session);
 

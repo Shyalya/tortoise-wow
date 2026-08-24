@@ -40,30 +40,18 @@
 #include "SuspiciousStatisticMgr.h"
 #include "ScriptObjects.h"
 
-// Bot diagnostic logging — flag-gated via AiPlayerbot.EnableActionLog. We
-// can't #include "BotDiagnostics.h" here because the playerbot/ dir isn't
-// on game/'s include path; forward-declare the flag accessor and inline a
-// thin SC_LOG macro. Filter with `grep "\[BOT\]"` from info.log.
-#ifdef BUILD_PLAYERBOTS
-namespace ai { namespace botdiag { bool IsActionLogEnabled(); } }
+// Headless transport diagnostics stay generic. The core reports the transport
+// capability; an optional module may interpret the line, but the core does not
+// link to or name a bot diagnostics implementation.
 #define SC_LOG(fmt, ...) do { \
-    if (ai::botdiag::IsActionLogEnabled()) \
-        sLog.outDetail("[BOT] " fmt, ##__VA_ARGS__); \
+    sLog.outDetail("[HEADLESS] " fmt, ##__VA_ARGS__); \
 } while (0)
-#else
-#define SC_LOG(fmt, ...) ((void)0)
-#endif
 
-// Helper — true iff the session belongs to a bot (synthetic/null socket or
-// the player has a PlayerbotAI attached). Used to gate SC_LOG so we don't
-// spam the log for real-player teleports.
-static bool _scIsBotSession(WorldSession const* sess)
+// Helper — diagnostics are gated by the generic transport capability rather
+// than by a module-specific bot identity.
+static bool _scIsHeadlessSession(WorldSession const* sess)
 {
-    if (!sess) return false;
-    Player const* p = sess->GetPlayer();
-    if (p && Script_IsAIControlled(p)) return true;
-    // Fall-back: free-floating bot sessions have remote address "" or "disconnected/bot".
-    return sess->GetRemoteAddress().empty() || sess->GetRemoteAddress() == "disconnected/bot";
+    return sess && sess->IsHeadless();
 }
 
 void WorldSession::HandleMoveWorldportAckOpcode(WorldPacket& /*recvData*/)
@@ -74,11 +62,11 @@ void WorldSession::HandleMoveWorldportAckOpcode(WorldPacket& /*recvData*/)
 
 void WorldSession::HandleMoveWorldportAckOpcode()
 {
-    bool const isBot = _scIsBotSession(this);
+    bool const isHeadless = _scIsHeadlessSession(this);
     Player* p = GetPlayer();
-    if (isBot)
+    if (isHeadless)
     {
-        SC_LOG("worldport-ack ENTRY bot=%s guid=%u isBeingTeleportedFar=%d isInWorld=%d "
+        SC_LOG("worldport-ack ENTRY session=%s guid=%u isBeingTeleportedFar=%d isInWorld=%d "
                "destMapId=%u destX=%.1f destY=%.1f destZ=%.1f",
                p ? p->GetName() : "(null)", p ? p->GetGUIDLow() : 0u,
                p ? (int)p->IsBeingTeleportedFar() : -1,
@@ -92,8 +80,8 @@ void WorldSession::HandleMoveWorldportAckOpcode()
     // ignore unexpected far teleports
     if (!GetPlayer()->IsBeingTeleportedFar())
     {
-        if (isBot)
-            SC_LOG("worldport-ack EARLY-RETURN bot=%s — IsBeingTeleportedFar=false "
+        if (isHeadless)
+            SC_LOG("worldport-ack EARLY-RETURN session=%s — IsBeingTeleportedFar=false "
                    "(map setup never finished — bot will stay where it is)",
                    p ? p->GetName() : "(null)");
         return;
@@ -109,8 +97,8 @@ void WorldSession::HandleMoveWorldportAckOpcode()
     // possible errors in the coordinate validity check (only cheating case possible)
     if (!MapManager::IsValidMapCoord(loc))
     {
-        if (isBot)
-            SC_LOG("worldport-ack INVALID-COORD bot=%s — falling back to homebind",
+        if (isHeadless)
+            SC_LOG("worldport-ack INVALID-COORD session=%s — falling back to homebind",
                    p ? p->GetName() : "(null)");
         sLog.outError("WorldSession::HandleMoveWorldportAckOpcode: %s was teleported far to a not valid location "
                       "(map:%u, x:%f, y:%f, z:%f) We port him to his homebind instead..",
@@ -168,13 +156,13 @@ void WorldSession::HandleMoveWorldportAckOpcode()
     // the CanEnter checks are done in TeleporTo but conditions may change
     // while the player is in transit, for example the map may get full
     bool const _scAddOk = GetPlayer()->GetMap()->Add(GetPlayer());
-    if (isBot)
-        SC_LOG("worldport-ack map->Add bot=%s result=%d destMapId=%u",
+    if (isHeadless)
+        SC_LOG("worldport-ack map->Add session=%s result=%d destMapId=%u",
                p ? p->GetName() : "(null)", (int)_scAddOk, loc.mapId);
     if (!_scAddOk)
     {
-        if (isBot)
-            SC_LOG("worldport-ack ADD-FAILED bot=%s — calling HandleReturnOnTeleportFail "
+        if (isHeadless)
+            SC_LOG("worldport-ack ADD-FAILED session=%s — calling HandleReturnOnTeleportFail "
                    "(this can loop and produce a ghost)",
                    p ? p->GetName() : "(null)");
         DETAIL_LOG("WorldSession::HandleMoveWorldportAckOpcode: %s was teleported far but couldn't be added to map "
@@ -185,8 +173,8 @@ void WorldSession::HandleMoveWorldportAckOpcode()
         return;
     }
     GetPlayer()->SetSemaphoreTeleportFar(false);
-    if (isBot)
-        SC_LOG("worldport-ack OK bot=%s now in mapId=%u inWorld=%d",
+    if (isHeadless)
+        SC_LOG("worldport-ack OK session=%s now in mapId=%u inWorld=%d",
                p ? p->GetName() : "(null)",
                p ? p->GetMapId() : 0u,
                p ? (int)p->IsInWorld() : -1);
