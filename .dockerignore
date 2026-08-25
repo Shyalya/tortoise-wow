@@ -1,0 +1,10 @@
+.git
+.github
+.vscode
+build
+data
+samples
+*.kate-swp
+*.bak
+*.bak.*
+*.bak-*

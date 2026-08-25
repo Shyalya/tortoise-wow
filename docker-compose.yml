@@ -1,0 +1,120 @@
+# Example stack: MariaDB + one-shot DB init + realmd + mangosd
+# Copy .env.example to .env and set secrets before starting.
+# Image: ghcr.io/kasperfriend/tortoise-docker — override tag with TAG=no-bots if needed.
+
+# Override TURTLE_IMAGE with a locally built image when needed. Published
+# images use the portable CPU target configured by Dockerfile/CI.
+x-turtle-image: &turtle-image ${TURTLE_IMAGE:-ghcr.io/kasperfriend/tortoise-docker:${TAG:-playerbots}}
+
+services:
+  db:
+    image: mariadb:11.8@sha256:d9f7eb2637296652f24b484afd5d246f759f49f5babcadc6a9e344c9acb75fbf
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+      MARIADB_AUTO_UPGRADE: "1"
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+    volumes:
+      # - db-data:/var/lib/mysql
+      - ./migration-test-volumes/db:/var/lib/mysql
+      - ./docker/mariadb.cnf:/etc/mysql/conf.d/turtle.cnf:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    ports:
+      # DB_PORT is host-side only; containers connect to db:3306.
+      - ${DB_PORT:-3306}:3306
+
+  db-init:
+    image: *turtle-image
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      # MariaDB's fixed container port, not the host-published port above.
+      DB_PORT: "3306"
+      DB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?set DB_ROOT_PASSWORD in .env}
+      DB_USER: ${DB_USER:-mangos}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      DB_LOGIN: ${DB_LOGIN:-tw_logon}
+      DB_WORLD: ${DB_WORLD:-tw_world}
+      DB_CHAR: ${DB_CHAR:-tw_char}
+      DB_LOGS: ${DB_LOGS:-tw_logs}
+      REALM_NAME: ${REALM_NAME:-TurtleWoW}
+      REALM_ADDRESS: ${REALM_ADDRESS:-127.0.0.1}
+      WORLD_PORT: ${WORLD_PORT:-8090}
+      REALM_ID: ${REALM_ID:-1}
+    volumes:
+      # - init-marker:/var/lib/turtle-init
+      - ./migration-test-volumes/init-marker:/var/lib/turtle-init
+    entrypoint: ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
+    command: ["db-init"]
+    restart: "no"
+
+  realmd:
+    image: *turtle-image
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_USER: ${DB_USER:-mangos}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      DB_LOGIN: ${DB_LOGIN:-tw_logon}
+      REALM_PORT: ${REALM_PORT:-3724}
+      BIND_IP: "0.0.0.0"
+    ports:
+      - "${GAME_BIND_IP:-127.0.0.1}:${REALM_PORT:-3724}:${REALM_PORT:-3724}"
+    command: ["realmd"]
+
+  mangosd:
+    image: *turtle-image
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      realmd:
+        condition: service_started
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_USER: ${DB_USER:-mangos}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      DB_LOGIN: ${DB_LOGIN:-tw_logon}
+      DB_WORLD: ${DB_WORLD:-tw_world}
+      DB_CHAR: ${DB_CHAR:-tw_char}
+      DB_LOGS: ${DB_LOGS:-tw_logs}
+      DATA_DIR: /opt/turtle/data
+      WORLD_PORT: ${WORLD_PORT:-8090}
+      REALM_ID: ${REALM_ID:-1}
+      BIND_IP: "0.0.0.0"
+      LOG_SQL: ${LOG_SQL:-0}
+      DATABASE_AUTOUPDATE_ENABLED: ${DATABASE_AUTOUPDATE_ENABLED:-1}
+      LFT_BOTFILL_ENABLE: ${LFT_BOTFILL_ENABLE:-1}
+      SOLO_DUNGEON_REPOP_ALIVE_ENABLE: ${SOLO_DUNGEON_REPOP_ALIVE_ENABLE:-1}
+      LEECH_ENABLE: ${LEECH_ENABLE:-1}
+      AI_PLAYERBOT_ENABLED: ${AI_PLAYERBOT_ENABLED:-1}
+      AI_MIN_RANDOM_BOTS: ${AI_MIN_RANDOM_BOTS:-10}
+      AI_MAX_RANDOM_BOTS: ${AI_MAX_RANDOM_BOTS:-10}
+    ports:
+      - "${GAME_BIND_IP:-127.0.0.1}:${WORLD_PORT:-8090}:${WORLD_PORT:-8090}"
+    volumes:
+      - ${DATA_PATH:-./data}:/opt/turtle/data:ro
+      - mangosd-logs:/opt/turtle/logs
+      - ./config:/opt/turtle/etc
+    command: ["mangosd"]
+    # First start builds bot caches / travel data and can take a long time.
+    stop_grace_period: 2m
+
+volumes:
+  db-data:
+  init-marker:
+  mangosd-logs:
