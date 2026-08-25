@@ -144,7 +144,7 @@ namespace DcStrategyGate
         switch (plan.nonCombat)
         {
             case Action::Install:
-                botAI->ChangeStrategy("+dungeon clear,-grind,-travel,-rpg,-rpg jump,-follow,-wander,-bg,-battleground",
+                botAI->ChangeStrategy("+dungeon clear,-grind,-travel,-rpg,-rpg jump,-follow,-wander,-bg,-battleground,-lfg",
                                       BOT_STATE_NON_COMBAT);
                 // DIAG(riddle, binary test): does the call bite on THIS
                 // object? after=1 and next sweep still hasNon=0 => something
@@ -158,7 +158,7 @@ namespace DcStrategyGate
                          botAI->HasStrategy("grind", BOT_STATE_NON_COMBAT) ? 1 : 0);
                 break;
             case Action::Strip:
-                botAI->ChangeStrategy("-dungeon clear,+grind,+travel,+rpg,+rpg jump,+follow,+bg,+battleground",
+                botAI->ChangeStrategy("-dungeon clear,+grind,+travel,+rpg,+rpg jump,+follow,+bg,+battleground,+lfg",
                                       BOT_STATE_NON_COMBAT);
                 break;
             case Action::None:

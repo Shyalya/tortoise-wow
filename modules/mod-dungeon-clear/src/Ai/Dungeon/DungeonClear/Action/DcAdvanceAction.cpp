@@ -543,7 +543,7 @@ namespace
         // wait, so the next window chains seamlessly when the spline finalizes).
         MotionMaster* mm = bot->GetMotionMaster();
         bool const splineRunning =
-            mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE && bot->isMoving();
+            bot->movespline && !bot->movespline->Finalized() && bot->isMoving();
         if (splineRunning)
         {
             SetPhase(context, "swimming");
@@ -798,7 +798,7 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     {
         MotionMaster const* const mm = bot->GetMotionMaster();
         bool const glideInFlight =
-            mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE;
+            bot->movespline && !bot->movespline->Finalized();
         if (glideInFlight)
             return Step::Continue;   // ride it out; a real wait halts it next tick
         return Step::ReturnFalse;    // standing still already — do not commit a new window
@@ -1411,7 +1411,7 @@ void DungeonClearAdvanceAction::FillHopObs(AdvanceState& st, DungeonClearApproac
     // window-sized delay was the mid-path "frozen for seconds" freeze.
     MotionMaster* const mm = bot->GetMotionMaster();
     obs.splineRunning =
-        mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE && bot->isMoving();
+        bot->movespline && !bot->movespline->Finalized() && bot->isMoving();
     if (obs.splineRunning)
     {
         // Mid-glide hazard interrupt: the window cap (AdvanceWindowYards) still
@@ -1568,6 +1568,122 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoHopDoneEscalation(
         return Step::ReturnFalse;
     }
 
+    // INCOMPLETE-ROUTE HANDOFF. The chunk builder can return a partial route
+    // that simply stops short of a boss it cannot reach - live: the Deadmines
+    // ship deck (Greenskin/VanCleef ~39y above the quay) produced
+    // "complete=0, 42 pts" forever, the party walked that stub to the water's
+    // edge and the route was rebuilt every TTL for the rest of the window.
+    // Stock's PathGenerator uses the same navmesh but its own search, and it
+    // honours Detour off-mesh connections the chunked walker never consults,
+    // so on a short hop it can close what the tile-wise builder refuses. This
+    // is a handoff, not a shortcut: if stock cannot path it either, nothing
+    // happens and the stall stands.
+    if (st.path && !st.path->complete)
+    {
+        float const flat = bot->GetExactDist2d(bossX, bossY);
+        // DIAG(mesh), distance-independent: an incomplete route is the whole
+        // question, and the party often follows its stub far away from the
+        // boss (live: 365yd), so a probe gated on proximity never runs.
+        {
+            static uint32 s_lastFarProbeMs = 0;
+            uint32 const nowFar2 = getMSTime();
+            if (nowFar2 - s_lastFarProbeMs > 30000 && bot->FindMap())
+            {
+                s_lastFarProbeMs = nowFar2;
+                NavmeshSnap::Result const at =
+                    NavmeshSnap::SnapColumn(bot->FindMap(), bossX, bossY, bossZ, 25.0f, 10.0f);
+                // Plain {} only - this core's StringFormat does not implement
+                // format specs, so {:.1f} survives verbatim into the journal
+                // (every garbled diagnostic in this module has that cause).
+                // Round to int here instead.
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC-MESH] {} unreachable: meshAtBoss={} snappedZ={} bossZ={} botDist={} botZ={}",
+                         next->name, at.ok ? 1 : 0,
+                         int(at.ok ? at.z : 0.0f), int(bossZ), int(flat),
+                         int(bot->GetPositionZ()));
+            }
+        }
+        // 120yd, not 60: the stub route parks the party wherever it ran out,
+        // and live that was 60.8yd from Greenskin - just past the old gate.
+        // ...and only once the route stops PAYING. isMoving() was the wrong
+        // question twice over: firing while the stub is still being walked
+        // cancels the glide every 5s and freezes the run (live: 114yd from
+        // Gilnid on a healthy route), but demanding a full stop never fires
+        // at all where it matters - on the Deadmines deck the party paces
+        // its dead-end stub forever, moving the whole time and arriving
+        // nowhere. Net ground covered is the honest measure.
+        DcApproachState& happr = *st.appr;
+        uint32 const nowHand = getMSTime();
+        float const toBoss = bot->GetExactDist(bossX, bossY, bossZ);
+        if (happr.handoffSinceMs == 0 || toBoss < happr.handoffBestDist - 3.0f)
+        {
+            happr.handoffBestDist = toBoss;
+            happr.handoffSinceMs = nowHand ? nowHand : 1;
+        }
+        bool const routeNotPaying =
+            happr.handoffSinceMs != 0 && getMSTimeDiff(happr.handoffSinceMs, nowHand) > 25000;
+        if (flat < 120.0f && routeNotPaying)
+        {
+            static uint32 s_lastHandoffMs = 0;
+            uint32 const nowHandoff = getMSTime();
+            if (nowHandoff - s_lastHandoffMs > 5000)
+            {
+                s_lastHandoffMs = nowHandoff;
+                // Ask for a REACHABLE point near the boss first. The boss's
+                // own spot may be exactly the unreachable one (live: 13yd
+                // from Greenskin but 12.8y below him - the missing stairs to
+                // the upper deck sit between). FindStandoffPoint rings the
+                // boss and returns the first candidate that snaps to the
+                // mesh, has line of sight and is PATHFIND_NORMAL-reachable
+                // from here; walking there is ordinary movement and the pull
+                // happens from that spot.
+                // DIAG(mesh): is there ANY navmesh at the boss at all? A hit
+                // at his own Z means the deck is meshed and only the link is
+                // missing (off-mesh connection / anchors can fix that); a
+                // miss, or a hit far below him, means the geometry was never
+                // meshed and only regenerating map 36 helps.
+                {
+                    static uint32 s_lastMeshProbeMs = 0;
+                    uint32 const nowProbe = getMSTime();
+                    if (nowProbe - s_lastMeshProbeMs > 30000 && bot->FindMap())
+                    {
+                        s_lastMeshProbeMs = nowProbe;
+                        NavmeshSnap::Result const at =
+                            NavmeshSnap::SnapColumn(bot->FindMap(), bossX, bossY, bossZ, 25.0f, 10.0f);
+                        LOG_INFO("playerbots.dungeonclear",
+                                 "[DC-MESH] probe at {}: ok={} snappedZ={:.1f} bossZ={:.1f}",
+                                 next->name, at.ok ? 1 : 0, at.ok ? at.z : 0.0f, bossZ);
+                    }
+                }
+
+                float sx = 0.0f, sy = 0.0f, sz = 0.0f;
+                Position const bossPos(bossX, bossY, bossZ, 0.0f);
+                bool const haveSpot = bot->FindMap() &&
+                    FindStandoffPoint(bot->FindMap(), bossPos, /*ringRadius*/ 14.0f,
+                                      /*maxRadius*/ 30.0f, sx, sy, sz);
+                if (haveSpot && DcMoveTo(next->mapId, sx, sy, sz))
+                {
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] incomplete route to {} at {:.0f}yd (dz {:.0f}) "
+                             "-> walking to a reachable spot {:.0f}yd off it",
+                             bot->GetName(), next->name, flat, bossZ - bot->GetPositionZ(),
+                             bot->GetExactDist(sx, sy, sz));
+                    SetPhase(context, "pursuing");
+                    return Step::ReturnTrue;
+                }
+                if (DcMoveTo(next->mapId, bossX, bossY, bossZ))
+                {
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC:{}] incomplete route to {} at {:.0f}yd (dz {:.0f}) "
+                             "-> handing the last leg to stock pathfinding",
+                             bot->GetName(), next->name, flat, bossZ - bot->GetPositionZ());
+                    SetPhase(context, "pursuing");
+                    return Step::ReturnTrue;
+                }
+            }
+        }
+    }
+
     if (v == DungeonClearApproach::Verdict::FinalApproach)
     {
         // The route dead-ends short of the boss. Rebuilding just produces the
@@ -1697,7 +1813,25 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoIssueSplineWindow(A
     // priority arbitration only). The window (>=2 points, window[0] the live
     // position) was produced in FillHopObs.
     Movement::PointsArray points(st.splineWindow.begin(), st.splineWindow.end());
-    if (DcMovement::SplinePath(botAI, points))
+    bool const splined = DcMovement::SplinePath(botAI, points);
+    // DIAG(step): does the glide actually get issued? The stall fingerprint
+    // (route complete, cursor 0/0, no refusal line, no movement) cannot tell
+    // "no window built" from "window issued and ignored" without this.
+    {
+        static uint32 s_lastStepLogMs = 0;
+        uint32 const nowStep = getMSTime();
+        if (nowStep - s_lastStepLogMs > 4000)
+        {
+            s_lastStepLogMs = nowStep;
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC-STEP] {} spline window: {} pts, issued={} , moving={} , "
+                     "at ({:.0f},{:.0f},{:.0f})",
+                     bot->GetName(), points.size(), splined ? 1 : 0,
+                     bot->isMoving() ? 1 : 0,
+                     bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+        }
+    }
+    if (splined)
     {
         st.appr->stuckCount = 0;
         ClearStall(context);
@@ -1900,6 +2034,63 @@ bool DungeonClearAdvanceAction::Execute(Event& /*event*/)
     // `has available loot` never got a tick: the tank parked at the boss jittering
     // (loot-walk vs hold) until the boss died by other means. Loot first lets the
     // cutoffs clear the corpse and reopen the pull.
+    // RAMP SCAN (diagnostic, 1x/60s), independent of what the router thinks
+    // of its route. The ship deck fails in two shapes - incomplete route, or
+    // a complete route that is never walked - and a scan bound to the first
+    // shape simply never ran in the second. The situation itself is the
+    // trigger: boss well above us and no approach for 30s. Reports every
+    // grid cell whose mesh height sits between the two levels; those cells
+    // are the stairway an anchor chain has to follow.
+    if (st.next && st.appr)
+    {
+        static uint32 s_rampProbeMs = 0;
+        static float  s_rampBest = 0.0f;
+        static uint32 s_rampBestMs = 0;
+        uint32 const nowRamp = getMSTime();
+        float const botZnow = bot->GetPositionZ();
+        float const toBossNow = bot->GetExactDist(st.bossX, st.bossY, st.bossZ);
+        if (s_rampBestMs == 0 || toBossNow < s_rampBest - 3.0f)
+        {
+            s_rampBest = toBossNow;
+            s_rampBestMs = nowRamp ? nowRamp : 1;
+        }
+        bool const noApproach = getMSTimeDiff(s_rampBestMs, nowRamp) > 30000;
+        // 6y, not 15: the party now climbs to within ~10y of the deck
+        // before stalling, and the old gate silenced the scan exactly there.
+        if (noApproach && st.bossZ - botZnow > 6.0f && bot->FindMap() &&
+            nowRamp - s_rampProbeMs > 60000)
+        {
+            s_rampProbeMs = nowRamp;
+            Map* const rmap = bot->FindMap();
+            float const cx = (bot->GetPositionX() + st.bossX) * 0.5f;
+            float const cy = (bot->GetPositionY() + st.bossY) * 0.5f;
+            std::string found;
+            uint32 hits = 0;
+            for (int ix = -6; ix <= 6 && hits < 24; ++ix)
+                for (int iy = -6; iy <= 6 && hits < 24; ++iy)
+                {
+                    float const px = cx + float(ix) * 8.0f;
+                    float const py = cy + float(iy) * 8.0f;
+                    NavmeshSnap::Result const r = NavmeshSnap::SnapColumn(
+                        rmap, px, py, (botZnow + st.bossZ) * 0.5f, 30.0f, 6.0f);
+                    if (!r.ok)
+                        continue;
+                    if (r.z > botZnow + 6.0f && r.z < st.bossZ - 4.0f)
+                    {
+                        found += " (" + std::to_string(int(px)) + "," +
+                                 std::to_string(int(py)) + "," +
+                                 std::to_string(int(r.z)) + ")";
+                        ++hits;
+                    }
+                }
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC-RAMP] botZ={} bossZ={} bot=({},{}) centre=({},{}) {} mid-level cells:{}",
+                     int(botZnow), int(st.bossZ), int(bot->GetPositionX()),
+                     int(bot->GetPositionY()), int(cx), int(cy), hits,
+                     found.empty() ? std::string(" none") : found);
+        }
+    }
+
     if (Step s = TryLootYield(st); s != Step::Continue)
         return s == Step::ReturnTrue;
     if (Step s = TryEngageHold(st); s != Step::Continue)

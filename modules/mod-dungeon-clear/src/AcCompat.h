@@ -434,6 +434,10 @@ namespace Acore
 #define CHAT_MSG_PARTY_LEADER CHAT_MSG_PARTY
 #endif
 
+// Conditional info log - same formatting path as LOG_INFO, but only when
+// `cond` holds (throttled diagnostics that must not spam the journal).
+#define LOG_INFO_IF(cond, ...) do { if (cond) LOG_INFO(__VA_ARGS__); } while (0)
+
 #endif
 
 // ---- AzerothCore constants that never got names on this engine -------------

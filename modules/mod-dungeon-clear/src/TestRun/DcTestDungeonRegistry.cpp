@@ -29,6 +29,9 @@ namespace DcTestDungeonRegistry
         static std::vector<Row> const rows = {
             // --- Classic ---------------------------------------------------
             { "rfc",             "Ragefire Chasm",                389,     3.81f,   -14.82f,  -17.84f, 4.390f, 15, "" },
+            // Turtle custom (map 822, gate level 13). Entrance from the
+            // areatrigger_teleport row in migration 20260517121832.
+            { "frostmane",       "Frostmane Hollow",              822, -7522.73f, -3588.76f,  199.98f, 2.202f, 16, "" },
             { "wc",              "Wailing Caverns",                43,  -163.49f,   132.90f,  -73.66f, 5.830f, 18, "" },
             // Deadmines runs at 20, not the 18 the instance nominally opens at.
             // Its back half is a level-18 party's problem: Gilnid is a level-20
@@ -37,6 +40,9 @@ namespace DcTestDungeonRegistry
             // all. See the RoomAggroRegistry row for map 36.
             { "deadmines",       "The Deadmines",                  36,   -16.40f,  -383.07f,   61.78f, 1.860f, 20, "" },
             { "sfk",             "Shadowfang Keep",                33,  -229.13f,  2109.18f,   76.89f, 1.267f, 20, "" },
+            // Turtle custom (map 816, gate level 25). Entrance from the same
+            // migration as Frostmane Hollow.
+            { "dragonmaw",       "Dragonmaw Retreat",             816, -6105.44f, -3629.89f,  242.48f, 3.235f, 30, "" },
             { "stockade",        "The Stockade",                   34,    54.23f,     0.28f,  -18.34f, 6.260f, 24, "" },
             { "bfd",             "Blackfathom Deeps",              48,  -151.89f,   106.96f,  -39.87f, 4.530f, 24, "" },
             { "rfk",             "Razorfen Kraul",                 47,  1943.00f,  1544.63f,   82.00f, 1.380f, 30, "" },

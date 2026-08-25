@@ -212,6 +212,11 @@ private:
     void TickTeleporting();
     void TickStarting();
     void TickMonitoring(uint32 dt);
+    // When each slot was first seen far from the tank INSIDE the dungeon
+    // (0 = in range). Drives the supervisor's distance fence; see
+    // SweepPartyGeometry.
+    std::unordered_map<uint32, uint32> _farSinceMs;
+
     // Geo fence + altitude sanity over all party slots. Shared by
     // TickStarting AND TickMonitoring: b75 accidentally left it only in
     // TickStarting, so a monitoring-phase wanderer (Westfall grind teleport)

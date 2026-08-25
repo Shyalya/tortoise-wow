@@ -46,6 +46,8 @@
 #include "ScriptMgr.h"
 #include "Ai/Dungeon/DungeonClear/Data/BossSpawnIndex.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEncounterMask.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRouteRecorder.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 #include "AllCreatureScript.h"
 #include "Cell.h"
 #include "CellImpl.h"
@@ -464,6 +466,23 @@ public:
         {
             _gateSweepAccumMs = 0;
             DcStrategyGate::ReconcileAllBots();
+
+            // Route recorder: sample every dc leader that is driving a
+            // dungeon. Cheap (a distance check, a push_back at most every
+            // ~4yd of travel) and strictly passive - it never influences the
+            // run it observes.
+            for (auto const& kv : sObjectAccessor.GetPlayers())
+            {
+                Player* p = kv.second;
+                if (!p)
+                    continue;
+                PlayerbotAI* pai = GET_PLAYERBOT_AI(p);
+                if (!pai)
+                    continue;
+                if (!DcRun::Of(pai).enabled)
+                    continue;
+                DcRouteRecorder::Sample(p);
+            }
         }
     }
 
@@ -553,6 +572,11 @@ public:
             if (info.entry == unit->GetEntry())
             {
                 DcEncounterMask::OnBossKilled(map, info.encounterIndex);
+                // Close the recorder's leg for this boss: the path the party
+                // just walked becomes a registered anchor route (repo content
+                // under modules/mod-dungeon-clear/routes/) instead of being
+                // recomputed from the navmesh on every future run.
+                DcRouteRecorder::OnBossKilled(map, info.entry, info.name);
                 LOG_INFO("playerbots.dungeonclear",
                          "[DC] boss down: {} (entry {}) — encounter bit {} set for instance {}",
                          info.name, info.entry, info.encounterIndex, map->GetInstanceId());

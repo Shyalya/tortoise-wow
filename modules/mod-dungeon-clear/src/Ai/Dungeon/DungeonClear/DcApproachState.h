@@ -88,6 +88,12 @@ struct DcApproachState
     Position lastPos;                // previous-tick world pos; (0,0,0) = not yet sampled
     uint32 lastTickLogMs       = 0;  // advance-tick debug-log throttle (getMSTime)
     uint32 lastObjectiveDiagMs = 0;  // at-objective "near but not arrived" diag throttle (getMSTime)
+    // Approach probe for the incomplete-route handoff: the closest this
+    // approach has ever got to its boss, and when that best was set. A route
+    // that stops improving the best distance is not going to reach it.
+    float  handoffBestDist     = 0.0f;
+    uint32 handoffSinceMs      = 0;
+
     uint32 lastTargetEntry     = 0;  // committed boss entry the approach is for
     uint32 lootYieldStartMs    = 0;  // loot-yield commit anchor (getMSTime)
 

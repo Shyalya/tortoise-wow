@@ -87,7 +87,7 @@ namespace
     bool TrailSplineRunning(Player* bot)
     {
         MotionMaster* mm = bot->GetMotionMaster();
-        return mm && mm->GetCurrentMovementGeneratorType() == ESCORT_MOTION_TYPE &&
+        return bot->movespline && !bot->movespline->Finalized() &&
                bot->isMoving();
     }
 

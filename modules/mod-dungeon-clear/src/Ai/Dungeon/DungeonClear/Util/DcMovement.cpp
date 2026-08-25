@@ -176,11 +176,27 @@ namespace DcMovement
         // Mutate() calls Initialize() synchronously whenever the new slot is the
         // top one, so the state below is already settled by the time we read it.
         MovementGeneratorType const gen = mm->GetCurrentMovementGeneratorType();
-        bool const inFlight = gen == ESCORT_MOTION_TYPE &&
-                              bot->movespline && !bot->movespline->Finalized();
+        // PORT NOTE (the big one): AzerothCore's MoveSplinePath spawns an
+        // ESCORT generator, so upstream could read the generator type as
+        // proof of flight. THIS core routes MoveSplinePath ->
+        // MotionMaster::MovePath, which launches the spline DIRECTLY through
+        // MoveSplineInit and creates no generator at all (MotionMaster.cpp:518)
+        // - the generator stays whatever it was (IDLE/CHASE). Demanding
+        // ESCORT here made the check false on EVERY issue: each glide was
+        // logged "REFUSED" although the spline was running, and Advance fell
+        // through to the per-point MoveTo fallback for the whole route. That
+        // is the step-pause-step crawl behind every 20-40 minute run in this
+        // port's history (measured 2026-08-24: "100 pts, issued=0" on every
+        // single window). The spline itself is the truth on this core.
+        bool const inFlight = bot->movespline && !bot->movespline->Finalized();
         if (!inFlight)
         {
-            LOG_DEBUG("playerbots.dungeonclear",
+            static uint32 s_lastSplineRefusalMs = 0;
+            uint32 const nowRef = getMSTime();
+            bool const logRefusal = nowRef - s_lastSplineRefusalMs > 4000;
+            if (logRefusal)
+                s_lastSplineRefusalMs = nowRef;
+            LOG_INFO_IF(logRefusal, "playerbots.dungeonclear",
                       "[DC:{}] spline REFUSED: {} pts, {:.1f}yd -> gen={} finalized={} "
                       "dur={} disableMove={} root={} stun={} bot=({:.1f},{:.1f},{:.1f}) "
                       "end=({:.1f},{:.1f},{:.1f})",
