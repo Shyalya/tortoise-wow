@@ -17,10 +17,12 @@
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "playerbot/RandomPlayerbotFactory.h"
 #include "playerbot/PlayerbotAIConfig.h"
+#include "playerbot/PlayerbotAiExtension.h"
 #include "ahbot/AhBot.h"
 #include "BotDiagnostics.h"
 #include "playerbot/AiFactory.h"
 #include "playerbot/strategy/actions/ChangeTalentsAction.h"
+#include "Chat/Chat.h"
 
 void Player::CreatePlayerbotAI()
 {
@@ -76,6 +78,7 @@ void World::UpdatePlayerbotsTick(uint32 diff)
         return;
     sRandomPlayerbotMgr.UpdateAI(diff);
     auctionbot.Update();
+    sPlayerbotAiExtension.RunWorldUpdate(diff);
 }
 
 // Per-Player bot tick:
@@ -151,6 +154,13 @@ void Player_DispatchBotChatCommand(Player* master, uint32 type, std::string cons
     if (!master || !sPlayerbotAIConfig.enabled)
         return;
 
+    // Addon / whisper channel: DungeonClear companion addon messages.
+    if (lang == LANG_ADDON || type == CHAT_MSG_ADDON)
+    {
+        if (sPlayerbotAiExtension.HandleAddonMessage(master, msg))
+            return;
+    }
+
     if (PlayerbotMgr* mgr = master->GetPlayerbotMgr())
         mgr->HandleCommand(type, msg, lang, to);
 
@@ -222,4 +232,9 @@ void Playerbot_SetForcedRole(Player* bot, uint8 role)
     }
 
     ai->ResetStrategies();
+}
+
+bool ChatHandler::HandleDungeonClearCommand(char* args)
+{
+    return sPlayerbotAiExtension.HandleDcCommand(this, args);
 }

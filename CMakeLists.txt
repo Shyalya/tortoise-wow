@@ -51,6 +51,8 @@ option(ALLOW_TURTLE_ADDONS "Allow Turtle addons" ON)
 # When ON, mangosd links the bot subsystem; runtime activation is gated by
 # AiPlayerbot.Enabled in aiplayerbot.conf.
 option(BUILD_PLAYERBOTS "Build the cmangos/playerbots subsystem" OFF)
+# Autonomous dungeon-clear AI for playerbots (requires BUILD_PLAYERBOTS).
+option(BUILD_DUNGEON_CLEAR "Build the DungeonClear playerbots extension module" OFF)
 
 
 if(UNIX)
@@ -687,6 +689,15 @@ if (BUILD_PLAYERBOTS)
             ${CMAKE_SOURCE_DIR}/dep/windows/include/mysql
         )
     endif()
+endif()
+
+# DungeonClear — optional autonomous dungeon-clearing AI for playerbots.
+if (BUILD_DUNGEON_CLEAR)
+    if (NOT BUILD_PLAYERBOTS)
+        message(FATAL_ERROR "BUILD_DUNGEON_CLEAR requires BUILD_PLAYERBOTS=ON")
+    endif()
+    message(STATUS "BUILD_DUNGEON_CLEAR=ON - adding DungeonClear module at src/modules/DungeonClear/")
+    add_subdirectory(src/modules/DungeonClear)
 endif()
 
 if (USE_EXTRACTORS OR USE_REALMMERGE)

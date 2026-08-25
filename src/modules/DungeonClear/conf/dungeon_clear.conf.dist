@@ -1,0 +1,20 @@
+###############################################
+# DungeonClear — autonomous dungeon clear for playerbots
+# Copy to dungeon_clear.conf or merge into mangosd.conf.
+###############################################
+
+DungeonClear.Enabled = 1
+DungeonClear.EngageRange = 25
+DungeonClear.TrashEngageRange = 18
+DungeonClear.AdvanceArriveRange = 12
+# 0 = Dynamic, 1 = Leeroy, 2 = Advanced
+DungeonClear.PullMode = 0
+DungeonClear.PullDynamicMaxLeeroyMobs = 3
+# 0 poor, 1 common, 2 uncommon, 3 rare, ...
+DungeonClear.LootQualityMin = 2
+DungeonClear.RestHealth = 60
+DungeonClear.RestMana = 50
+DungeonClear.PostCombatRez = 1
+DungeonClear.StrategyGateSweepMs = 3000
+DungeonClear.PreventBotRelease = 1
+DungeonClear.ObjectiveArriveRadius = 10

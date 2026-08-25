@@ -1,0 +1,7 @@
+## Interface: 1800
+## Title: Tortoise Dungeon Clear
+## Notes: Control panel for server DungeonClear (.dc / party chat)
+## Author: Tortoise-WoW
+## Version: 1.0
+
+DungeonClear.lua
