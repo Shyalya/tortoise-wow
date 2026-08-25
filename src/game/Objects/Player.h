@@ -22,7 +22,6 @@
 #pragma once
 
 #include "Common.h"
-#include "ModuleSlots.h"
 #include "ItemPrototype.h"
 #include "Unit.h"
 #include "Item.h"
@@ -2417,27 +2416,7 @@ class Player final: public Unit
         bool ChangeRace(uint8 newRace, uint8 newGender, uint32 playerbyte1, uint32 playerbyte2);
         void RemoveAI();
 
-        // =========================================================================
-        // Module storage and cmangos compat aliases.
-        //
-        // The bot-lifecycle group that used to head this block is gone: creating,
-        // destroying and reaching a PlayerbotAI is the module's business now, done
-        // through the slots below. What is left:
-        //   1. Module storage — an opaque pointer per claimed slot, see
-        //      ModuleSlots.h. The core allocates it and never reads it.
-        //   2. cmangos camelCase / signature aliases — one-line forwarders to
-        //      the Penqle-named equivalent so the vendored bot source compiles
-        //      unmodified. Each is tagged with the cmangos name it shadows.
-        //   3. Stub no-ops for cmangos APIs Penqle doesn't have (SetCanFly,
-        //      OnTaxiFlightEject, GetCurrentCell, ...). Safe because the bot
-        //      module tolerates no-op behavior at these sites.
-        // =========================================================================
-
-        // Module storage. See ModuleSlots.h for who owns which slot.
-        void* GetModuleSlot(uint8 slot) const { return slot < MODULE_SLOT_MAX ? m_moduleSlots[slot] : nullptr; }
-        void SetModuleSlot(uint8 slot, void* value) { if (slot < MODULE_SLOT_MAX) m_moduleSlots[slot] = value; }
-        template<class T> T* GetModuleSlotAs(uint8 slot) const { return static_cast<T*>(GetModuleSlot(slot)); }
-        // isRealPlayer: a bot's AI is non-null and not flagged as real-player; otherwise this is a real player.
+        // cmangos compatibility aliases used by the optional module.
 
         // cmangos-style aliases the bot module uses on Player:
         // IsInGroup(other) — checks if `other` is in the same group as this player.
@@ -3363,22 +3342,14 @@ public:
         void SendAddonMessage(std::string prefix, std::string message);
         void SendAddonMessage(std::string prefix, std::string message, Player* from);
 
-    private:
-        // Per-player storage for modules. The core hands out the space and never
-        // looks inside it; slot ids are claimed in ModuleSlots.h. A flat array
-        // rather than a keyed map because the population module reads its slot on
-        // every tick of every driven character, where a hash lookup would show.
-        void* m_moduleSlots[MODULE_SLOT_MAX] = {};
 };
 
 void AddItemsSetItem(Player*player,Item* item);
 void RemoveItemsSetItem(Player*player,ItemPrototype const* proto);
 
-// The four bot dispatchers that used to be declared here are gone. They are
-// module hooks now: ServerScript::CanPacketSend and ::OnPacketHandled for the
-// two packet paths, PlayerScript::OnChatCommand, ::SetForcedRole and
-// ::GetAllowedRoles for the rest. Ask through the Script_* helpers in
-// ScriptMgr.h rather than reaching for a bot type from the core.
+// Module dispatchers are expressed through generic ServerScript and
+// PlayerScript hooks. Ask through the Script_* helpers in ScriptMgr.h rather
+// than reaching for a module-specific type from the core.
 
 // "the bodies of template functions must be made available in a header file"
 template <class T> T Player::ApplySpellMod(uint32 spellId, SpellModOp op, T &basevalue, Spell* spell)

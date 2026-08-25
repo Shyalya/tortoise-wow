@@ -1,7 +1,8 @@
 #pragma once
 
 // Generic transport capability for network-backed and synthetic sessions.
-// PlayerBots is one consumer; the core does not assign bot meaning to it.
+// The core exposes transport capability, not the identity or purpose of the
+// code driving a synthetic session.
 enum class SessionTransport : unsigned char
 {
     Network,

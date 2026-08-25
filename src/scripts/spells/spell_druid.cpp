@@ -344,8 +344,8 @@ struct spell_druid_healing_touch : public SpellScript
         int32 refundPct = 0;
         // ownerAura is a raw pointer captured when the modifier was applied.
         // If the aura expires while the spell is still in flight it points at
-        // freed memory - on 2026-08-06 it held a string from the playerbot
-        // module. spellId carries the same id and is set from that very aura
+        // freed memory during an earlier module interaction. spellId carries
+        // the same id and is set from that very aura
         // in the constructor, so the field is enough and the pointer stays
         // untouched.
         for (SpellModifier const* mod : spell->m_appliedMods)

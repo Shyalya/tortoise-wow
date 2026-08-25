@@ -68,7 +68,6 @@
 #include "LFTMgr.h"
 #include "AutoBroadCastMgr.h"
 #include "Transports/TransportMgr.h"
-// PlayerBotMgr.h removed — Penqle stub binned for cmangos port
 #include "ZoneScriptMgr.h"
 #include "CharacterDatabaseCache.h"
 #include "CreatureGroups.h"
@@ -1635,12 +1634,6 @@ void World::LoadConfigSettingsFromFile(bool reload)
     setConfig(CONFIG_BOOL_LEECH_SOLO_ONLY, "Leech.SoloOnly", true);
     setConfig(CONFIG_BOOL_LEECH_DUNGEON_ONLY, "Leech.DungeonOnly", true);
     setConfig(CONFIG_BOOL_SOLO_DUNGEON_REPOP_ALIVE, "SoloDungeonRepopAlive.Enable", false);
-    setConfig(CONFIG_BOOL_LFT_BOTFILL_ENABLE, "LFT.BotFill.Enable", false);
-    setConfig(CONFIG_UINT32_LFT_BOTFILL_DELAY, "LFT.BotFill.DelaySeconds", 90);
-    setConfig(CONFIG_UINT32_LFT_BOTFILL_LEVEL_BELOW, "LFT.BotFill.LevelRangeBelow", 2);
-    setConfig(CONFIG_UINT32_LFT_BOTFILL_LEVEL_BELOW_HEALER, "LFT.BotFill.LevelRangeBelowHealer", 4);
-    setConfig(CONFIG_UINT32_LFT_BOTFILL_LEVEL_ABOVE, "LFT.BotFill.LevelRangeAbove", 6);
-
     setConfig(CONFIG_UINT32_PERFORMANCE_REPORT_INTERVAL, "Perf.ReportInterval", 600);
     setConfig(CONFIG_UINT32_MAX_GOLD_TRANSFERRED, "Transfer.MaxGold", 300000);
     setConfig(CONFIG_UINT32_MAX_ITEM_STACK_TRANSFERRED, "Transfer.MaxItemStack", 50);
@@ -2699,13 +2692,15 @@ void World::UpdateWorldBuffTimer(uint32 diff, WorldBuffTimerState& state, uint32
             if (!worldBuffPlayer || !worldBuffPlayer->IsInWorld())
                 continue;
 
-            // Random bots sit on RNDBOT accounts; their session carries no
-            // username, so look it up by account id. The Discord bridge
-            // character on account DISCORD is a genuine session too, but not
-            // a player, so it is excluded as well.
+            // Machine-driven characters and the Discord bridge are not world-
+            // buff recipients. The transport-neutral hook handles synthetic
+            // sessions without hard-wiring an account naming convention.
+            if (Script_IsMachineDriven(worldBuffPlayer))
+                continue;
+
             std::string worldBuffAccName;
             sAccountMgr.GetName(worldBuffSession->GetAccountId(), worldBuffAccName);
-            if (worldBuffAccName.rfind("RNDBOT", 0) == 0 || worldBuffAccName == "DISCORD")
+            if (worldBuffAccName == "DISCORD")
                 continue;
 
             if (eligible(worldBuffPlayer))
@@ -2932,9 +2927,6 @@ void World::Update(uint32 diff)
     else
         m_MaintenanceTimeChecker -= diff;
 
-    // PlayerBotMgr update removed — Penqle stub binned. cmangos's
-    // sRandomPlayerbotMgr.UpdateAI(diff) runs from the bot module WorldScript::OnUpdate.
-
     // Update AutoBroadcast
     sAutoBroadCastMgr.Update(diff);
 
@@ -3039,17 +3031,17 @@ void World::Update(uint32 diff)
             if (!dpPlayer || !dpPlayer->IsInWorld())
                 continue;
 
-            // Compare case insensitively: the Discord bridge account is spelled
-            // "discord" in this database while the comparison ran against
-            // "DISCORD", so the bridge of all things collected the points and
-            // its chat output turned up as "[Server]: You have ..." in the
-            // Discord channel. The same applies to the RNDBOT prefix.
+            if (Script_IsMachineDriven(dpPlayer))
+                continue;
+
+            // Compare case insensitively for the Discord bridge account. It is
+            // a service session, not a player account that earns points.
             std::string dpAccName;
             sAccountMgr.GetName(dpSession->GetAccountId(), dpAccName);
             for (char& dpNameChar : dpAccName)
                 if (dpNameChar >= 'a' && dpNameChar <= 'z')
                     dpNameChar = dpNameChar - 'a' + 'A';
-            if (dpAccName.rfind("RNDBOT", 0) == 0 || dpAccName == "DISCORD")
+            if (dpAccName == "DISCORD")
                 continue;
 
             uint32 dpAccountId = dpSession->GetAccountId();

@@ -74,7 +74,7 @@ namespace VMAP
 
             // Guards iInstanceMapTrees and the tiles hanging off it. The models
             // lock above only covers the model file cache; the tree map itself
-            // was unsynchronised, while the playerbot travel search calls the
+            // was unsynchronised, while asynchronous travel searches call the
             // query methods below from std::async worker threads and the world
             // thread loads and unloads tiles underneath them. That raced, and
             // it crashed in all three places - LoadMapTile, ~StaticMapTree and

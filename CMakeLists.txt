@@ -50,10 +50,10 @@ option(ENABLE_PROFILING "(Windows only) Enable Optick integration, which allows 
 option(ENABLE_LSAN "Enables Leak Sanitizer" OFF)
 # Allow enabling official Turtle addon support
 option(ALLOW_TURTLE_ADDONS "Allow Turtle addons" ON)
-# Build the native TortoiseBots subsystem. Runtime activation is gated by
-# AiPlayerbot.Enabled in aiplayerbot.conf and the selected native module
-# linkage (for example MODULE_TORTOISEBOTS=static).
-option(BUILD_PLAYERBOTS "Build the native TortoiseBots subsystem" OFF)
+# Retain the historical flag as a harmless compatibility option. Native
+# modules are selected explicitly through MODULE_TORTOISEBOTS; this flag never
+# selects or links a PlayerBots implementation.
+option(BUILD_PLAYERBOTS "Deprecated compatibility flag (use MODULE_TORTOISEBOTS)" OFF)
 
 # Migration escape hatch for the old vendored CMaNGOS tree. Native builds do
 # not acquire its manager/session/login ownership model accidentally.
@@ -694,9 +694,11 @@ if(TARGET mangosd)
   endif()
 endif()
 
-# cmangos/playerbots vendored module (explicit migration escape hatch only)
-if (BUILD_PLAYERBOTS AND BUILD_LEGACY_PLAYERBOTS)
-    message(STATUS "BUILD_PLAYERBOTS=ON - adding cmangos/playerbots vendored module at src/modules/PlayerBots/")
+# Historical cmangos/playerbots tree (explicit, unsupported escape hatch only).
+# The supported product is the optional native module selected by
+# MODULE_TORTOISEBOTS. Keep this path disabled in normal builds.
+if (BUILD_LEGACY_PLAYERBOTS)
+    message(WARNING "BUILD_LEGACY_PLAYERBOTS is an unsupported historical tree; use MODULE_TORTOISEBOTS for TortoiseBots")
     set(PCH ${USE_PCH})
     add_subdirectory(src/modules/PlayerBots)
     # Vendor-tree feature gates the playerbots source expects:

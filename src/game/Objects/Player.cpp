@@ -80,10 +80,7 @@
 // Reserved for generic player-update instrumentation. Module diagnostics are
 // kept out of normal core gameplay code.
 #define SC_PHASE_PLAYER(tag) do { (void)sizeof(tag); } while (0)
-// PlayerBotMgr.h + PlayerBotAI.h removed (Penqle stub binned). The bot
-// module pulls in its own PlayerbotMgr.h / PlayerbotAI.h via the playerbots
-// vendor tree. PlayerAI.h is restored as a direct include (was previously
-// transitively included via PlayerBotAI.h). PlayerAI / PlayerControlledAI
+// PlayerAI.h is included directly. PlayerAI / PlayerControlledAI
 // are non-bot classes used for AI control of players (mind control, charm,
 // etc.) and are unrelated to the bot system.
 #include "AI/PlayerAI.h"
@@ -1621,8 +1618,8 @@ void Player::Update(uint32 update_diff, uint32 p_time)
         i_AI->UpdateAI(p_time);
     SetCanDelayTeleport(false);
 
-    // The per-Player bot tick used to sit here. It is PlayerScript::OnUpdate now,
-    // fired at the end of this function instead of right after Unit::Update. Both
+    // Module updates use PlayerScript::OnUpdate at the end of this function.
+    // Both
     // positions are after Unit::Update, so a driven character still decides on
     // settled movement and aura state; at the new one its own regen and timers
     // have run too.
@@ -1996,8 +1993,8 @@ void Player::OnDisconnected()
             }, 1);
         }
 
-        // Update position after bot takes over
-        // And remove movement flags, so he doesn't run into the void
+        // Update position after a controller takes over and remove movement
+        // flags, so the mover does not run into the void.
         if (!GetMover()->HasUnitState(UNIT_STAT_FLEEING | UNIT_STAT_CONFUSED | UNIT_STAT_TAXI_FLIGHT))
         {
             GetMover()->RemoveUnitMovementFlag(MOVEFLAG_MASK_MOVING_OR_TURN);
@@ -7812,9 +7809,7 @@ void Player::CheckAreaExploreAndOutdoor()
         {
             SC_PHASE_PLAYER("CheckAreaExploreAndOutdoor.anticheatOnExplore");
             // GetAntiCheat() returns
-            // null for synthetic bot sessions (cmangos/playerbots constructs
-            // WorldSessions directly via NewSession, bypassing the WorldSocket
-            // auth handshake that calls InitAntiCheatSession). Other call
+            // null for synthetic sessions. Other call
             // sites in this codebase use `if (auto antiCheat = ...)` (see
             // Unit.cpp:10584); the guard here was missing. Crash signature:
             // NULL READ at 0x0, phase=CheckAreaExploreAndOutdoor.anticheatOnExplore,
@@ -7848,12 +7843,6 @@ void Player::CheckAreaExploreAndOutdoor()
                 if (HasChallenge(CHALLENGE_WAR_MODE))
                     xp = xp + (xp * 0.2f);
 
-                // Fuck teleport leveling:
-                // Original Turtle WoW has no playerbots, so this check assumed all
-                // sub-16 players in a high-level zone are exploiting. Bots are
-                // routinely teleported everywhere by the bot system and must be
-                // excluded, otherwise every bot login at a saved high-level position
-                // spams false-positive errors.
                 if (GetLevel() < 16 && !Script_IsAIControlled(this)) // Chinese config limitation for the world chat.
                 {
                     if (uint32(p->AreaLevel) > 20)
@@ -19416,12 +19405,6 @@ Player* Player::GetMaster() const
         return sObjectMgr.GetPlayer(g->GetLeaderGuid());
     return nullptr;
 }
-
-// Player::Create/Remove Playerbot{AI,Mgr} and Player::UpdatePlayerbotHooks
-// — host hooks for bot lifecycle. Real implementations live in the
-// playerbots module (src/modules/PlayerBots/playerbot/HostHooks.cpp, where
-// PlayerbotAI is fully defined); stub implementations for BUILD_PLAYERBOTS=OFF
-// live in src/game/PlayerbotStubs.cpp.
 
 uint32 Player::GetMailSize()
 {

@@ -633,24 +633,12 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
             return;
         }
 
-        // If this character is currently in-world as a bot (PlayerbotAI
-        // attached), cleanly detach
-        // the AI BEFORE transferring session ownership. Without this, the
-        // bot's PlayerbotAI keeps ticking on what's now the real-player's
-        // Player object via Player::UpdatePlayerbotHooks → fights with the
-        // login handshake, drives movement / casts / packets the client
-        // doesn't expect → loading screen never finishes (10+ min hang
-        // observed; client eventually gives up). Reproduces deterministically
-        // when:
-        //   1. Char A is being run as a bot
-        //   2. Master logs off
-        //   3. User immediately logs into Char A as a real player
-        // The take-over path below transfers the Player object cleanly; we
-        // just have to make sure the bot brain stops first.
+        // If a module is currently driving this character, release that
+        // controller before transferring session ownership to a network client.
         if (Script_IsAIControlled(pCurrChar))
         {
-            sLog.outInfo("[BOT] HandlePlayerLogin: char %s (guid %u) currently driven by a module - "
-                         "asking it to let go before real-player session take-over",
+            sLog.outInfo("[SESSION] HandlePlayerLogin: char %s (guid %u) is currently module-controlled - "
+                         "releasing the controller before network session take-over",
                          pCurrChar->GetName(), playerGuid.GetCounter());
             ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_RELEASE_TO_CLIENT, [&](PlayerScript* script)
             {
@@ -710,13 +698,6 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
     SetPlayer(pCurrChar);
     if (m_antiCheat)
         m_antiCheat->NewPlayer();
-
-    // Attach a PlayerbotMgr to real-player sessions. Bots (synthetic sessions
-    // with m_playerbotAI set during AddPlayerBot) skip this. Real players get
-    // a mgr so .bot commands work (otherwise the user hits "you cannot control
-    // bots yet").
-    // The module attaches its own controller from PlayerScript::OnLogin, further
-    // down this function - nothing between here and there asks for it.
 
 
     //WE DO NOT NEED TO SEND ALL POSSIBLE TRANSMOGS TO ANY PLAYER ON LOGIN
@@ -800,28 +781,19 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
         SendNotification("WARNING: %s", warning);
     }
 
-    // --- Beginners guild (custom): put new guildless real players into the
-    //     configured welcome guild on their first login. Bots are excluded
-    //     through the legacy bot hook, and only up to level 5. ---
+    // --- Beginners guild (custom): put new guildless human-controlled
+    //     players into the configured welcome guild on their first login. ---
     if (sConfig.GetBoolDefault("BeginnersGuilds", false)
         && pCurrChar->GetGuildId() == 0
         && !Script_IsAIControlled(pCurrChar)
         && pCurrChar->GetLevel() <= 5)
     {
-        // Random bots sit on RNDBOT accounts. Their session carries no username
-        // - GetUsername() is empty - so look the account name up by id instead,
-        // which is reliable, and exclude the bots that way.
-        std::string beginnersAccName;
-        sAccountMgr.GetName(GetAccountId(), beginnersAccName);
-        if (beginnersAccName.rfind("RNDBOT", 0) != 0)
-        {
-            uint32 beginnersGuildId = (pCurrChar->GetTeam() == HORDE)
-                ? sConfig.GetIntDefault("BeginnersGuildHorde", 0)
-                : sConfig.GetIntDefault("BeginnersGuildAlliance", 0);
-            if (beginnersGuildId)
-                if (Guild* beginnersGuild = sGuildMgr.GetGuildById(beginnersGuildId))
-                    beginnersGuild->AddMember(pCurrChar->GetObjectGuid(), beginnersGuild->GetLowestRank());
-        }
+        uint32 beginnersGuildId = (pCurrChar->GetTeam() == HORDE)
+            ? sConfig.GetIntDefault("BeginnersGuildHorde", 0)
+            : sConfig.GetIntDefault("BeginnersGuildAlliance", 0);
+        if (beginnersGuildId)
+            if (Guild* beginnersGuild = sGuildMgr.GetGuildById(beginnersGuildId))
+                beginnersGuild->AddMember(pCurrChar->GetObjectGuid(), beginnersGuild->GetLowestRank());
     }
 
     if (Guild* guild = sGuildMgr.GetGuildById(pCurrChar->GetGuildId()))

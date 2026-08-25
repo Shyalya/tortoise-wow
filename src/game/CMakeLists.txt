@@ -132,7 +132,6 @@ set (game_SRCS
     HttpApi/TransferController.cpp
     HttpApi/TransferController.hpp
     LFG/LFGMgr.cpp
-    LFT/LFTBotFill.cpp
     LFT/LFTMgr.cpp
     LFT/LFTQeueue.cpp
     LFT/LFTUserGroups.cpp
@@ -195,7 +194,6 @@ set (game_SRCS
     OutdoorPvP/Register.cpp
     PacketBroadcast/MovementBroadcaster.cpp
     PacketBroadcast/PlayerBroadcaster.cpp
-    # PlayerBots/PlayerBot{AI,Mgr}.cpp removed - Penqle stub binned
     Protocol/Opcodes.cpp
     Protocol/WorldSocket.cpp
     Protocol/WorldSocketMgr.cpp
@@ -390,7 +388,6 @@ set (game_SRCS
     OutdoorPvP/OutdoorPvPSI.h
     PacketBroadcast/MovementBroadcaster.h
     PacketBroadcast/PlayerBroadcaster.h
-    # PlayerBots/PlayerBot{AI,Mgr}.h removed - Penqle stub binned
     Protocol/Opcodes.h
     Protocol/WorldSocket.h
     Protocol/WorldSocketMgr.h
@@ -533,7 +530,6 @@ include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}/Objects
   ${CMAKE_CURRENT_SOURCE_DIR}/OutdoorPvP
   ${CMAKE_CURRENT_SOURCE_DIR}/PacketBroadcast
-  # PlayerBots include dir removed - Penqle stub binned
   ${CMAKE_CURRENT_SOURCE_DIR}/Protocol
   ${CMAKE_CURRENT_SOURCE_DIR}/Spells
   ${CMAKE_CURRENT_SOURCE_DIR}/Threat
@@ -601,11 +597,6 @@ source_group("HttpApi"
   REGULAR_EXPRESSION HttpApi
 )
 
-
-# Keep the tiny generic compatibility unit in every build. Native modules
-# override the weak diagnostics hooks and consume the generic command symbols;
-# the core remains linkable when no PlayerBots module is enabled.
-list(APPEND game_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/PlayerbotStubs.cpp)
 
 add_library(game STATIC
   ${game_SRCS}

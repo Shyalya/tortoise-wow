@@ -13,8 +13,7 @@
 class Group;
 class Player;
 
-// Moved here from LFTQeueue.cpp's anonymous namespace: the bot fill in
-// LFTBotFill.cpp needs them too.
+// Role masks are shared by the queue's role-check and offer code.
 enum LFTRoles
 {
     LFT_ROLE_TANK   = 0x01,
@@ -158,23 +157,6 @@ class LFTManager
         void RecountListing(Listing& listing) const;
         void CleanupPlayer(ObjectGuid const& guid);
 
-        // Bot fill - see LFTBotFill.cpp
-        void UpdateBotFill(uint32 diff);
-        void DropUnneededFillBots();
-        void FillInstanceWithBots(std::string const& instance, QueuedPlayer const& waiter);
-        void SeedBotOnlyQueue();
-
-        Player* TakeFromBotOnlyGroup(uint8 wanted, QueuedPlayer const& waiter,
-                                     uint32 below, uint32 above);
-
-        Player* TakeBotAndRespecFor(uint8 wanted, QueuedPlayer const& waiter,
-                                    uint32 below, uint32 above);
-        void TeleportBotGroupToInstance(Offer const& offer);
-        void AcceptOffersForFillBots();
-        void ForgetFillBot(ObjectGuid const& guid);
-        bool IsFillBot(ObjectGuid const& guid) const;
-        bool RealPlayerWaitsFor(std::string const& instance, time_t& oldestJoin) const;
-
         ListingsMap m_listings;
         QueueMap m_queue;
         RolecheckMap m_rolechecks;
@@ -185,9 +167,6 @@ class LFTManager
         uint64 m_nextQueueOrder;
         bool m_listingsLoaded;
 
-        // Queue entries we created ourselves to fill a real player's group.
-        std::set<ObjectGuid> m_fillBots;
-        uint32 m_botFillTimer;
 };
 
 extern LFTManager sLFTMgr;

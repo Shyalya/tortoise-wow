@@ -2116,14 +2116,6 @@ Transmog.ReqMoneyRate = 0
 
 StaticObjectLOS = 1
 
-PlayerBot.Enable = 1
-PlayerBot.Debug = 0
-PlayerBot.UpdateMs = 1000
-PlayerBot.MinBots = 0
-PlayerBot.MaxBots = 0
-PlayerBot.Refresh = 10000
-PlayerBot.ForceLogoutDelay = 1
-
 MailSpam.ExpireSecs = 30
 MailSpam.MaxMails = 5
 MailSpam.Level = 10
@@ -2197,10 +2189,9 @@ Leech.Enable = 0
 # Sets the percentage of damage to leech
 Leech.Amount = 0.05
 
-# Leech restrictions. Without them the leech applies to every player -
-# including the random bots - and in PvP as well.
+# Leech restrictions. Without them the leech applies to every player and in PvP.
 #   PvEOnly          against non-players only
-#   RealPlayersOnly  no random bots (RNDBOT accounts)
+#   RealPlayersOnly  exclude machine-driven sessions
 #   SoloOnly         only while not in a party or raid
 #   DungeonOnly      instances only (dungeons and raids), not the open world
 Leech.PvEOnly = 1
@@ -2224,37 +2215,6 @@ SoloDungeonRepopAlive.Enable = 0
 # They also need gossip_menu_id set, see sql/guildbank_trigger.sql.
 GuildBank.NpcEntriesAlliance = 80917
 GuildBank.NpcEntriesHorde = 80918
-
-# LFT.BotFill. Fills a waiting player's dungeon queue with random bots.
-#
-# Bots are put into the same queue real players sit in, so the existing matcher
-# handles roles, faction, hardcore and group building. Getting to the dungeon is
-# not automated: the party leader types "summon" in party chat.
-#
-#   DelaySeconds  how long a real player waits before bots are added. Filling
-#                 instantly would mean nobody ever waits for a human again.
-#   LevelRangeBelow / LevelRangeAbove
-#                 how far under or over the waiting player a bot's level may
-#                 sit. Not the same number on both sides: a bot a few levels
-#                 above still hits, holds threat and survives, while one below
-#                 misses and dies - and the group sets off believing it has a
-#                 tank. The instance names the client sends carry no level
-#                 information, so the player is the reference.
-#
-# Real players always take priority: when one joins the queue, every bot that is
-# not already part of an offer is dropped again. An offer already sent out is
-# left alone rather than breaking a group mid-formation.
-#   LevelRangeBelowHealer
-#                 the same limit for a healer, which can afford to be further
-#                 under the group: it keeps its distance and is not the one
-#                 being hit. Healers are also the scarcer half of the shortage,
-#                 so a tighter bound here costs groups that would otherwise
-#                 have formed.
-LFT.BotFill.Enable = 0
-LFT.BotFill.DelaySeconds = 60
-LFT.BotFill.LevelRangeBelow = 2
-LFT.BotFill.LevelRangeBelowHealer = 4
-LFT.BotFill.LevelRangeAbove = 6
 
 
 # AutoScaler.Enable. Enable or disable instance auto-scaling. 0 = off, 1 = on.

@@ -74,7 +74,6 @@
 #include <stdarg.h>
 #include "SuspiciousStatisticMgr.h"
 #include "PerfStats.h"
-#include "AccountMgr.h"   // Leech restrictions: spotting RNDBOT accounts by name
 
 float baseMoveSpeed[MAX_MOVE_TYPE] =
 {
@@ -744,24 +743,6 @@ uint32 Unit::DealDamage(Unit* pVictim, uint32 damage, CleanDamage const* cleanDa
     if (pVictim && pVictim->IsPlayer() && pVictim->ToPlayer()->m_disableGeneralDamage == true)
         return 0;
 
-    // bot logging suite — hook damage events.
-    // Wrapper checks attacker AND victim for bot AI; non-bot ↔ non-bot
-    // case is two cheap pointer-null-checks. Sampled 1/5 to avoid spam
-    // in heavy-DoT raid scenarios.
-    {
-        extern void BotActionLog_LogDamage(Unit* attacker, Unit* victim, uint32 damage, uint32 spellId, const char* damageType);
-        const char* dt = "?";
-        switch (damagetype) {
-            case DIRECT_DAMAGE: dt = "DIRECT"; break;
-            case SPELL_DIRECT_DAMAGE: dt = "SPELL_DIRECT"; break;
-            case DOT: dt = "DOT"; break;
-            case HEAL: dt = "HEAL"; break;
-            case NODAMAGE: dt = "NODAMAGE"; break;
-            case SELF_DAMAGE: dt = "SELF"; break;
-        }
-        BotActionLog_LogDamage(this, pVictim, damage, spellProto ? spellProto->Id : 0, dt);
-    }
-
     if (pVictim)
     {
         ScriptRegistry<UnitScript>::ForEachEnabledHook(UNITHOOK_ON_DAMAGE, [&](UnitScript* script)
@@ -950,20 +931,11 @@ uint32 Unit::DealDamage(Unit* pVictim, uint32 damage, CleanDamage const* cleanDa
                 !(player->GetMap() && player->GetMap()->IsDungeon()))
                 player = nullptr;
 
-            // Real players only - random bots run on RNDBOT accounts.
-            // Looked up by account id because bot sessions carry no
-            // account name of their own.
+            // The generic machine-driven hook provides the real-player-only
+            // policy without depending on account naming conventions.
             if (player && sWorld.getConfig(CONFIG_BOOL_LEECH_REAL_PLAYERS_ONLY))
-            {
-                std::string leechAccName;
-                if (WorldSession* leechSession = player->GetSession())
-                    sAccountMgr.GetName(leechSession->GetAccountId(), leechAccName);
-                for (char& c : leechAccName)
-                    if (c >= 'a' && c <= 'z')
-                        c = c - 'a' + 'A';
-                if (leechAccName.rfind("RNDBOT", 0) == 0)
+                if (Script_IsMachineDriven(player))
                     player = nullptr;
-            }
         }
 
         if (player)
@@ -3663,18 +3635,6 @@ bool Unit::AddSpellAuraHolder(SpellAuraHolder *holder)
 {
     SpellEntry const* aurSpellInfo = holder->GetSpellProto();
 
-    // aura-attempt hook. Logged BEFORE any
-    // early-returns (refresh, stack, dead target, debuff-limit, etc.) so the bot
-    // log captures every aura that any code path tries to put on a bot — even
-    // those that get rejected or merged into an existing holder. This was needed
-    // to debug a self-applied Bash 25515 that was invisible to the post-success
-    // hook below (refreshes never reach it). Logged with tag AURA_ATTEMPT so it's
-    // distinguishable from the AURA_APPLY tag that fires on confirmed first-apply.
-    {
-        extern void BotActionLog_LogAuraAttempt(Unit* target, uint32 spellId, int32 durationMs, uint64 casterGuidRaw);
-        BotActionLog_LogAuraAttempt(this, holder->GetId(), holder->GetAuraMaxDuration(), holder->GetCasterGuid().GetRawValue());
-    }
-
     // ghost spell check, allow apply any auras at player loading in ghost mode (will be cleanup after load)
     if (!IsAlive() && !aurSpellInfo->IsDeathPersistentSpell() && !aurSpellInfo->CanTargetDeadTarget() &&
         (!IsPlayer() || !((Player*)this)->GetSession()->PlayerLoading()))
@@ -3892,15 +3852,6 @@ bool Unit::AddSpellAuraHolder(SpellAuraHolder *holder)
     }
     // When we call _AddSpellAuraHolder, we must have a free aura slot
     holder->_AddSpellAuraHolder();
-
-    // bot logging suite — hook aura applies. The
-    // wrapper checks if `this` is a bot Player; non-bots cost only the
-            // Legacy AI null check; module AI ownership is resolved at its seam.
-    {
-        extern void BotActionLog_LogAuraApply(Unit* target, uint32 spellId, int32 durationMs, uint64 casterGuidRaw);
-        int32 durMs = holder->GetAuraMaxDuration();
-        BotActionLog_LogAuraApply(this, holder->GetId(), durMs, holder->GetCasterGuid().GetRawValue());
-    }
 
     return true;
 }
@@ -4476,13 +4427,6 @@ void Unit::DeleteAuraHolder(SpellAuraHolder *holder)
 
 void Unit::RemoveSpellAuraHolder(SpellAuraHolder *holder, AuraRemoveMode mode)
 {
-    // bot logging suite — hook aura removes. Logged
-    // BEFORE the holder is destroyed so the caster GUID is still valid.
-    {
-        extern void BotActionLog_LogAuraRemove(Unit* target, uint32 spellId, uint64 casterGuidRaw);
-        BotActionLog_LogAuraRemove(this, holder->GetId(), holder->GetCasterGuid().GetRawValue());
-    }
-
     // Statue unsummoned at holder remove
     Totem* statue = nullptr;
     WorldObject* caster = holder->GetRealCaster();

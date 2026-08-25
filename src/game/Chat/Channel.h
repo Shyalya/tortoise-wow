@@ -96,10 +96,7 @@ inline bool IsDefenseChannel(uint32 channelId)
 class Channel
 {
     friend class ChannelBroadcaster;
-    // bot calls Channel::Say directly.
-    friend class PlayerbotAI;
     public:
-        // bot's Say(Player*, ...) overload.
         void Say(Player const* player, const char* what, uint32 lang = LANG_UNIVERSAL, bool skipCheck = false);
     enum ChannelFlags
     {

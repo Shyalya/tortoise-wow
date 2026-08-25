@@ -1897,7 +1897,7 @@ struct Position
     float z = 0.0f;
     float o = 0.0f;
 
-    // cmangos/playerbots port - accessor methods that the bot module calls.
+    // Optional-module compatibility accessors.
     float GetPositionX() const { return x; }
     float GetPositionY() const { return y; }
     float GetPositionZ() const { return z; }
@@ -1905,8 +1905,7 @@ struct Position
 
     // Returns the SQUARED 3D distance, matching cmangos convention. Callers
     // must wrap in std::sqrt() to get the real distance. Kept as-is rather
-    // than renamed because the vendored bot code (e.g. PlayerbotAI.cpp:5334,
-    // strategy/actions/BattleGroundTactics.cpp:4109) calls it as `GetDistance`
+    // than renamed because the optional module calls it as `GetDistance`
     // and already sqrt()s the result.
     float GetDistance(Position const& other) const {
         float dx = x - other.x, dy = y - other.y, dz = z - other.z;
@@ -1916,7 +1915,7 @@ struct Position
 
 struct WorldLocation
 {
-    // cmangos/playerbots port - anonymous unions provide cmangos-style field name
+    // Optional-module compatibility aliases provide field names
     // aliases (mapid, coord_x/y/z, orientation) sharing storage with Penqle's
     // mapId, x, y, z, o. Both names refer to the same memory.
     union { uint32 mapId = 0;  uint32 mapid; };

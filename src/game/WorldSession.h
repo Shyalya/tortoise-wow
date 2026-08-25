@@ -313,8 +313,8 @@ class WorldSession
         bool PlayerLoading() const { return m_playerLoading; }
         bool PlayerLogout() const { return m_playerLogout; }
         bool PlayerLogoutWithSave() const { return m_playerLogout && m_playerSave; }
-        // bot's AddPlayerBot flow needs to flag
-        // the synthetic session as loading before HandlePlayerLogin is reached.
+        // A synthetic session factory uses this before deferred login reaches
+        // HandlePlayerLogin.
         void SetPlayerLoading(bool loading) { m_playerLoading = loading; }
 
         bool CharacterScreenIdleKick(uint32 diff);
@@ -322,26 +322,10 @@ class WorldSession
         void SizeError(WorldPacket const& packet, uint32 size) const;
 
         void SendPacket(WorldPacket const* packet);
-        // bot module calls SendPacket(packet) by value.
-        // Add reference overload that forwards to the pointer version.
+        // Convenience overload for callers that construct an inline packet.
         void SendPacket(WorldPacket const& packet) { SendPacket(&packet); }
-        // SendPlaySpellVisual: cmangos has it on WorldSession; Penqle has it on Unit.
-        // Build SMSG_PLAY_SPELL_VISUAL packet from session and dispatch.
+        // Build and dispatch an SMSG_PLAY_SPELL_VISUAL packet.
         void SendPlaySpellVisual(ObjectGuid guid, uint32 spellArtKit);
-        // SetNoAnticheat: cmangos disables anticheat for bot sessions. Stub no-op
-        void SetNoAnticheat(bool /*disable*/ = true) {}
-        // SetOffline: cmangos marks session as offline. Stub no-op.
-        void SetOffline() {}
-        // GetState: cmangos returns session state enum. Stub returns READY (1).
-        enum WorldSessionState : uint32 {
-            WORLD_SESSION_STATE_CREATED = 0,
-            WORLD_SESSION_STATE_READY = 1,
-            WORLD_SESSION_STATE_OFFLINE = 2,
-            WORLD_SESSION_STATE_REMOVING = 3,
-        };
-        WorldSessionState GetState() const { return WORLD_SESSION_STATE_READY; }
-        // HandleBotPackets: cmangos drains the bot's packet queue. Stub no-op.
-        void HandleBotPackets() {}
         void SendNotification(const char *format,...) ATTR_PRINTF(2,3);
         void SendNotification(int32 string_id,...);
         void SendPetNameInvalid(uint32 error, std::string const& name);
@@ -425,9 +409,9 @@ class WorldSession
         bool ForcePlayerLogoutDelay();
 
         void QueuePacket(WorldPacket* new_packet);
-        // bot wraps packets in unique_ptr.
+        // Convenience ownership overload.
         void QueuePacket(std::unique_ptr<WorldPacket> new_packet) { QueuePacket(new_packet.release()); }
-        // Const-reference overload (bot sometimes constructs an inline WorldPacket).
+        // Const-reference overload for inline packets.
         // Copies into a fresh heap WorldPacket so QueuePacket(WorldPacket*) — which
         // takes ownership and may delete on the unknown-opcode path — never sees
         // a non-owning pointer to a stack object. Body is out-of-line because
@@ -436,7 +420,7 @@ class WorldSession
 
         bool Update(PacketFilter& updater);
         /**
-         * @brief Returns true iif we can process packets (ie logged in Player, not a bot, etc ...)
+         * @brief Returns true when this session has a live network transport.
          */
         bool CanProcessPackets() const;
         void ProcessPackets(PacketFilter& updater);
@@ -574,9 +558,6 @@ class WorldSession
         // Intentionally session-based to avoid login/logout hijinks
         time_t GetLastPubChanMsgTime() { return m_lastPubChannelMsgTime; }
         void SetLastPubChanMsgTime(time_t time) { m_lastPubChannelMsgTime = time; }
-
-        // Legacy bot accessors and bot-specific anticheat hooks are not part of
-        // the generic session interface.
 
         // Player online / socket offline system
         void SetDisconnectedSession(); // Remove from World::m_session. Used when an account gets disconnected.

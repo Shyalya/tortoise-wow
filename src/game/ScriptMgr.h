@@ -1916,9 +1916,7 @@ template<class TScript> typename ScriptRegistry<TScript>::AfterDatabaseLoadScrip
 template<class TScript> typename ScriptRegistry<TScript>::EnabledHooksList ScriptRegistry<TScript>::EnabledHooks;
 template<class TScript> uint32 ScriptRegistry<TScript>::_scriptIdCounter = 0;
 
-// Questions the core asks of whatever module drives simulated characters.
-// Deliberately not named after any one module: the playerbots tree answers
-// these today, a second population module would answer the same names.
+// Generic questions the core asks of modules that drive simulated characters.
 class Player;
 bool Script_IsAIControlled(Player const* player);
 bool Script_IsMachineDriven(Player const* player);

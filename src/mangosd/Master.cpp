@@ -164,7 +164,7 @@ static void Mangosd_WriteCrashDump(EXCEPTION_POINTERS* ep, DWORD synthCode, cons
 
     // Read SC_PHASE thread-locals (guarded — TLS itself can be corrupted
     // when the corruption was in arbitrary memory). The TLS is only set
-    // when AiPlayerbot.EnableActionLog=1; otherwise these stay nullptr
+    // when the optional module action log is enabled; otherwise these stay nullptr
     // and we report "(no phase set)".
     const char* phaseTag = "(no phase set)";
     const char* phaseBot = "(no bot)";

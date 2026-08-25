@@ -427,10 +427,6 @@ enum eConfigUInt32Values
     CONFIG_UINT32_MAX_GOLD_TRANSFERRED,
     CONFIG_UINT32_MAX_ITEM_STACK_TRANSFERRED,
     CONFIG_UINT32_DYNAMIC_SCALING_POP,
-    CONFIG_UINT32_LFT_BOTFILL_DELAY,
-    CONFIG_UINT32_LFT_BOTFILL_LEVEL_BELOW,
-    CONFIG_UINT32_LFT_BOTFILL_LEVEL_BELOW_HEALER,
-    CONFIG_UINT32_LFT_BOTFILL_LEVEL_ABOVE,
     CONFIG_UINT32_VALUE_COUNT
 };
 
@@ -735,9 +731,6 @@ enum eConfigBoolValues
     CONFIG_BOOL_LEECH_DUNGEON_ONLY,
     // Solo dungeon resurrection, see Player::RepopAtGraveyard
     CONFIG_BOOL_SOLO_DUNGEON_REPOP_ALIVE,
-    // Dungeon finder: fill a waiting player's group with random bots.
-    // See LFT/LFTBotFill.cpp
-    CONFIG_BOOL_LFT_BOTFILL_ENABLE,
     CONFIG_BOOL_AUTOSCALER_ENABLE,
     // Remove navmesh tiles again at runtime. Off by default, see
     // MMapManager::unloadMap.

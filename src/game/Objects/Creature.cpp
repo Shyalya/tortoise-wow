@@ -929,10 +929,10 @@ void Creature::Update(uint32 update_diff, uint32 diff)
                         !i_motionMaster.GetCurrent()->IsReachable() &&
                         !HasDistanceCasterMovement() && !GetCharmerOrOwnerGuid().IsPlayer() &&
                         (!CanReachWithMeleeAutoAttack(GetVictim()) || !IsWithinLOSInMap(GetVictim())) &&
-                        // GetAntiCheat() is null for synthetic bot sessions;
+                        // GetAntiCheat() is null for synthetic sessions;
                         // unguarded, the dereference crashes whenever a creature
-                        // has a bot as its current victim. Treat null-anticheat
-                        // as "not in knockback" (the safer default for bots).
+                        // has a synthetic session as its current victim. Treat
+                        // null-anticheat as "not in knockback".
                         !(GetVictim()->IsPlayer() && [&]() {
                             auto* ac = static_cast<Player*>(GetVictim())->GetSession()->GetAntiCheat();
                             return ac && ac->IsInKnockBack();

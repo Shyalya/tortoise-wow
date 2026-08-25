@@ -34,7 +34,7 @@ namespace
     }
 }
 
-LFTManager::LFTManager() : m_nextListingId(1), m_nextOfferId(1), m_nextQueueOrder(1), m_listingsLoaded(false), m_botFillTimer(0)
+LFTManager::LFTManager() : m_nextListingId(1), m_nextOfferId(1), m_nextQueueOrder(1), m_listingsLoaded(false)
 {
 }
 
@@ -93,8 +93,6 @@ bool LFTManager::HandleAddonMessage(Player* player, uint32 type, std::string con
 
 void LFTManager::Update(uint32 diff)
 {
-    UpdateBotFill(diff);
-
     for (QueueMap::iterator itr = m_queue.begin(); itr != m_queue.end();)
     {
         if (!GetPlayer(itr->first))

@@ -43,7 +43,6 @@
 #include "SocialMgr.h"
 #include "ScriptObjects.h"
 
-// PlayerBotMgr.h include removed — Penqle stub binned for cmangos port.
 #include "Anticheat/Anticheat.h"
 #include "Anticheat/Movement/Movement.hpp"
 #include "Language.h"
@@ -104,10 +103,7 @@ WorldSession::WorldSession(uint32 id, WorldSocket *sock, AccountTypes sec, time_
 
     // Start every session with the null implementation so that m_antiCheat is
     // never a null pointer. InitAntiCheatSession swaps in the real one during
-    // a network login; bot sessions never pass through WorldSocket and so had
-    // nothing at all. Several handlers dereference it without checking -
-    // HandleMoveKnockBackAck among them, which the playerbot module calls
-    // directly, so a knocked-back bot would take the server down.
+    // a network login; synthetic sessions retain the null implementation.
     m_antiCheat = std::make_unique<NullSessionAnticheat>(this);
 
     m_lastUpdateTime = WorldTimer::getMSTime();
@@ -245,12 +241,6 @@ void WorldSession::SendPacket(WorldPacket const* packet)
     }
 #endif
 
-    // outgoing-packet interceptor for bots.
-    // cmangos's WorldSession::SendPacket calls the bot AI's HandleBotOutgoingPacket here so
-    // the AI can react to server-originated events: group invites (auto-accept), vendor errors,
-    // BG queue status, resurrect requests, etc. Real-player sessions have m_playerbotAI=null
-    // so this is a no-op for them; bot sessions have null m_Socket AND m_playerbotAI set, so
-
 	if (m_Socket == nullptr)
         return;
 
@@ -352,10 +342,8 @@ void WorldSession::LogUnprocessedTail(WorldPacket *packet)
 
 bool WorldSession::ForcePlayerLogoutDelay()
 {
-    // The legacy bot-system logout gate was removed with the
-    // Penqle stub. The hardcore-protection delay logic below is non-bot-specific
-    // (it handles network-blip resilience) so we keep it active for any in-world
-    // player.
+    // The hardcore-protection delay logic handles network-blip resilience for
+    // any in-world player.
     if (!sWorld.IsStopped() && GetPlayer() && GetPlayer()->FindMap() && GetPlayer()->IsInWorld())
     {
         sLog.out(LOG_CHAR, "[%s:%u@%s] Lost socket for character:[%s] (guid: %u)", GetUsername().c_str(), GetAccountId(), GetRemoteAddress().c_str(), _player->GetName() , _player->GetGUIDLow());
@@ -422,8 +410,6 @@ bool WorldSession::Update(PacketFilter& updater)
     //logout procedure should happen only in World::UpdateSessions() method!!!
     if (updater.ProcessLogout())
     {
-        // Penqle stub's bot-specific early-logout state removed. cmangos
-        // adds its own logout handling for offline bots 
         if (_clientHashComputeStep == HASH_COMPUTED && GetPlayer())
             _clientHashComputeStep = HASH_NOTIFIED;
 
@@ -448,8 +434,6 @@ bool WorldSession::Update(PacketFilter& updater)
 
         ///- If necessary, log the player out
         time_t currTime = time(nullptr);
-        // Bot-driven forceConnection guards removed (Penqle stub binned).
-        // cmangos's bot session handling re-introduces equivalent guards.
         if ((!m_Socket || (ShouldLogOut(currTime) && !m_playerLoading)))
             LogoutPlayer(true);
 
@@ -471,8 +455,6 @@ bool WorldSession::Update(PacketFilter& updater)
 
 bool WorldSession::CanProcessPackets() const
 {
-    // Legacy chat-bot clause removed — Penqle stub binned. cmangos's
-    // bot system uses isRealPlayer() guards in instead.
     return (m_Socket && !m_Socket->IsClosed());
 }
 
