@@ -1,26 +1,32 @@
 [
   {
     "id": "goal-1",
-    "description": "Stop services, stash local changes, pull latest origin/upstream commits, and pop stash",
+    "description": "Verify daemon shutdown and stash all local uncommitted working tree modifications",
     "status": "completed",
-    "verification_criteria": "Services stopped, git pull completed successfully with HEAD at origin/playerbots-integration-gh (86c9dd3), local stash popped cleanly."
+    "verification_criteria": "Services stopped, git stash created cleanly with working tree clean."
   },
   {
     "id": "goal-2",
-    "description": "Verify and apply any database updates, schema changes, and integrity checks",
+    "description": "Pull latest commits from origin/playerbots-integration-gh",
     "status": "completed",
-    "verification_criteria": "All new or pending SQL migration files in sql/ applied or verified, mandatory tw_char.character_inventory_copy present."
+    "verification_criteria": "Branch successfully updated to match origin/playerbots-integration-gh HEAD."
   },
   {
     "id": "goal-3",
-    "description": "Configure and compile engine via CMake in Release mode with PlayerBots and Turtle addons enabled",
-    "status": "in-progress",
-    "verification_criteria": "CMake build completes with 0 errors and fresh binaries in build/src/."
+    "description": "Restore local modifications back to working tree via git stash pop",
+    "status": "completed",
+    "verification_criteria": "git stash pop succeeds with 0 merge conflicts and local files intact."
   },
   {
     "id": "goal-4",
-    "description": "Restart systemd services (turtle-realmd, turtle-mangosd) and verify operational health",
-    "status": "todo",
-    "verification_criteria": "Services active (running) with clean logs and no startup crashes."
+    "description": "Audit incoming commit diff and execute new database migrations",
+    "status": "completed",
+    "verification_criteria": "All new SQL files applied with --force to tw_world/tw_char and tracked in tw_world.migrations."
+  },
+  {
+    "id": "goal-5",
+    "description": "Configure, compile C++ engine in Release mode, restart services, and verify operational logs",
+    "status": "completed",
+    "verification_criteria": "CMake build exits 0, turtle-mangosd and turtle-realmd start cleanly without errors."
   }
 ]

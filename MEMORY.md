@@ -111,6 +111,7 @@ journalctl --user -u turtle-mangosd -n 50 --no-pager
 ## 4. Database Operations & Migration Reference (Done Only If Necessary)
 
 ### A. Applying World Database Migrations (`tw_world`)
+
 `Database.AutoUpdate.Enabled = 0` is intentional. When new SQL updates appear in `sql/database_updates/world/`:
 
 ```bash
@@ -122,6 +123,7 @@ mariadb -h 127.0.0.1 -u mangos -pmangos -e "INSERT IGNORE INTO tw_world.migratio
 ```
 
 ### B. Applying Character Database Migrations (`tw_char`)
+
 When new character SQL updates appear in `sql/database_updates/character/`:
 
 ```bash
@@ -129,6 +131,7 @@ mariadb -h 127.0.0.1 -u mangos -pmangos tw_char < sql/database_updates/character
 ```
 
 ### C. Weekly Honor Maintenance Table (`tw_char`)
+
 - `HonorMaintenancer::DoMaintenance()` executes at the start of each weekly reset and requires `character_inventory_copy`.
 - Ensure table exists:
 

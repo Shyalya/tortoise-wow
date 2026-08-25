@@ -58,17 +58,17 @@ Displays complete online/offline bot statistics, level brackets, race/class brea
 ```
 
 #### 🔄 Macro 4: Mass Population Unstuck, Revive & Force AI Tick
-Revives dead bots across the entire realm, clears stuck pathfinding states, and triggers an immediate population update tick:
+Revives dead bots across the realm, clears stuck pathfinding states, and triggers an immediate population update tick:
 ```lua
-.rndbot refresh %
-.rndbot revive %
+.rndbot refresh
+.rndbot revive
 .rndbot update
 ```
 
 #### 🏹 Macro 5: Disperse Bot Population to Level-Appropriate Grinding Zones
 Directs roaming bots across Eastern Kingdoms and Kalimdor to level-appropriate mob farming spots:
 ```lua
-.rndbot grind %
+.rndbot grind
 .rndbot update
 ```
 
@@ -85,9 +85,9 @@ Unloads unreferenced map instances and clears orphaned geometry:
 #### 🔍 Macro 7: Deep Inspect Bot Stats & Location (Synchronous)
 Executes direct internal queries to read the selected target bot's stats, coordinates, and active quests:
 ```lua
-.rndbot do %t stats
-.rndbot do %t where
-.rndbot do %t quests
+.rndbot do stats
+.rndbot do where
+.rndbot do quests
 ```
 
 ---
@@ -96,13 +96,12 @@ Executes direct internal queries to read the selected target bot's stats, coordi
 
 | Selector | Target Meaning | Example |
 | :---: | :--- | :--- |
-| **`<botname>`** | Single named bot | `.rndbot gear Dunpriest epic` |
-| **`*`** | **All bots in active party/raid** | `.rndbot prep *` • `.rndbot summon *` |
-| **`%`** | **All random bots server-wide** | `.rndbot refresh %` • `.rndbot grind %` |
-| **`%t` / *(blank)*** | **Currently selected unit target** | `.rndbot gear best` • `.rndbot do %t stats` |
-| **`guild`** | All bots in your guild | `.rndbot init guild epic` |
-| **`!`** | All bots in memory *(GM only)* | `.rndbot summon !` |
-| **`Name1,Name2`** | Comma-separated list | `.rndbot prep Dunpriest,Tankman` |
+| ***(Target / blank)*** | **Currently selected target** (Click bot in-game) | `.rndbot gear` • `.rndbot gear=best` • `.rndbot prep` |
+| **`<botname>`** | Single named bot (Works grouped or solo) | `.rndbot gear Dunpriest epic` • `.rndbot prep Dunpriest` |
+| **`*`** | **All bots in active party/raid** (Requires group) | `.rndbot prep *` • `.rndbot summon *` • `.rndbot gear * best` |
+| **`!`** | All bots loaded in server memory *(GM only)* | `.rndbot summon !` • `.rndbot gear ! best` |
+| **`guild`** | All bots in your guild | `.rndbot init guild epic` • `.rndbot prep guild` |
+| **`Name1,Name2`** | Comma-separated list of bots | `.rndbot prep Dunpriest,Tankman` |
 
 ---
 

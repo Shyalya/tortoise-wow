@@ -1,10 +1,16 @@
-# Ultragoal Brief: Sync Upstream Commits, Database Migration Check, and Release Build
+# Ultragoal Brief: Upstream Sync, Stash Restoration, Migration & Rebuild
 
 ## Objective
-Pull and merge the latest 6 commits from `origin/playerbots-integration-gh`, verify if any database migrations or schema updates are pending against MariaDB (`tw_world`, `tw_char`), execute a full/incremental CMake Release build with all required flags (`-DBUILD_PLAYERBOTS=ON -DUSE_EXTRACTORS=ON -DALLOW_TURTLE_ADDONS=ON`), and verify server service startup and health.
+Safely synchronize the `playerbots-integration-gh` branch with upstream `origin/playerbots-integration-gh`, preserving all local modifications via git stash/pop, auditing and applying new incoming database migrations (`20260821154713_world.sql` & `20260821203635_world.sql`), compiling the engine in Release mode, and verifying systemd service health.
 
-## Micro-Goals
-1. **goal-1: Service Halt, Stash & Pull/Merge**: Stop systemd units `turtle-mangosd` and `turtle-realmd`, stash local uncommitted modifications, pull fast-forward commits from `origin/playerbots-integration-gh`, pop stashed changes cleanly.
-2. **goal-2: Database Migration Check & Apply**: Inspect for any new SQL updates or schema migrations in `sql/database_updates/` and `sql/base/`, check `tw_world.migrations` and `character_inventory_copy` table integrity, and apply pending migrations if found.
-3. **goal-3: Engine Compilation & Verification**: Run CMake configure and build in Release mode using all required flags, verify build output with 0 errors.
-4. **goal-4: Service Startup & Health Validation**: Reset systemd failure counters, start `turtle-realmd` and `turtle-mangosd`, verify status and startup logs in journalctl.
+## Context & Architecture Boundaries
+- Master Sync Pipeline defined in `MEMORY.md` (Section 1) and `.omg/rules/build_rules.md`.
+- Active database engine: MariaDB 11.8 (`127.0.0.1:3306`, user `mangos:mangos`).
+- Services: `turtle-mangosd.service`, `turtle-realmd.service` (systemd user services).
+- CMake compilation flags: `-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/home/sam/server -DBUILD_PLAYERBOTS=ON -DUSE_EXTRACTORS=ON -DALLOW_TURTLE_ADDONS=ON`.
+
+## Verification Strategy
+- Git status & diff checks before and after sync/stash pop.
+- Database migration execution log & recording in `tw_world.migrations`.
+- CMake build completion with 0 errors.
+- Systemd service activation and clean startup logs via journalctl.

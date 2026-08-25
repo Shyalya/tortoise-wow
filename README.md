@@ -240,7 +240,7 @@ Work from other forks is pulled in where it fits and credited in the commit — 
 # Configure production release build with PlayerBots and static modules
 cmake -B build -S . \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=/home/sam/server \
+  -DCMAKE_INSTALL_PREFIX=$HOME/server \
   -DBUILD_PLAYERBOTS=ON \
   -DUSE_EXTRACTORS=ON \
   -DALLOW_TURTLE_ADDONS=ON \
@@ -266,8 +266,8 @@ After=network.target mariadb.service
 
 [Service]
 Type=simple
-WorkingDirectory=/home/sam/server
-ExecStart=/home/sam/server/bin/realmd -c /home/sam/server/etc/realmd.conf
+WorkingDirectory=%h/server
+ExecStart=%h/server/bin/realmd -c %h/server/etc/realmd.conf
 Restart=on-failure
 RestartSec=5s
 
@@ -284,8 +284,8 @@ After=network.target mariadb.service turtle-realmd.service
 
 [Service]
 Type=simple
-WorkingDirectory=/home/sam/server
-ExecStart=/home/sam/server/bin/mangosd -c /home/sam/server/etc/mangosd.conf
+WorkingDirectory=%h/server
+ExecStart=%h/server/bin/mangosd -c %h/server/etc/mangosd.conf
 Restart=on-failure
 RestartSec=10s
 
