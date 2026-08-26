@@ -120,6 +120,9 @@ void PlayerbotFactory::Init()
 
 void PlayerbotFactory::Prepare()
 {
+    if (!IsValidBot())
+        return;
+
     /*if (!itemQuality)
     {
         if (level < 20)
@@ -182,6 +185,9 @@ void PlayerbotFactory::Prepare()
 
 void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
 {
+    if (!IsValidBot())
+        return;
+
     sLog.outDetail("Preparing to %s randomize...", (incremental ? "incremental" : "full"));
     Prepare();
 
@@ -374,6 +380,9 @@ void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
 
 void PlayerbotFactory::Refresh()
 {
+    if (!IsValidBot())
+        return;
+
     //Prepare();
     if (!ai->HasCheat(BotCheatMask::item))
         return;
@@ -389,6 +398,9 @@ void PlayerbotFactory::Refresh()
 
 void PlayerbotFactory::AddConsumables()
 {
+    if (!IsValidBot())
+        return;
+
     auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Consumables");
    switch (bot->getClass())
    {
@@ -563,6 +575,9 @@ void PlayerbotFactory::AddConsumables()
 
 void PlayerbotFactory::InitPet()
 {
+    if (!IsValidBot())
+        return;
+
     // Randomize a new pet (only for hunters)
     if (bot->getClass() != CLASS_HUNTER)
         return;
@@ -693,6 +708,9 @@ void PlayerbotFactory::InitPet()
 
 void PlayerbotFactory::InitPetSpells()
 {
+    if (!IsValidBot())
+        return;
+
     Map* map = bot->GetMap();
     if (!map)
         return;
@@ -2977,6 +2995,9 @@ void PlayerbotFactory::Shuffle(std::vector<uint32>& items)
 
 void PlayerbotFactory::InitEquipment(bool incremental, bool syncWithMaster, bool progressive, bool partialUpgrade)
 {
+    if (!IsValidBot())
+        return;
+
     // Bots below level 5 stay in their starting outfit: gear DB has little for them,
     // and specId is often 0 at low levels which would strip them naked (DestroyItemsVisitor
     // runs before the specId guard). Level 5 aligns with AcceptQuestAction's breadcrumb gate.
@@ -3920,6 +3941,9 @@ void PlayerbotFactory::AddGems(Item* item)
 
 void PlayerbotFactory::InitAllSkills()
 {
+    if (!IsValidBot())
+        return;
+
     auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Skills1");
     InitSkills();
     InitTradeSkills();
@@ -4128,6 +4152,9 @@ void PlayerbotFactory::UpdateTradeSkills()
 
 void PlayerbotFactory::InitSkills()
 {
+    if (!IsValidBot())
+        return;
+
     bot->UpdateSkillsForLevel(true);
 
 // Riding skills requirements are different
@@ -4505,6 +4532,9 @@ void PlayerbotFactory::ClearAllItems()
 
 void PlayerbotFactory::InitAmmo()
 {
+    if (!IsValidBot())
+        return;
+
     auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Ammo");
     if (bot->getClass() != CLASS_HUNTER && bot->getClass() != CLASS_ROGUE && bot->getClass() != CLASS_WARRIOR)
         return;
@@ -4748,6 +4778,9 @@ void PlayerbotFactory::InitMounts()
 
 void PlayerbotFactory::InitPotions()
 {
+    if (!IsValidBot())
+        return;
+
     auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Potions");
     uint32 effects[] = { SPELL_EFFECT_HEAL, SPELL_EFFECT_ENERGIZE };
     for (int i = 0; i < 2; ++i)
@@ -4778,6 +4811,9 @@ void PlayerbotFactory::InitPotions()
 
 void PlayerbotFactory::InitFood()
 {
+    if (!IsValidBot())
+        return;
+
     auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Food");
     uint32 categories[] = { 11, 59 };
     for (int i = 0; i < 2; ++i)
@@ -4807,6 +4843,9 @@ void PlayerbotFactory::InitFood()
 
 void PlayerbotFactory::InitReagents()
 {
+    if (!IsValidBot())
+        return;
+
     auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "PlayerbotFactory_Reagents");
     std::list<uint32> items;
     uint32 regCount = 1;
@@ -5264,6 +5303,9 @@ void PlayerbotFactory::InitArenaTeam()
 
 void PlayerbotFactory::EnchantEquipment()
 {
+    if (!IsValidBot())
+        return;
+
     if (bot->GetLevel() >= sPlayerbotAIConfig.minEnchantingBotLevel)
     {
         if (m_EnchantContainer.empty())
@@ -5494,6 +5536,9 @@ void PlayerbotFactory::LoadEnchantContainer()
 }*/
 void PlayerbotFactory::InitGems() //WIP
 {
+    if (!IsValidBot())
+        return;
+
 #ifndef MANGOSBOT_ZERO
     std::vector<uint32> gems = sRandomItemMgr.GetGemsList();
     for (int slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; slot++)

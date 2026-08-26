@@ -57,7 +57,7 @@ public:
     static std::list<uint32> specialQuestIds;
     void InitSkills();
     void EnchantEquipment();
-    void EquipGear() { InitEquipment(false, false); InitGems(); }
+    void EquipGear() { if (!IsValidBot()) return; InitEquipment(false, false); InitGems(); }
     void EquipGearBest() { return InitEquipment(false, false, false); }
     void EquipGearPartialUpgrade() { return InitEquipment(false, false, true, true); }
     void UpgradeGear(bool syncWithMaster) { return InitEquipment(!syncWithMaster, syncWithMaster); }
@@ -71,6 +71,8 @@ public:
     void InitPetSpells();
 
 private:
+    // Factory operations mutate character state and must never run for a real session.
+    bool IsValidBot() const { return bot && ai && !IsRealPlayer(bot); }
     void Prepare();
     void InitSecondEquipmentSet();
     void Shuffle(std::vector<uint32>& items);

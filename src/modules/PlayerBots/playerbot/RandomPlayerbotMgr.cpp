@@ -2434,7 +2434,7 @@ bool RandomPlayerbotMgr::ProcessBot(Player* player)
 {
     // Same harness guard as the guid overload - this one is the entry point
     // for callers that already hold the player.
-    if (player && IsExternallyManaged(player->GetGUIDLow()))
+    if (player && (IsRealPlayer(player) || IsExternallyManaged(player->GetGUIDLow())))
         return false;
 
     if (!player || !player->IsInWorld() || player->IsBeingTeleported() || player->GetSession()->isLogingOut())
@@ -2531,6 +2531,9 @@ bool RandomPlayerbotMgr::ProcessBot(Player* player)
 
 void RandomPlayerbotMgr::Revive(Player* player)
 {
+    if (!player || IsRealPlayer(player))
+        return;
+
     uint32 bot = player->GetGUIDLow();
 
     //sLog.outString("Bot %d revived", bot);
@@ -2549,7 +2552,7 @@ void RandomPlayerbotMgr::Revive(Player* player)
 
 void RandomPlayerbotMgr::RandomTeleport(Player* bot, std::vector<WorldLocation> &locs, bool hearth, bool activeOnly)
 {
-    if (bot->IsBeingTeleported())
+    if (!bot || IsRealPlayer(bot) || bot->IsBeingTeleported())
         return;
 
     if (bot->InBattleGround())
@@ -3150,6 +3153,9 @@ void RandomPlayerbotMgr::PrintTeleportCache()
 
 void RandomPlayerbotMgr::RandomTeleportForLevel(Player* bot, bool activeOnly)
 {
+    if (!bot || IsRealPlayer(bot))
+        return;
+
     if (bot->InBattleGround())
         return;
 
@@ -3182,6 +3188,9 @@ void RandomPlayerbotMgr::RandomTeleportForLevel(Player* bot, bool activeOnly)
 
 void RandomPlayerbotMgr::RandomTeleport(Player* bot)
 {
+    if (!bot || IsRealPlayer(bot))
+        return;
+
     if (bot->InBattleGround())
         return;
 
@@ -3221,6 +3230,9 @@ void RandomPlayerbotMgr::RandomTeleport(Player* bot)
 
 void RandomPlayerbotMgr::InstaRandomize(Player* bot)
 {
+    if (!bot || IsRealPlayer(bot))
+        return;
+
     sRandomPlayerbotMgr.Randomize(bot);
 
     if(bot->GetLevel() > sWorld.getConfig(CONFIG_UINT32_START_PLAYER_LEVEL))
@@ -3229,7 +3241,7 @@ void RandomPlayerbotMgr::InstaRandomize(Player* bot)
 
 void RandomPlayerbotMgr::Randomize(Player* bot)
 {
-    if (!bot || !bot->IsInWorld() || bot->IsBeingTeleported() || bot->GetSession()->isLogingOut())
+    if (!bot || IsRealPlayer(bot) || !bot->IsInWorld() || bot->IsBeingTeleported() || bot->GetSession()->isLogingOut())
         return;
 
     bool initialRandom = false;
@@ -3270,6 +3282,9 @@ void RandomPlayerbotMgr::Randomize(Player* bot)
 
 void RandomPlayerbotMgr::UpdateGearSpells(Player* bot)
 {
+    if (!bot || IsRealPlayer(bot))
+        return;
+
     auto pmo = sPerformanceMonitor.start(PERF_MON_RNDBOT, "UpgradeGear");
 
     uint32 maxLevel = sPlayerbotAIConfig.randomBotMaxLevel;
@@ -3303,6 +3318,9 @@ void RandomPlayerbotMgr::UpdateGearSpells(Player* bot)
 
 void RandomPlayerbotMgr::RandomizeFirst(Player* bot)
 {
+    if (!bot || IsRealPlayer(bot))
+        return;
+
     uint32 maxLevel = sPlayerbotAIConfig.randomBotMaxLevel;
     if (maxLevel > sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL))
         maxLevel = sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL);
@@ -3384,7 +3402,7 @@ uint32 RandomPlayerbotMgr::GetZoneLevel(uint16 mapId, float teleX, float teleY, 
 
 void RandomPlayerbotMgr::Refresh(Player* bot)
 {
-    if (bot->IsBeingTeleportedFar() || !bot->IsInWorld())
+    if (!bot || IsRealPlayer(bot) || bot->IsBeingTeleportedFar() || !bot->IsInWorld())
         return;
 
     if (sServerFacade.UnitIsDead(bot))
@@ -4238,6 +4256,9 @@ std::string RandomPlayerbotMgr::HandleRemoteCommand(std::string request)
 
 void RandomPlayerbotMgr::ChangeStrategy(Player* player)
 {
+    if (!player || IsRealPlayer(player))
+        return;
+
     uint32 bot = player->GetGUIDLow();
 
     if (urand(0, 100) > 100 * sPlayerbotAIConfig.randomBotRpgChance) // select grind / pvp
@@ -4257,6 +4278,9 @@ void RandomPlayerbotMgr::ChangeStrategy(Player* player)
 
 void RandomPlayerbotMgr::RandomTeleportForRpg(Player* bot, bool activeOnly)
 {
+    if (!bot || IsRealPlayer(bot))
+        return;
+
     uint32 race = bot->getRace();
     uint32 level = bot->GetLevel();
 
@@ -4291,6 +4315,9 @@ void RandomPlayerbotMgr::Remove(Player* bot)
 {
     SC_LOG("RandomPlayerbotMgr::Remove entry bot=%s",
            bot ? bot->GetName() : "(null)");
+    if (!bot || IsRealPlayer(bot))
+        return;
+
     uint32 owner = bot->GetGUIDLow();
     SC_LOG("RandomPlayerbotMgr::Remove guid=%u — deleting random_bots row", owner);
     CharacterDatabase.PExecute("DELETE FROM ai_playerbot_random_bots WHERE owner = 0 AND bot = '%d'", owner);
@@ -4391,6 +4418,9 @@ uint32 RandomPlayerbotMgr::GetBattleMasterEntry(Player* bot, BattleGroundTypeId 
 
 void RandomPlayerbotMgr::Hotfix(Player* bot, uint32 version)
 {
+    if (!bot || IsRealPlayer(bot))
+        return;
+
     PlayerbotFactory factory(bot, bot->GetLevel());
     uint32 exp = bot->GetUInt32Value(PLAYER_XP);
     uint32 level = bot->GetLevel();

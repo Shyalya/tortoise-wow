@@ -3308,12 +3308,15 @@ void RandomItemMgr::BuildEquipCache()
 
     equipCache.clear();
 
+    bool cacheComplete = false;
     auto results = CharacterDatabase.PQuery("select clazz, spec, lvl, slot, quality, item from ai_playerbot_equip_cache");
     if (results)
     {
         sLog.outString("Loading equipment cache for %d classes, %d levels, %d slots, %d quality from %d items",
                 MAX_CLASSES, maxLevel, EQUIPMENT_SLOT_END, ITEM_QUALITY_ARTIFACT, sItemStorage.GetMaxEntry());
         int count = 0;
+        bool hasCompletionMarker = false;
+        std::set<uint32> cachedSpecs;
         do
         {
             Field* fields = results->Fetch();
@@ -3324,15 +3327,52 @@ void RandomItemMgr::BuildEquipCache()
             uint32 quality = fields[4].GetUInt32();
             uint32 itemId = fields[5].GetUInt32();
 
+            // A marker written only after a successful build prevents an interrupted
+            // MyISAM build from being treated as a complete cache on the next startup.
+            if (!clazz && !spec && !level && !slot && !quality && !itemId)
+            {
+                hasCompletionMarker = true;
+                continue;
+            }
+
             BotEquipKey key(level, clazz, spec, slot, quality);
             equipCache[key].push_back(itemId);
+            cachedSpecs.insert(spec);
             count++;
 
         } while (results->NextRow());
-        sLog.outString("Equipment cache loaded from %d records", count);
+
+        cacheComplete = hasCompletionMarker;
+        bool hasExpectedSpecs = false;
+        for (uint32 spec = 1; spec <= MAX_STAT_SCALES; ++spec)
+        {
+            if (!m_weightScales[spec].info.id)
+                continue;
+
+            hasExpectedSpecs = true;
+            if (cachedSpecs.find(spec) == cachedSpecs.end())
+            {
+                cacheComplete = false;
+                break;
+            }
+        }
+        cacheComplete = cacheComplete && hasExpectedSpecs;
+
+        if (cacheComplete)
+            sLog.outString("Equipment cache loaded from %d records", count);
+        else
+        {
+            sLog.outString("Equipment cache is incomplete; rebuilding it");
+            equipCache.clear();
+        }
     }
-    else
+
+    if (!cacheComplete)
     {
+        // Remove stale rows before rebuilding. If the process stops mid-build, the
+        // missing completion marker makes the next startup rebuild from scratch.
+        CharacterDatabase.PExecute("TRUNCATE TABLE ai_playerbot_equip_cache");
+
         uint64 total = uint64(MAX_CLASSES * 3 * maxLevel * EQUIPMENT_SLOT_END * ITEM_QUALITY_ARTIFACT);
         sLog.outString("Building equipment cache for %d classes, %d specs, %d levels, %d slots, %d quality from %d items (%zu total)",
                 MAX_CLASSES, MAX_STAT_SCALES, maxLevel, EQUIPMENT_SLOT_END, ITEM_QUALITY_ARTIFACT, sItemStorage.GetMaxEntry(), total);
@@ -3485,6 +3525,7 @@ void RandomItemMgr::BuildEquipCache()
         }
         equipCache[tabardKey] = tabardsList;
         equipCache[shirtKey] = shirtsList;
+        CharacterDatabase.PExecute("insert into ai_playerbot_equip_cache (clazz, spec, lvl, slot, quality, item) values (0, 0, 0, 0, 0, 0)");
         sLog.outString("Equipment cache saved to DB");
     }
 }

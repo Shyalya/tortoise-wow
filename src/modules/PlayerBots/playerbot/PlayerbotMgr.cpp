@@ -828,6 +828,20 @@ std::string PlayerbotHolder::ProcessBotCommand(std::string cmd, ObjectGuid guid,
     if (!sPlayerbotAIConfig.enabled || guid.IsEmpty())
         return "Bot system is disabled";
 
+    std::string subType;
+    size_t eqPos = cmd.find('=');
+    if (eqPos != std::string::npos)
+    {
+        subType = cmd.substr(eqPos + 1);
+        cmd = cmd.substr(0, eqPos);
+    }
+
+    // All regular bot commands must target a synthetic PlayerBot. The
+    // `always` command is the explicit opt-in that turns a real character
+    // into an alt bot, so it is the one intentional exception.
+    if (bot && IsRealPlayer(bot) && cmd != "always")
+        return "Target is a real player, not a PlayerBot";
+
     uint32 botAccount = sObjectMgr.GetPlayerAccountIdByGUID(guid);
     bool isRandomAccount = sPlayerbotAIConfig.IsInRandomAccountList(botAccount);
     bool isMasterAccount = (masterAccountId == botAccount);
@@ -843,17 +857,14 @@ std::string PlayerbotHolder::ProcessBotCommand(std::string cmd, ObjectGuid guid,
         return "Can not control alt-bots with this command.";
     }
 
-    std::string subType;
-    size_t eqPos = cmd.find('=');
-    if (eqPos != std::string::npos)
-    {
-        subType = cmd.substr(eqPos + 1);
-        cmd = cmd.substr(0, eqPos);
-    }
-
     auto it = m_botCommandHandlers.find(cmd);
     if (it != m_botCommandHandlers.end())
     {
+        // Commands other than lifecycle operations require an online target;
+        // otherwise their handlers would receive a null Player pointer.
+        if (!bot && cmd != "add" && cmd != "login" && cmd != "always" && cmd != "delete")
+            return "Bot is offline";
+
         std::string realParam;
         
         if (!subType.empty())
@@ -2851,8 +2862,17 @@ void PlayerbotHolder::OnBotDeleted(uint32 botGuid, uint32 accountId)
 bool PlayerbotHolder::DeleteBot(ObjectGuid guid, bool allowInstant)
 {
     uint32 botAccount = sObjectMgr.GetPlayerAccountIdByGUID(guid);
+    Player* player = sObjectMgr.GetPlayer(guid, true);
 
-    if (Player* player = sObjectMgr.GetPlayer(guid, true))
+    if (player && IsRealPlayer(player))
+        return false;
+
+    // Offline characters have no session marker. Only persistent bot records
+    // are sufficient to prove that an offline delete is safe.
+    if (!player && !sRandomPlayerbotMgr.IsFreeBot(guid.GetCounter()))
+        return false;
+
+    if (player)
     {
         //Attempt instant logout.
         player->SetFlag(PLAYER_FLAGS, PLAYER_FLAGS_RESTING); 
@@ -2893,7 +2913,8 @@ std::string PlayerbotHolder::HandleBotDelete(Player* bot, Player* master, const 
     if (isRandomAccount && mgr == this)
         return "Not your bot";
 
-    DeleteBot(guid);
+    if (!DeleteBot(guid))
+        return "Target is not a PlayerBot";
 
     return "ok";
 }
