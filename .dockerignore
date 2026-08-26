@@ -1,6 +1,9 @@
 .git
 .github
 .vscode
+.env
+config/
+migration-test-volumes/
 build
 data
 samples

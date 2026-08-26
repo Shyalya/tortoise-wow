@@ -5,6 +5,7 @@ ETC="${TURTLE_HOME:-/opt/turtle}/etc"
 DATA_DIR="${DATA_DIR:-/opt/turtle/data}"
 LOGS_DIR="${LOGS_DIR:-/opt/turtle/logs}"
 SQL_DIR="${SQL_DIR:-/opt/turtle/sql}"
+MODULE_CONFIG_TEMPLATE_DIR="${TURTLE_HOME:-/opt/turtle}/module-configs"
 
 DB_HOST="${DB_HOST:-db}"
 DB_PORT="${DB_PORT:-3306}"
@@ -66,6 +67,17 @@ fi
 if [[ -f "${ETC}/ahbot.conf.dist" ]]; then
   ensure_conf "${ETC}/ahbot.conf.dist" "${ETC}/ahbot.conf"
 fi
+
+# Module configs are installed as .conf.dist files. Compose normally bind-mounts
+# ./config over ${ETC}, so also check the image-side template directory copied by
+# the Dockerfile; otherwise the mount would hide the template before it could be
+# materialized as the .conf file that Config::LoadModulesConfigs expects.
+MODULE_ETC="${ETC}/modules"
+mkdir -p "${MODULE_ETC}"
+for dist in "${MODULE_ETC}"/*.conf.dist "${MODULE_CONFIG_TEMPLATE_DIR}"/*.conf.dist; do
+  [[ -f "${dist}" ]] || continue
+  ensure_conf "${dist}" "${MODULE_ETC}/$(basename "${dist}" .dist)"
+done
 
 # mangosd
 set_conf "${ETC}/mangosd.conf" "LoginDatabase.Info" "\"$(DB_INFO "${DB_LOGIN}")\""

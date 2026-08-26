@@ -1,0 +1,35 @@
+[worldserver]
+
+#######################################################################
+# Dynamic XP
+#######################################################################
+
+DynamicXP.Enable = 1
+
+# Percentile of active accounts used as the neutral progression level.
+# Range: 0.0 - 1.0
+DynamicXP.Percentile = 0.75
+
+# Accounts without activity within this many days are excluded from
+# progression calculations. Activity is read from account.last_login.
+DynamicXP.ActiveAccountDays = 14
+
+# XP multiplier added for each level below the progression level.
+DynamicXP.BonusPerLevelBelow = 0.10
+
+# XP multiplier removed for each level above the progression level.
+DynamicXP.PenaltyPerLevelAbove = 0.02
+
+# Minimum and maximum Dynamic XP multipliers.
+DynamicXP.MinRate = 0.80
+DynamicXP.MaxRate = 2.00
+
+# How frequently the population progression level is recalculated.
+DynamicXP.RefreshMinutes = 30
+
+# XP integration audit:
+# Creature kills, group kill XP, quest rewards, exploration/discovery XP,
+# battleground XP, and other normal Player::GiveXP callers all pass through
+# PlayerScript::OnGiveXP. The optional playerbot bonus-XP helper applies its
+# own XP directly and calls only Eluna's hook, so it is outside this module's
+# Tortoise PlayerScript hook and is intentionally not modified here.

@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # Tortoise WoW (Shyalya/tortoise-wow) — Ubuntu 22.04 build for GHCR + compose.
-# Build-arg BUILD_PLAYERBOTS controls whether the playerbots module is compiled in.
+# BUILD_PLAYERBOTS controls whether the playerbots library is compiled in.
+# Dynamic XP is a standalone module and is included in every image.
 
 ARG UBUNTU_VERSION=22.04
 
@@ -66,6 +67,7 @@ RUN --mount=type=cache,id=tortoise-wow-ccache-${UBUNTU_VERSION}-${CPU_TARGET},ta
          -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" \
          -DCMAKE_INSTALL_PREFIX="${CMAKE_INSTALL_PREFIX}" \
          -DBUILD_PLAYERBOTS="${BUILD_PLAYERBOTS}" \
+         -DMODULE_MOD_DYNAMIC_XP=static \
          -DUSE_EXTRACTORS="${USE_EXTRACTORS}" \
          -DALLOW_TURTLE_ADDONS=ON \
          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
@@ -162,6 +164,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --uid 1000 --gid turtle --home-dir /opt/turtle --shell /usr/sbin/nologin turtle
 
 COPY --from=builder /opt/turtle /opt/turtle
+# Keep module templates available even when Compose bind-mounts ./config over
+# /opt/turtle/etc. render-config.sh copies these into the mounted config tree.
+COPY modules/mod-dynamic-xp/conf/mod-dynamic-xp.conf.dist /opt/turtle/module-configs/mod-dynamic-xp.conf.dist
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/init-db.sh /usr/local/bin/init-db.sh
 COPY docker/render-config.sh /usr/local/bin/render-config.sh
