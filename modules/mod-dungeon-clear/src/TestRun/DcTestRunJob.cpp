@@ -53,13 +53,18 @@
 namespace
 {
     // Stage timeouts: a setup stage overrunning these is itself the failure.
-    constexpr uint32 SPAWN_TIMEOUT_MS = 60 * 1000;
+    // 180s, not 60: with ten groups cycling, up to fifty bot logins queue up
+    // at once and they all share one character-database queue. Sixty seconds
+    // was enough for a single group and turned into a stream of
+    // "bots did not finish logging in" setup failures under parallel load -
+    // the logins were not failing, just still in line.
+    constexpr uint32 SPAWN_TIMEOUT_MS = 180 * 1000;
     constexpr uint32 PROVISION_TIMEOUT_MS = 60 * 1000;
     constexpr uint32 GROUP_TIMEOUT_MS = 30 * 1000;
     // Covers BOTH teleport waves (leader, then the rest — see TickTeleporting),
     // and the stage clock does not restart between them.
     constexpr uint32 TELEPORT_TIMEOUT_MS = 45 * 1000;
-    constexpr uint32 START_TIMEOUT_MS = 20 * 1000;
+    constexpr uint32 START_TIMEOUT_MS = 60 * 1000;   // same reason as above
 
     constexpr uint32 MONITOR_STEP_MS = 1000;
 
@@ -1513,16 +1518,23 @@ void DcTestRunJob::SweepPartyGeometry()
                                 since = nowFar ? nowFar : 1;
                             else if (getMSTimeDiff(since, nowFar) > 45000)
                             {
+                                // WALK, do not teleport. Moving a straggler to
+                                // the party skips ground it is supposed to
+                                // cover, and the recorder then captures that
+                                // jump as if it were a path. Order it to run
+                                // to the tank instead; if it cannot get
+                                // there, the run fails honestly.
                                 LOG_INFO("playerbots.dungeonclear",
-                                         "TESTRUN {} distance fence: {} stranded {:.0f}yd from the "
-                                         "tank for 45s — teleporting in",
-                                         _record.runId, bot->GetName(), tank->GetDistance(bot));
+                                         "TESTRUN {} distance fence: {} is {}yd behind — sending it "
+                                         "running to the tank",
+                                         _record.runId, bot->GetName(),
+                                         int(tank->GetDistance(bot)));
                                 bot->GetMotionMaster()->Clear();
-                                bot->NearTeleportTo(tank->GetPositionX() + frand(-2.0f, 2.0f),
-                                                    tank->GetPositionY() + frand(-2.0f, 2.0f),
-                                                    tank->GetPositionZ(), bot->GetOrientation(),
-                                                    /*casting*/ false, /*vehicle*/ false,
-                                                    /*withPet*/ true);
+                                bot->GetMotionMaster()->MovePoint(0, tank->GetPositionX(),
+                                                                  tank->GetPositionY(),
+                                                                  tank->GetPositionZ(),
+                                                                  FORCED_MOVEMENT_NONE, 0.0f, 0.0f,
+                                                                  /*generatePath*/ true, false);
                                 since = 0;
                                 continue;
                             }

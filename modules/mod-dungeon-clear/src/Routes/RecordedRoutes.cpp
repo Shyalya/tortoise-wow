@@ -5,14 +5,6 @@
 // function nobody calls contributes nothing, and the module is a static lib,
 // so the linker drops it along with its route. Re-run the generator after new
 // recordings appear.
-void RegisterRecordedRoute36_1763();
-void RegisterRecordedRoute36_61961();
-void RegisterRecordedRoute36_61963();
-void RegisterRecordedRoute36_642();
-void RegisterRecordedRoute36_644();
-void RegisterRecordedRoute36_645();
-void RegisterRecordedRoute36_646();
-void RegisterRecordedRoute36_647();
 void RegisterRecordedRoute389_11517();
 void RegisterRecordedRoute389_11518();
 void RegisterRecordedRoute389_11519();
@@ -23,14 +15,6 @@ void RegisterRecordedRoute822_63132();
 
 void RegisterAllRecordedRoutes()
 {
-    RegisterRecordedRoute36_1763();
-    RegisterRecordedRoute36_61961();
-    RegisterRecordedRoute36_61963();
-    RegisterRecordedRoute36_642();
-    RegisterRecordedRoute36_644();
-    RegisterRecordedRoute36_645();
-    RegisterRecordedRoute36_646();
-    RegisterRecordedRoute36_647();
     RegisterRecordedRoute389_11517();
     RegisterRecordedRoute389_11518();
     RegisterRecordedRoute389_11519();

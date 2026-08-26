@@ -160,6 +160,34 @@ namespace DcRouteRecorder
             mapId = it->second.mapId ? it->second.mapId : mapId;
         }
 
+        // Reject legs that contain a TELEPORT. Sampling is every ~4yd, so a
+        // gap far beyond that is not walking - it is the distance fence, the
+        // stranded recovery or a corpse run moving somebody instantly. Such a
+        // leg looks SHORT (which is exactly what the shortest-wins rule
+        // prefers) while containing a segment that walks through walls, and
+        // once loaded at runtime it strands every later group on that jump.
+        // This is the regression behind Deadmines falling from 7/10 to 2-4/10
+        // after runtime loading went live.
+        for (std::size_t i = 1; i < pts.size(); ++i)
+        {
+            float const dx = pts[i].x - pts[i - 1].x;
+            float const dy = pts[i].y - pts[i - 1].y;
+            float const dz = pts[i].z - pts[i - 1].z;
+            // Falling is not teleporting. A drop covers a lot of ground
+            // between two samples but stays over the same spot - the plunge
+            // into the Deadmines foundry reads as a 35yd jump and had three
+            // perfectly good legs thrown away. A teleport moves you ACROSS
+            // the map, so judge on the horizontal component alone.
+            float const flatJump = std::sqrt(dx * dx + dy * dy);
+            if (flatJump > 25.0f)
+            {
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC-ROUTE] discarded a teleported leg for {} (sideways jump of {}yd)",
+                         bossName, static_cast<uint32>(flatJump));
+                return;
+            }
+        }
+
         std::vector<Sample3> const anchors = Thin(pts);
         if (anchors.size() < 3)
             return;
@@ -169,6 +197,25 @@ namespace DcRouteRecorder
             length += Dist2D(anchors[i - 1], anchors[i]);
         if (length < kMinLegLength)
             return;
+
+        // Reject wandering. A leg is only worth keeping if it roughly tracks
+        // the way to the boss; a party that searched half the dungeon
+        // produces a technically valid but useless route - and since Advance
+        // PREFERS registered routes, adopting one actively sends later groups
+        // on that detour. Live: the leg to Jared Voss was captured at 2404yd
+        // for a boss ~150yd from where the party started, and every group
+        // that loaded it walked the long way round. Six times the straight
+        // line is generous for real corridors and still cuts the strays.
+        {
+            float const straight = Dist2D(anchors.front(), anchors.back());
+            if (straight > 1.0f && length > straight * 6.0f)
+            {
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC-ROUTE] discarded a wandering leg for {}: {}yd walked for {}yd of distance",
+                         bossName, static_cast<uint32>(length), static_cast<uint32>(straight));
+                return;
+            }
+        }
 
         // One appender per (map, boss). Written as an ordinary C++ source file
         // in the same shape as the authored routes, so committing it is all it

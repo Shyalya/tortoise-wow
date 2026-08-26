@@ -272,14 +272,18 @@ namespace DcStrandedRecovery
             float const tx = lx + std::cos(angle) * off;
             float const ty = ly + std::sin(angle) * off;
 
+            // Run there, never teleport (see DcRouteRecorder's teleport
+            // filter and the no-shortcuts rule): a rescue that moves a bot
+            // through walls both skips content and poisons every route the
+            // recorder captures on that leg.
             member->GetMotionMaster()->Clear();
-            member->NearTeleportTo(tx, ty, lz, member->GetOrientation(),
-                                   /*casting*/ false, /*vehicle*/ false, /*withPet*/ true);
+            member->GetMotionMaster()->MovePoint(0, tx, ty, lz, FORCED_MOVEMENT_NONE,
+                                                 0.0f, 0.0f, /*generatePath*/ true, false);
             ++moved;
 
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] stranded-recovery: no progress past the timeout with {} out of "
-                     "range ({:.0f}yd) -> teleported to the tank",
+                     "range ({:.0f}yd) -> sent running to the tank",
                      leader->GetName(), member->GetName(), strandedDist);
         }
 
