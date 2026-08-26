@@ -93,6 +93,8 @@ namespace ai
     public:
         PartyMemberMediumHealthTrigger(PlayerbotAI* ai) :
             PartyMemberLowHealthTrigger(ai, "party member medium health", sPlayerbotAIConfig.mediumHealth,sPlayerbotAIConfig.lowHealth) {}
+
+        bool IsActive() override;
     };
 
     class PartyMemberAlmostFullHealthTrigger : public PartyMemberLowHealthTrigger

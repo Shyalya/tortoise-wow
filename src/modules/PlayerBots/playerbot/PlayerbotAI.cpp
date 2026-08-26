@@ -2311,6 +2311,14 @@ void PlayerbotAI::DoNextAction(bool min)
 #ifdef MANGOSBOT_ZERO
     if (bot->InBattleGround() && !HasStrategy("battleground", BotState::BOT_STATE_NON_COMBAT))
         ResetStrategies();
+
+    // Classic healers keep offdps from open-world init; drop it once they enter an instance.
+    if (HasStrategy("offdps", BotState::BOT_STATE_COMBAT))
+    {
+        Map* map = bot->GetMap();
+        if (bot->InBattleGround() || (map && (map->IsDungeon() || map->IsRaid())))
+            ChangeStrategy("-offdps", BotState::BOT_STATE_COMBAT);
+    }
 #else
     if ((bot->InBattleGround() && (!bot->IsBeingTeleported() && !bot->InArena()) && !HasStrategy("battleground", BotState::BOT_STATE_NON_COMBAT)) || ((!bot->IsBeingTeleported()&&bot->InArena()) && !HasStrategy("arena", BotState::BOT_STATE_NON_COMBAT)))
         ResetStrategies();

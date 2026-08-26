@@ -6,7 +6,10 @@
 #include "Util/DungeonClearUtil.h"
 #include "DcValueKeys.h"
 #include "Maps/MapManager.h"
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
+#include <ctime>
 #include <sstream>
 
 namespace
@@ -16,32 +19,71 @@ namespace
         {36, -16.0f, -385.0f, 62.0f, "Deadmines"},
         {33, -228.0f, 2111.0f, 76.9f, "Shadowfang Keep"},
         {43, -150.0f, 130.0f, -74.0f, "Wailing Caverns"},
+        {48, -150.234f, 106.594f, -39.779f, "Blackfathom Deeps"},
+        {90, -329.098f, -3.20722f, -152.851f, "Gnomeregan"},
         {189, 1688.0f, 1050.0f, 18.0f, "Scarlet Monastery"},
         {209, 1210.0f, 840.0f, 9.0f, "Zul'Farrak"},
         {34, 54.0f, 0.0f, -25.0f, "Stockades"},
+        {47, 1942.27f, 1544.23f, 83.3055f, "Razorfen Kraul"},
         {389, 2.0f, -10.0f, -50.0f, "Ragefire Chasm"},
         {70, -230.0f, 280.0f, -45.0f, "Uldaman"},
         {109, -600.0f, 100.0f, -90.0f, "Sunken Temple"},
         {129, 2480.0f, 920.0f, 30.0f, "Razorfen Downs"},
         {230, 400.0f, -150.0f, -70.0f, "Blackrock Depths"},
+        {229, -22.6518f, -299.750f, 31.7016f, "Blackrock Spire (Lower)"},
+        {229, 144.438f, -258.034f, 96.4066f, "Blackrock Spire (Upper)"},
+        {229, 78.3534f, -226.841f, 49.7662f, "Blackrock Spire"},
         {289, 100.0f, 100.0f, 100.0f, "Scholomance"},
         {329, 3500.0f, -3400.0f, 138.0f, "Stratholme"},
         {429, -50.0f, -700.0f, -2.0f, "Dire Maul"},
         {349, 700.0f, -50.0f, -60.0f, "Maraudon"},
+        {249, 30.8916f, -54.079f, -5.02784f, "Onyxia's Lair"},
+        {309, -11916.6f, -1243.52f, 92.5338f, "Zul'Gurub"},
+        {409, 1091.89f, -466.985f, -105.084f, "Molten Core"},
+        {469, -7672.32f, -1107.05f, 396.651f, "Blackwing Lair"},
+        {509, -8436.53f, 1519.17f, 31.907f, "Ruins of Ahn'Qiraj"},
+        {531, -8221.35f, 2014.34f, 129.071f, "Temple of Ahn'Qiraj"},
+        {533, 3005.87f, -3435.01f, 293.882f, "Naxxramas"},
     };
+
+    std::string Lower(std::string value)
+    {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c)
+        {
+            return static_cast<char>(std::tolower(c));
+        });
+        return value;
+    }
+
+    std::string Trim(std::string value)
+    {
+        size_t const first = value.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos)
+            return {};
+        size_t const last = value.find_last_not_of(" \t\r\n");
+        return value.substr(first, last - first + 1);
+    }
 
     Entrance const* FindEntrance(std::string const& name)
     {
+        std::string const query = Lower(Trim(name));
+        if (query.empty())
+            return nullptr;
+
+        Entrance const* best = nullptr;
+        size_t bestLength = 0;
         for (auto const& e : kEntrances)
         {
-            std::string n = e.name;
-            std::string q = name;
-            std::transform(n.begin(), n.end(), n.begin(), ::tolower);
-            std::transform(q.begin(), q.end(), q.begin(), ::tolower);
-            if (n.find(q) != std::string::npos)
+            std::string const candidate = Lower(e.name);
+            if (candidate == query)
                 return &e;
+            if (candidate.find(query) != std::string::npos && query.size() > bestLength)
+            {
+                best = &e;
+                bestLength = query.size();
+            }
         }
-        return &kEntrances[0];
+        return best;
     }
 }
 
@@ -51,17 +93,29 @@ bool DcTestDriver::Handle(ChatHandler* handler, std::string const& args)
     if (!gm)
         return true;
 
-    std::string dungeon = args.empty() ? "deadmines" : args;
+    std::string dungeon = Trim(args.empty() ? "deadmines" : args);
     uint32 seed = static_cast<uint32>(time(nullptr));
-    auto sp = dungeon.find(' ');
-    if (sp != std::string::npos)
+    size_t const tokenEnd = dungeon.find_last_not_of(" \t\r\n");
+    size_t const tokenStart = tokenEnd == std::string::npos
+        ? std::string::npos : dungeon.find_last_of(" \t\r\n", tokenEnd);
+    if (tokenStart != std::string::npos)
     {
-        // "deadmines 12345" seed form
-        try { seed = static_cast<uint32>(std::stoul(dungeon.substr(sp + 1))); } catch (...) {}
-        dungeon = dungeon.substr(0, sp);
+        std::string const seedText = dungeon.substr(tokenStart + 1, tokenEnd - tokenStart);
+        char* end = nullptr;
+        unsigned long parsed = std::strtoul(seedText.c_str(), &end, 10);
+        if (end && end != seedText.c_str() && *end == '\0')
+        {
+            seed = static_cast<uint32>(parsed);
+            dungeon = Trim(dungeon.substr(0, tokenStart));
+        }
     }
 
     Entrance const* ent = FindEntrance(dungeon);
+    if (!ent)
+    {
+        handler->PSendSysMessage("DC test: unknown dungeon '%s'.", dungeon.c_str());
+        return true;
+    }
     handler->PSendSysMessage("DC test: dungeon=%s seed=%u — teleporting you to entrance. Invite tank/healer/dps bots and `.dc on`.",
         ent->name, seed);
 

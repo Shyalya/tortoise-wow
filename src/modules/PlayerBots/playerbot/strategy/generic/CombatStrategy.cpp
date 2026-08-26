@@ -169,3 +169,10 @@ void HealInterruptStrategy::InitReactionTriggers(std::list<TriggerNode*>& trigge
 {
     InitCombatTriggers(triggers);
 }
+
+void TankFaceStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
+{
+    triggers.push_back(new TriggerNode(
+        "has aggro",
+        NextAction::array(0, new NextAction("tank face", ACTION_MOVE + 2), NULL)));
+}

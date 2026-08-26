@@ -32,6 +32,7 @@ namespace ai
         using DcCommandFn = bool (*)(ChatHandler* handler, char* args);
         using WorldUpdateFn = void (*)(uint32 diff);
         using AddonMessageFn = bool (*)(Player* player, std::string const& msg);
+        using StartupFn = void (*)();
 
         static PlayerbotAiExtension& Instance();
 
@@ -43,12 +44,14 @@ namespace ai
         void RegisterDcCommand(DcCommandFn fn) { dcCommand = fn; }
         void RegisterWorldUpdate(WorldUpdateFn fn) { worldUpdate = fn; }
         void RegisterAddonHandler(AddonMessageFn fn) { addonHandler = fn; }
+        void RegisterStartupHook(StartupFn fn);
 
         void ApplyToContext(AiObjectContext* context) const;
         void RunStrategyGates(PlayerbotAI* ai, Player* bot) const;
         bool HandleDcCommand(ChatHandler* handler, char* args) const;
         void RunWorldUpdate(uint32 diff) const;
         bool HandleAddonMessage(Player* player, std::string const& msg) const;
+        void RunStartupHooks() const;
 
     private:
         PlayerbotAiExtension() = default;
@@ -58,6 +61,7 @@ namespace ai
         std::vector<TriggerFactory> triggerFactories;
         std::vector<ValueFactory> valueFactories;
         std::vector<StrategyGateFn> strategyGates;
+        std::vector<StartupFn> startupHooks;
         DcCommandFn dcCommand = nullptr;
         WorldUpdateFn worldUpdate = nullptr;
         AddonMessageFn addonHandler = nullptr;

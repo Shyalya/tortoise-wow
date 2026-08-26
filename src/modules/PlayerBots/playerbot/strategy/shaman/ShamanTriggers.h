@@ -425,6 +425,8 @@ namespace ai
         virtual bool IsActive() override;
     };
 
+    DEBUFF_TRIGGER(FlameShockTrigger, "flame shock");
+
     class FrostShockSnareTrigger : public SnareTargetTrigger
     {
     public:

@@ -17,6 +17,7 @@ namespace DcUtil
     bool IsDungeonClearLeader(PlayerbotAI* ai, Player* bot);
     bool IsEnabledRun(Player* bot);
     bool IsPausedRun(Player* bot);
+    void ResetDungeonClearRun(PlayerbotAI* ai, Player* bot);
     void DisableDungeonClear(PlayerbotAI* ai, Player* bot, char const* reason);
     void TellGroup(PlayerbotAI* ai, Player* bot, std::string const& msg);
     Unit* FindHostileNear(Player* bot, float range);

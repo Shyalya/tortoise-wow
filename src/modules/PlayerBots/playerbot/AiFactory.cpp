@@ -18,6 +18,25 @@
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "Battlegrounds/BattleGroundMgr.h"
 
+namespace
+{
+// Classic mana budgets are tight. Healers should only off-DPS outdoors.
+bool AllowHealerOffdps(Player* player)
+{
+#ifdef MANGOSBOT_ZERO
+    if (!player)
+        return false;
+    if (player->InBattleGround())
+        return false;
+
+    Map* map = player->GetMap();
+    if (map && (map->IsDungeon() || map->IsRaid()))
+        return false;
+#endif
+    return true;
+}
+}
+
 AiObjectContext* AiFactory::createAiObjectContext(Player* player, PlayerbotAI* ai)
 {
     switch (player->getClass())
@@ -320,13 +339,13 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
             if (tab == 0)
             {
                 combatEngine->addStrategy("discipline");
-                if (sPlayerbotAIConfig.enableOffSpecStrategies)
-                    combatEngine->addStrategy("offheal");
+                if (sPlayerbotAIConfig.enableOffSpecStrategies && AllowHealerOffdps(player))
+                    combatEngine->addStrategy("offdps");
             }
             else if (tab == 1)
             {
                 combatEngine->addStrategy("holy");
-                if (sPlayerbotAIConfig.enableOffSpecStrategies)
+                if (sPlayerbotAIConfig.enableOffSpecStrategies && AllowHealerOffdps(player))
                     combatEngine->addStrategy("offdps");
             }
             else
@@ -389,12 +408,12 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
             else if (tab == 2)
             {
                 combatEngine->addStrategies("restoration", "flee", "ranged", NULL);
-                if (sPlayerbotAIConfig.enableOffSpecStrategies)
+                if (sPlayerbotAIConfig.enableOffSpecStrategies && AllowHealerOffdps(player))
                     combatEngine->addStrategy("offdps");
             }
             else
             {
-                combatEngine->addStrategies("enhancement", "aoe", "cc", "close", NULL);
+                combatEngine->addStrategies("enhancement", "aoe", "cc", "close", "behind", NULL);
                 if (sPlayerbotAIConfig.enableOffSpecStrategies)
                     combatEngine->addStrategy("offheal");
             }
@@ -412,7 +431,7 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
             else if(tab == 0)
             {
                 combatEngine->addStrategies("holy", "dps assist", "flee", "ranged", NULL);
-                if (sPlayerbotAIConfig.enableOffSpecStrategies)
+                if (sPlayerbotAIConfig.enableOffSpecStrategies && AllowHealerOffdps(player))
                     combatEngine->addStrategy("offdps");
             }
             else
@@ -469,7 +488,7 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
             else if (tab == 2)
             {
                 combatEngine->addStrategies("restoration", "dps assist", "flee", "ranged", NULL);
-                if (sPlayerbotAIConfig.enableOffSpecStrategies)
+                if (sPlayerbotAIConfig.enableOffSpecStrategies && AllowHealerOffdps(player))
                     combatEngine->addStrategy("offdps");
             }
             else
@@ -594,7 +613,7 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
                 }
             }
 
-            if (player->getClass() == CLASS_PRIEST && tab < 2)
+            if (player->getClass() == CLASS_PRIEST && tab < 2 && AllowHealerOffdps(player))
             {
                 combatEngine->addStrategy("offdps");
             }
@@ -633,6 +652,40 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
     {
         combatEngine->ChangeStrategy(sPlayerbotAIConfig.combatStrategies);
     }
+
+    // High-impact combat defaults. Applied after ChangeStrategy so historical
+    // conf entries like `-threat` cannot silently strip them. Grouped bots only:
+    // solo grind should keep full aggression.
+    if (!player->InBattleGround() && (player->GetGroup() || facade->HasRealPlayerMaster()))
+    {
+        combatEngine->addStrategy("avoid aoe");
+        combatEngine->addStrategy("potions");
+
+        if (facade->ContainsStrategy(STRATEGY_TYPE_HEAL))
+        {
+            combatEngine->addStrategy("heal interrupt");
+            combatEngine->addStrategy("conserve mana");
+            combatEngine->addStrategy("preheal");
+        }
+        else if (facade->ContainsStrategy(STRATEGY_TYPE_TANK))
+        {
+            combatEngine->addStrategy("tank face");
+        }
+        else
+        {
+            combatEngine->addStrategy("threat");
+            combatEngine->addStrategy("cast time");
+            if (player->GetPower(POWER_MANA) > 0 || player->GetMaxPower(POWER_MANA) > 0)
+                combatEngine->addStrategy("conserve mana");
+        }
+    }
+
+#ifdef MANGOSBOT_ZERO
+    // Conf or leftover strategies can still enable healer off-DPS; strip it in
+    // instances where Classic mana cannot support it.
+    if (!AllowHealerOffdps(player))
+        combatEngine->removeStrategy("offdps");
+#endif
 
     // Battleground switch
     if (player->InBattleGround())
@@ -683,10 +736,13 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
         combatEngine->removeStrategy("custom::say");
         combatEngine->removeStrategy("flee");
         combatEngine->removeStrategy("threat");
+        combatEngine->removeStrategy("tank face");
         combatEngine->removeStrategy("follow");
         combatEngine->removeStrategy("wander");
         combatEngine->removeStrategy("conserve mana");
         combatEngine->removeStrategy("cast time");
+        combatEngine->removeStrategy("avoid aoe");
+        combatEngine->removeStrategy("preheal");
 
         if (player->getClass() == CLASS_SHAMAN && tab == 2)
         {

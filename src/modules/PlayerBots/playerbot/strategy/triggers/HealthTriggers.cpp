@@ -62,6 +62,16 @@ bool PartyMemberAlmostFullHealthTrigger::IsActive()
     return PartyMemberLowHealthTrigger::IsActive();
 }
 
+// Medium band (default 50-70%). At low mana skip the expensive mid-tier heals
+// and leave GCDs for low/critical casts that keep people alive.
+bool PartyMemberMediumHealthTrigger::IsActive()
+{
+    if (AI_VALUE2(uint8, "mana", "self target") < sPlayerbotAIConfig.lowMana)
+        return false;
+
+    return PartyMemberLowHealthTrigger::IsActive();
+}
+
 bool PartyMemberDeadTrigger::IsActive()
 {
 	return GetTarget();

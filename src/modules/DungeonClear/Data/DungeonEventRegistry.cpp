@@ -1,9 +1,12 @@
 #include "Data/DungeonEventRegistry.h"
 #include "DcValueKeys.h"
+#include "DcRunState.h"
 #include "playerbot/strategy/AiObjectContext.h"
+#include "Objects/Player.h"
 #include "Log.h"
 #include <algorithm>
 #include <unordered_set>
+#include <utility>
 
 namespace ai
 {
@@ -50,6 +53,16 @@ namespace ai
         return *this;
     }
 
+    EventBuilder& EventBuilder::Jump(float x, float y, float z, float radius)
+    {
+        DcEventStep step;
+        step.type = DcEventStepType::Jump;
+        step.x = x; step.y = y; step.z = z;
+        step.radius = radius;
+        event.steps.push_back(step);
+        return *this;
+    }
+
     EventBuilder& EventBuilder::UseGO(uint32 goEntry, float radius)
     {
         DcEventStep step;
@@ -60,23 +73,73 @@ namespace ai
         return *this;
     }
 
-    EventBuilder& EventBuilder::TalkTo(uint32 npcEntry, float radius)
+    EventBuilder& EventBuilder::TalkTo(uint32 npcEntry, float radius, int32 gossipOption)
     {
         DcEventStep step;
         step.type = DcEventStepType::TalkNpc;
         step.entry = npcEntry;
         step.radius = radius;
+        step.gossipOption = gossipOption;
         event.steps.push_back(step);
         return *this;
     }
 
-    EventBuilder& EventBuilder::WaitForGOState(uint32 goEntry, uint32 expectedState)
+    EventBuilder& EventBuilder::WaitForSpawn(uint32 creatureEntry, bool wantAlive,
+        uint32 timeoutMs, float searchRadius)
+    {
+        DcEventStep step;
+        step.type = DcEventStepType::WaitForSpawn;
+        step.entry = creatureEntry;
+        step.wantAlive = wantAlive;
+        step.timeoutMs = timeoutMs;
+        step.searchRadius = static_cast<uint32>(searchRadius);
+        event.steps.push_back(step);
+        return *this;
+    }
+
+    EventBuilder& EventBuilder::WaitForGOState(uint32 goEntry, uint32 expectedState,
+        uint32 timeoutMs, float searchRadius)
     {
         DcEventStep step;
         step.type = DcEventStepType::WaitGOState;
         step.entry = goEntry;
         step.goState = expectedState;
+        step.timeoutMs = timeoutMs;
+        step.searchRadius = static_cast<uint32>(searchRadius);
         event.steps.push_back(step);
+        return *this;
+    }
+
+    EventBuilder& EventBuilder::KillCreature(uint32 creatureEntry, float radius,
+        uint32 count, uint32 timeoutMs)
+    {
+        DcEventStep step;
+        step.type = DcEventStepType::KillCreature;
+        step.entry = creatureEntry;
+        step.radius = radius;
+        step.count = count;
+        step.timeoutMs = timeoutMs;
+        event.steps.push_back(step);
+        return *this;
+    }
+
+    EventBuilder& EventBuilder::ClearRadius(float x, float y, float z, float radius,
+        float zBand, uint32 timeoutMs)
+    {
+        DcEventStep step;
+        step.type = DcEventStepType::ClearRadius;
+        step.x = x; step.y = y; step.z = z;
+        step.radius = radius;
+        step.zBand = zBand;
+        step.timeoutMs = timeoutMs;
+        event.steps.push_back(step);
+        return *this;
+    }
+
+    EventBuilder& EventBuilder::ExcludeEntries(std::vector<uint32> entries)
+    {
+        if (!event.steps.empty())
+            event.steps.back().excludeEntries = std::move(entries);
         return *this;
     }
 
@@ -96,6 +159,19 @@ namespace ai
         step.text = std::move(label);
         step.customFn = std::move(fn);
         event.steps.push_back(step);
+        return *this;
+    }
+
+    EventBuilder& EventBuilder::Optional()
+    {
+        event.required = false;
+        return *this;
+    }
+
+    EventBuilder& EventBuilder::Conditional(EventCondition condition)
+    {
+        event.conditional = true;
+        event.condition = std::move(condition);
         return *this;
     }
 
@@ -178,11 +254,26 @@ namespace ai
         if (!bot || !context)
             return nullptr;
 
+        DcRunState& runState = context->GetValue<DcRunState&>(DcKey::RunState)->Get();
+        DungeonEvent const* due = nullptr;
         for (auto const& entry : events)
         {
             DungeonEvent const& evt = entry.second;
-            if (evt.mapId != mapId || evt.encounterIndex < 0 || static_cast<uint32>(evt.encounterIndex) != encounterIndex)
+            if (evt.mapId != mapId)
                 continue;
+            bool anchoredDue = evt.encounterIndex >= 0 && static_cast<uint32>(evt.encounterIndex) == encounterIndex;
+            bool activeProgress = runState.eventId == evt.eventId
+                && runState.eventInstanceId == bot->GetInstanceId();
+            bool conditionalDue = activeProgress || (evt.conditional && evt.condition && evt.condition(bot, context));
+            if (!anchoredDue && !conditionalDue)
+                continue;
+
+            // A condition commonly becomes false as soon as the first step
+            // opens a door. Keep driving the active event until its final wait
+            // step latches completion; otherwise it would be abandoned with
+            // stale progress on the very next tick.
+            if (activeProgress)
+                return &evt;
 
             if (!evt.persistent)
             {
@@ -191,9 +282,10 @@ namespace ai
                     continue;
             }
 
-            return &evt;
+            if (!due || evt.eventId < due->eventId)
+                due = &evt;
         }
-        return nullptr;
+        return due;
     }
 
     std::vector<BossRosterPatch> DungeonEventRegistry::GetRosterPatchesForMap(uint32 mapId) const

@@ -18,6 +18,7 @@
 #include "Entities/Vehicle.h"
 #endif
 #include "playerbot/strategy/generic/CombatStrategy.h"
+#include "Maps/MapManager.h"
 
 using namespace ai;
 
@@ -3455,6 +3456,106 @@ bool SetBehindTargetAction::isPossible()
     }
 
     return false;
+}
+
+bool TankFaceAction::isUseful()
+{
+    if (!MovementAction::isUseful())
+        return false;
+
+    if (!ai->IsTank(bot))
+        return false;
+
+    Unit* target = AI_VALUE(Unit*, "current target");
+    if (!target || !bot->GetGroup())
+        return false;
+
+    if (!AI_VALUE2(bool, "has aggro", "current target"))
+        return false;
+
+    if (!bot->CanReachWithMeleeAttack(target) || target->IsMoving())
+        return false;
+
+    float avgX = 0.0f, avgY = 0.0f;
+    uint32 count = 0;
+    for (GroupReference* gref = bot->GetGroup()->GetFirstMember(); gref; gref = gref->next())
+    {
+        Player* member = gref->getSource();
+        if (!member || member == bot || !member->IsAlive() || member->GetMapId() != bot->GetMapId())
+            continue;
+        if (ai->IsTank(member))
+            continue;
+        if (sServerFacade.GetDistance2d(target, member) > sPlayerbotAIConfig.sightDistance)
+            continue;
+
+        avgX += member->GetPositionX();
+        avgY += member->GetPositionY();
+        ++count;
+    }
+
+    if (!count)
+        return false;
+
+    avgX /= count;
+    avgY /= count;
+
+    float groupAngle = target->GetAngle(avgX, avgY);
+    float tankAngle = target->GetAngle(bot);
+    float delta = fabs(MapManager::NormalizeOrientation(groupAngle - tankAngle));
+    if (delta > M_PI)
+        delta = 2.0f * M_PI - delta;
+
+    // Move when standing on the same side of the mob as the party.
+    return delta < (M_PI / 2.0f);
+}
+
+bool TankFaceAction::Execute(Event& event)
+{
+    Unit* target = AI_VALUE(Unit*, "current target");
+    if (!target || !bot->GetGroup())
+        return false;
+
+    float avgX = 0.0f, avgY = 0.0f;
+    uint32 count = 0;
+    for (GroupReference* gref = bot->GetGroup()->GetFirstMember(); gref; gref = gref->next())
+    {
+        Player* member = gref->getSource();
+        if (!member || member == bot || !member->IsAlive() || member->GetMapId() != bot->GetMapId())
+            continue;
+        if (ai->IsTank(member))
+            continue;
+        if (sServerFacade.GetDistance2d(target, member) > sPlayerbotAIConfig.sightDistance)
+            continue;
+
+        avgX += member->GetPositionX();
+        avgY += member->GetPositionY();
+        ++count;
+    }
+
+    if (!count)
+        return false;
+
+    avgX /= count;
+    avgY /= count;
+
+    float groupAngle = target->GetAngle(avgX, avgY);
+    float faceAngle = MapManager::NormalizeOrientation(groupAngle + M_PI);
+
+    float dist = std::max(bot->GetCombinedCombatReach(target, true) * 0.7f, sPlayerbotAIConfig.contactDistance);
+    float x = target->GetPositionX() + cos(faceAngle) * dist;
+    float y = target->GetPositionY() + sin(faceAngle) * dist;
+    float z = target->GetPositionZ();
+    bot->UpdateAllowedPositionZ(x, y, z);
+
+    float ox, oy, oz;
+    target->GetPosition(ox, oy, oz);
+#ifdef MANGOSBOT_TWO
+    target->GetMap()->GetHitPosition(ox, oy, oz + bot->GetCollisionHeight(), x, y, z, bot->GetPhaseMask(), -0.5f);
+#else
+    target->GetMap()->GetHitPosition(ox, oy, oz + bot->GetCollisionHeight(), x, y, z, -0.5f);
+#endif
+
+    return MoveTo(bot->GetMapId(), x, y, z, false, false, false, true);
 }
 
 bool MoveOutOfCollisionAction::Execute(Event& event)

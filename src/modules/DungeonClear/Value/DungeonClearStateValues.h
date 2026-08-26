@@ -63,4 +63,22 @@ namespace ai
     private:
         uint32 data;
     };
+
+    class DungeonClearEventStartedAtValue : public ManualSetValue<uint32&>
+    {
+    public:
+        DungeonClearEventStartedAtValue(PlayerbotAI* ai)
+            : ManualSetValue<uint32&>(ai, data, DcKey::EventStartedAt), data(0) {}
+    private:
+        uint32 data;
+    };
+
+    class DungeonClearEventStepStartedAtValue : public ManualSetValue<uint32&>
+    {
+    public:
+        DungeonClearEventStepStartedAtValue(PlayerbotAI* ai)
+            : ManualSetValue<uint32&>(ai, data, DcKey::EventStepStartedAt), data(0) {}
+    private:
+        uint32 data;
+    };
 }

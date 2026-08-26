@@ -26,6 +26,12 @@ HolyPriestStrategy::HolyPriestStrategy(PlayerbotAI* ai) : PriestStrategy(ai)
 
 #ifdef MANGOSBOT_ZERO // Vanilla
 
+NextAction** HolyPriestStrategy::GetDefaultCombatActions()
+{
+    // Mana-free wand filler between heals — allowed in dungeons/raids.
+    return NextAction::array(0, new NextAction("shoot", ACTION_IDLE), NULL);
+}
+
 void HolyPriestStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
     PriestStrategy::InitCombatTriggers(triggers);
@@ -35,11 +41,13 @@ void HolyPriestStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
         NextAction::array(0, new NextAction("power word: shield on party", ACTION_CRITICAL_HEAL + 1),
                              new NextAction("flash heal on party", ACTION_CRITICAL_HEAL), NULL)));
 
+    // Low HP: shield + flash (fast). Greater Heal is too slow here in Classic.
     triggers.push_back(new TriggerNode(
         "party member low health",
         NextAction::array(0, new NextAction("power word: shield on party", ACTION_MEDIUM_HEAL + 2),
-                             new NextAction("greater heal on party", ACTION_MEDIUM_HEAL + 1), NULL)));
+                             new NextAction("flash heal on party", ACTION_MEDIUM_HEAL + 1), NULL)));
 
+    // Mid band: Greater Heal when mana allows (medium trigger skips at lowMana).
     triggers.push_back(new TriggerNode(
         "party member medium health",
         NextAction::array(0, new NextAction("greater heal on party", ACTION_MEDIUM_HEAL), NULL)));
@@ -158,9 +166,10 @@ void HolyPriestAoeStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers
 {
     PriestAoeStrategy::InitCombatTriggers(triggers);
 
+    // Classic has no Circle of Healing; Prayer of Healing is the group heal.
     triggers.push_back(new TriggerNode(
         "medium aoe heal",
-        NextAction::array(0, new NextAction("circle of healing", ACTION_MEDIUM_HEAL), NULL)));
+        NextAction::array(0, new NextAction("prayer of healing", ACTION_MEDIUM_HEAL), NULL)));
 }
 
 void HolyPriestAoeStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -390,6 +399,11 @@ void HolyPriestCureRaidStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& 
 
 #endif
 #ifdef MANGOSBOT_ONE // TBC
+
+NextAction** HolyPriestStrategy::GetDefaultCombatActions()
+{
+    return NextAction::array(0, new NextAction("shoot", ACTION_IDLE), NULL);
+}
 
 void HolyPriestStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
@@ -745,6 +759,11 @@ void HolyPriestCureRaidStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& 
 
 #endif
 #ifdef MANGOSBOT_TWO // WOTLK
+
+NextAction** HolyPriestStrategy::GetDefaultCombatActions()
+{
+    return NextAction::array(0, new NextAction("shoot", ACTION_IDLE), NULL);
+}
 
 void HolyPriestStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {

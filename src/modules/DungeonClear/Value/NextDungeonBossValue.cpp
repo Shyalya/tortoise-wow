@@ -3,6 +3,7 @@
 #include "Value/DungeonBossesValue.h"
 #include "DcRunState.h"
 #include "Maps/GridSearchers.h"
+#include "Maps/Map.h"
 #include "Objects/Player.h"
 #include "Objects/Creature.h"
 #include <unordered_set>
@@ -22,23 +23,39 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
 
     // A manually pinned boss (via "dc go") always wins if it's still present,
     // not skipped and not already cleared.
-    if (runState.selectedBossEntry)
+    if (runState.selectedBossStateKey || runState.selectedBossEntry)
     {
         for (DungeonBossInfo const& boss : bosses)
         {
-            if (boss.entry == runState.selectedBossEntry && !skipped.count(boss.entry) && !cleared.count(boss.entry))
+            uint32 const stateKey = DungeonBossStateKey(boss);
+            bool const selected = runState.selectedBossStateKey
+                ? stateKey == runState.selectedBossStateKey
+                : boss.entry == runState.selectedBossEntry;
+            if (selected && !skipped.count(stateKey) && !cleared.count(stateKey))
                 return boss;
         }
     }
 
     for (DungeonBossInfo const& boss : bosses)
     {
-        uint32 skipKey = boss.entry ? boss.entry : (0x80000000u | boss.encounterIndex);
-        if (skipped.count(skipKey) || cleared.count(boss.entry))
+        uint32 const stateKey = DungeonBossStateKey(boss);
+        uint32 const skipKey = stateKey;
+        uint32 const anchorKey = stateKey;
+        if (skipped.count(skipKey) || cleared.count(anchorKey))
             continue;
 
         if (boss.kind == DungeonAnchorKind::Objective)
             return boss;
+
+        // A grid search only sees loaded cells.  Not finding a creature in an
+        // unloaded boss grid means "walk there and load it", not "the boss is
+        // dead".  Treating that case as cleared is especially harmful for
+        // event-spawned bosses and was the source of silent skipped encounters.
+        if (Map* map = bot->GetMap())
+        {
+            if (!map->IsLoaded(boss.x, boss.y))
+                return boss;
+        }
 
         // Boss anchor: if we're already near its recorded spot, make sure it
         // isn't confirmed dead before committing to it - otherwise keep
@@ -47,6 +64,8 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
         if (distToBoss <= boss.arriveRadius * 4.0f)
         {
             std::list<Creature*> found;
+            for (uint32 entry : boss.alternateEntries)
+                GetCreatureListWithEntryInGrid(found, bot, entry, boss.arriveRadius * 4.0f);
             GetCreatureListWithEntryInGrid(found, bot, boss.entry, boss.arriveRadius * 4.0f);
 
             bool alive = false;
@@ -59,6 +78,8 @@ std::optional<DungeonBossInfo> NextDungeonBossValue::Calculate()
                 }
             }
 
+            if (!alive && boss.spawnOnApproach)
+                return boss;
             if (!alive)
                 continue;
         }

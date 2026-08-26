@@ -135,15 +135,29 @@ bool DungeonClearEventDueTrigger::IsActive()
     if (!LeaderEnabledUnpaused() || !DcUtil::IsDungeonClearLeader(ai, bot))
         return false;
     Map* map = bot->GetMap();
-    if (!map || !map->IsDungeon())
+    if (!map || (!map->IsDungeon() && !map->IsRaid()))
         return false;
     auto next = AI_VALUE(std::optional<DungeonBossInfo>, DcKey::NextDungeonBoss);
     if (!next)
         return false;
+    DungeonEvent const* event = nullptr;
     if (next->kind == DungeonAnchorKind::Objective && next->eventId)
-        return bot->GetDistance(next->x, next->y, next->z) <= (next->arriveRadius > 0 ? next->arriveRadius : sDcSettings.objectiveArriveRadius) + 5.0f;
-    return DungeonEventRegistry::Instance().FindDueEvent(bot, context, map->GetId(), next->encounterIndex) != nullptr
-        && bot->GetDistance(next->x, next->y, next->z) <= sDcSettings.engageRange + 10.0f;
+    {
+        event = DungeonEventRegistry::Instance().FindEvent(map->GetId(), next->eventId);
+        DcRunState& runState = AI_VALUE(DcRunState&, DcKey::RunState);
+        if (event && event->persistent && runState.eventId == event->eventId
+            && runState.eventInstanceId == map->GetInstanceId())
+            return true;
+        return event && bot->GetDistance(next->x, next->y, next->z)
+            <= (next->arriveRadius > 0 ? next->arriveRadius : sDcSettings.objectiveArriveRadius) + 5.0f;
+    }
+
+    event = DungeonEventRegistry::Instance().FindDueEvent(bot, context, map->GetId(), next->encounterIndex);
+    if (!event)
+        return false;
+    if (event->conditional)
+        return true;
+    return bot->GetDistance(next->x, next->y, next->z) <= sDcSettings.engageRange + 10.0f;
 }
 
 bool DungeonClearRezPartyTrigger::IsActive()

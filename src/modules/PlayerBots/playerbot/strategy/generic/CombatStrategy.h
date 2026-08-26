@@ -101,6 +101,27 @@ namespace ai
         void InitReactionTriggers(std::list<TriggerNode*>& triggers) override;
     };
 
+    // Keep the tank on the opposite side of the mob from the party so frontal
+    // cleaves and breaths do not hit ranged/healers.
+    class TankFaceStrategy : public Strategy
+    {
+    public:
+        TankFaceStrategy(PlayerbotAI* ai) : Strategy(ai) {}
+        std::string getName() override { return "tank face"; }
+        int GetType() override { return STRATEGY_TYPE_TANK; }
+
+#ifdef GenerateBotHelp
+        virtual std::string GetHelpName() { return "tank face"; }
+        virtual std::string GetHelpDescription()
+        {
+            return "Repositions the tank so the current target faces away from non-tank party members.";
+        }
+#endif
+
+    private:
+        void InitCombatTriggers(std::list<TriggerNode*>& triggers) override;
+    };
+
     class PreHealStrategy : public Strategy
     {
     public:

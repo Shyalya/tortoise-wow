@@ -10,6 +10,8 @@ namespace DcKey
     inline constexpr char const* PullMode = "dungeon clear pull mode";
     inline constexpr char const* StallReason = "dungeon clear stall reason";
     inline constexpr char const* EventProgress = "dungeon clear event progress";
+    inline constexpr char const* EventStartedAt = "dungeon clear event started at";
+    inline constexpr char const* EventStepStartedAt = "dungeon clear event step started at";
     inline constexpr char const* ClearedAnchors = "dungeon clear cleared anchors";
 
     namespace Stock

@@ -1,4 +1,5 @@
 #include "Action/DungeonClearActions.h"
+#include "AI/ScriptDevAI/ScriptDevAIMgr.h"
 #include "playerbot/playerbot.h"
 #include "Util/DungeonClearUtil.h"
 #include "Settings/DcSettings.h"
@@ -13,10 +14,106 @@
 #include "Maps/CellImpl.h"
 #include "LootMgr.h"
 #include "playerbot/LootObjectStack.h"
+#include "playerbot/PlayerbotAIConfig.h"
+#include "Timer.h"
+#include <algorithm>
+#include <cmath>
 #include <optional>
 #include <unordered_set>
 
 using namespace ai;
+
+namespace
+{
+    uint32 EventStaleGapMs()
+    {
+        uint32 const slowestTick = std::max<uint32>(sPlayerbotAIConfig.passiveDelay,
+            sPlayerbotAIConfig.reactDelay * 30u);
+        return std::max<uint32>(3000u, slowestTick * 2u);
+    }
+
+    uint32 EventSearchRadius(DcEventStep const& step, uint32 fallback)
+    {
+        return step.searchRadius ? step.searchRadius : fallback;
+    }
+
+    Creature* FindAliveCreature(Player* bot, uint32 entry, float radius)
+    {
+        if (!bot || !entry)
+            return nullptr;
+
+        std::list<Creature*> list;
+        GetCreatureListWithEntryInGrid(list, bot, entry, radius);
+        for (Creature* creature : list)
+        {
+            if (creature && creature->IsAlive())
+                return creature;
+        }
+        return nullptr;
+    }
+
+    uint32 CountAliveCreatures(Player* bot, uint32 entry, float radius)
+    {
+        if (!bot || !entry)
+            return 0;
+
+        std::list<Creature*> list;
+        GetCreatureListWithEntryInGrid(list, bot, entry, radius);
+        uint32 count = 0;
+        for (Creature* creature : list)
+        {
+            if (creature && creature->IsAlive())
+                ++count;
+        }
+        return count;
+    }
+
+    bool HasGossipOption(Player* bot, int32 option)
+    {
+        return bot && bot->GetPlayerMenu() && option >= 0
+            && static_cast<uint32>(option) < bot->GetPlayerMenu()->GetGossipMenu().MenuItemCount();
+    }
+
+    Unit* FindHostileForClearStep(Player* bot, DcEventStep const& step, float radius)
+    {
+        if (!bot)
+            return nullptr;
+
+        std::list<Unit*> list;
+        MaNGOS::AnyUnfriendlyUnitInObjectRangeCheck check(bot, radius + 10.0f);
+        MaNGOS::UnitListSearcher<MaNGOS::AnyUnfriendlyUnitInObjectRangeCheck> searcher(list, check);
+        Cell::VisitAllObjects(bot, searcher, radius + 10.0f);
+
+        Unit* best = nullptr;
+        float bestDistance = 1.0e30f;
+        for (Unit* unit : list)
+        {
+            if (!unit || unit->GetTypeId() != TYPEID_UNIT || !unit->IsAlive())
+                continue;
+            Creature* creature = static_cast<Creature*>(unit);
+            if (creature->IsCivilian() || creature->IsCritter())
+                continue;
+            if (step.x || step.y || step.z)
+            {
+                if (unit->GetDistance(step.x, step.y, step.z) > radius)
+                    continue;
+                if (step.zBand > 0.0f && std::abs(unit->GetPositionZ() - step.z) > step.zBand)
+                    continue;
+            }
+            if (std::find(step.excludeEntries.begin(), step.excludeEntries.end(), creature->GetEntry())
+                != step.excludeEntries.end())
+                continue;
+
+            float const distance = bot->GetDistance(unit);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = unit;
+            }
+        }
+        return best;
+    }
+}
 
 bool DungeonClearAdvanceAction::Execute(Event& /*event*/)
 {
@@ -41,6 +138,8 @@ bool DungeonClearEngageBossAction::Execute(Event& event)
         return false;
 
     std::list<Creature*> list;
+    for (uint32 entry : next->alternateEntries)
+        GetCreatureListWithEntryInGrid(list, bot, entry, sDcSettings.engageRange + 15.0f);
     GetCreatureListWithEntryInGrid(list, bot, next->entry, sDcSettings.engageRange + 15.0f);
     Creature* boss = nullptr;
     for (Creature* c : list)
@@ -72,7 +171,8 @@ bool DungeonClearObjectiveArriveAction::Execute(Event& /*event*/)
     }
 
     auto& cleared = AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors);
-    cleared.insert(next->entry);
+    uint32 const anchorKey = DungeonBossStateKey(*next);
+    cleared.insert(anchorKey);
     DcUtil::TellGroup(ai, bot, std::string("Objective reached: ") + next->name);
     return true;
 }
@@ -93,92 +193,238 @@ bool DungeonClearRunEventAction::Execute(Event& /*event*/)
     if (!ev || ev->steps.empty())
         return false;
 
+    DcRunState& state = AI_VALUE(DcRunState&, DcKey::RunState);
     uint32& stepIdx = AI_VALUE(uint32&, DcKey::EventProgress);
+    uint32& eventStartedAt = AI_VALUE(uint32&, DcKey::EventStartedAt);
+    uint32& stepStartedAt = AI_VALUE(uint32&, DcKey::EventStepStartedAt);
+    uint32 now = WorldTimer::getMSTime();
+    uint32 instanceId = map->GetInstanceId();
+
+    auto clearEventProgress = [&]()
+    {
+        state.eventId = 0;
+        state.eventInstanceId = 0;
+        state.eventLastDriveAt = 0;
+        state.eventMaxStep = 0;
+        state.eventProgressAt = 0;
+        stepIdx = 0;
+        eventStartedAt = 0;
+        stepStartedAt = 0;
+    };
+
+    auto latchEvent = [&](bool optionalFailure, char const* reason)
+    {
+        bool const markCleared = optionalFailure || !reason;
+        auto& cleared = AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors);
+        if (markCleared && next && next->kind == DungeonAnchorKind::Objective)
+        {
+            uint32 const anchorKey = DungeonBossStateKey(*next);
+            cleared.insert(anchorKey);
+        }
+        if (markCleared)
+            cleared.insert(ev->eventId);
+        if (optionalFailure)
+            DcUtil::TellGroup(ai, bot, std::string("Optional event skipped: ") + ev->name);
+        else if (reason)
+            DcUtil::TellGroup(ai, bot, std::string("Dungeon clear paused: ") + reason);
+        clearEventProgress();
+        return true;
+    };
+
+    auto failEvent = [&](char const* reason)
+    {
+        if (!ev->required)
+            return latchEvent(true, nullptr);
+
+        state.paused = true;
+        state.pauseReason = std::string(reason) + ev->name;
+        return latchEvent(false, state.pauseReason.c_str());
+    };
+
+    // An event progress record belongs to one event and one instance.  A
+    // stale record from another objective or a new instance must never resume
+    // in the middle of an unrelated step.
+    if (state.eventId != ev->eventId || state.eventInstanceId != instanceId)
+    {
+        state.eventId = ev->eventId;
+        state.eventInstanceId = instanceId;
+        state.eventMaxStep = 0;
+        state.eventProgressAt = now;
+        eventStartedAt = now;
+        stepStartedAt = now;
+        stepIdx = 0;
+    }
+    else if (!ev->persistent && state.eventLastDriveAt
+        && WorldTimer::getMSTimeDiff(state.eventLastDriveAt, now) > EventStaleGapMs())
+    {
+        // Non-persistent events are short room interactions.  A long gap is a
+        // combat/reload boundary; restart them from a clean, idempotent step 0.
+        state.eventMaxStep = 0;
+        state.eventProgressAt = now;
+        eventStartedAt = now;
+        stepStartedAt = now;
+        stepIdx = 0;
+    }
+    state.eventLastDriveAt = now;
+
+    if (!eventStartedAt)
+        eventStartedAt = now;
+
+    if (ev->timeoutMs && WorldTimer::getMSTimeDiff(eventStartedAt, now) >= ev->timeoutMs)
+        return failEvent("event timeout: ");
+
+    if (!stepStartedAt)
+        stepStartedAt = now;
+
+    auto advanceStep = [&]()
+    {
+        ++stepIdx;
+        stepStartedAt = now;
+        if (stepIdx > state.eventMaxStep)
+        {
+            state.eventMaxStep = stepIdx;
+            state.eventProgressAt = now;
+        }
+        return true;
+    };
+
     if (stepIdx >= ev->steps.size())
     {
-        // Complete
-        if (next && next->kind == DungeonAnchorKind::Objective)
-        {
-            auto& cleared = AI_VALUE(std::unordered_set<uint32>&, DcKey::ClearedAnchors);
-            cleared.insert(next->entry);
-        }
-        stepIdx = 0;
+        latchEvent(false, nullptr);
         DcUtil::TellGroup(ai, bot, std::string("Event done: ") + ev->name);
         return true;
     }
 
     DcEventStep const& step = ev->steps[stepIdx];
+    uint32 const stepTimeout = step.timeoutMs ? step.timeoutMs : 0;
+    if (stepTimeout && WorldTimer::getMSTimeDiff(stepStartedAt, now) >= stepTimeout)
+        return failEvent("event step timeout: ");
+
     switch (step.type)
     {
         case DcEventStepType::MoveTo:
             if (bot->GetDistance(step.x, step.y, step.z) <= step.radius)
-            {
-                ++stepIdx;
-                return true;
-            }
+                return advanceStep();
             return MoveTo(map->GetId(), step.x, step.y, step.z, false, false, false, true);
+
+        case DcEventStepType::Jump:
+            if (bot->GetDistance(step.x, step.y, step.z) <= step.radius)
+                return advanceStep();
+            bot->GetMotionMaster()->MoveJump(step.x, step.y, step.z, 10.0f, 5.0f);
+            return true;
 
         case DcEventStepType::UseGO:
         {
-            GameObject* go = DcUtil::FindGONear(bot, step.entry, 40.0f);
+            GameObject* go = DcUtil::FindGONear(bot, step.entry, EventSearchRadius(step, 40));
             if (!go)
-            {
-                ++stepIdx; // skip missing GO (Turtle ID drift)
-                return true;
-            }
-            if (bot->GetDistance(go) > INTERACTION_DISTANCE)
+                return false;
+            float const interactRadius = step.radius > 0.0f ? step.radius : INTERACTION_DISTANCE;
+            if (bot->GetDistance(go) > interactRadius)
                 return MoveNear(go->GetMapId(), go->GetPositionX(), go->GetPositionY(), go->GetPositionZ());
             bot->GetMotionMaster()->Clear();
             bot->SetFacingToObject(go);
             go->Use(bot);
-            ++stepIdx;
-            return true;
+            return advanceStep();
         }
 
         case DcEventStepType::TalkNpc:
         {
             std::list<Creature*> list;
-            GetCreatureListWithEntryInGrid(list, bot, step.entry, 40.0f);
+            GetCreatureListWithEntryInGrid(list, bot, step.entry, EventSearchRadius(step, 40));
             Creature* npc = list.empty() ? nullptr : list.front();
             if (!npc)
-            {
-                ++stepIdx;
-                return true;
-            }
-            if (bot->GetDistance(npc) > INTERACTION_DISTANCE)
+                return false;
+            float const interactRadius = step.radius > 0.0f ? step.radius : INTERACTION_DISTANCE;
+            if (bot->GetDistance(npc) > interactRadius)
                 return MoveNear(npc->GetMapId(), npc->GetPositionX(), npc->GetPositionY(), npc->GetPositionZ());
-            bot->PrepareGossipMenu(npc, npc->GetDefaultGossipMenuId());
+            if (!sScriptDevAIMgr.OnGossipHello(bot, npc))
+                bot->PrepareGossipMenu(npc, npc->GetDefaultGossipMenuId());
             bot->SendPreparedGossip(npc);
-            ++stepIdx;
-            return true;
+
+            if (step.gossipOption >= 0)
+            {
+                if (!HasGossipOption(bot, step.gossipOption))
+                    return false;
+
+                WorldPacket packet;
+                packet << npc->GetObjectGuid();
+#ifdef MANGOSBOT_ZERO
+                packet << static_cast<uint32>(step.gossipOption);
+#else
+                packet << bot->GetPlayerMenu()->GetGossipMenu().GetMenuId();
+                packet << static_cast<uint32>(step.gossipOption);
+#endif
+                packet << std::string();
+                bot->GetSession()->HandleGossipSelectOptionOpcode(packet);
+            }
+            return advanceStep();
+        }
+
+        case DcEventStepType::WaitForSpawn:
+        {
+            uint32 const radius = EventSearchRadius(step, 80);
+            uint32 const alive = CountAliveCreatures(bot, step.entry, radius);
+            bool const satisfied = step.wantAlive ? alive > 0 : alive == 0;
+            return satisfied ? advanceStep() : true;
         }
 
         case DcEventStepType::WaitGOState:
         {
-            GameObject* go = DcUtil::FindGONear(bot, step.entry, 80.0f);
-            if (!go || go->getLootState() == GO_ACTIVATED || !go->IsInUse())
+            GameObject* go = DcUtil::FindGONear(bot, step.entry, EventSearchRadius(step, 80));
+            if (!go)
+                return false;
+            return go->GetGoState() == step.goState ? advanceStep() : true;
+        }
+
+        case DcEventStepType::KillCreature:
+        {
+            uint32 const radius = EventSearchRadius(step, static_cast<uint32>(step.radius));
+            if (!step.entry)
             {
-                // Treat missing/open as success for portability.
-                ++stepIdx;
-                return true;
+                Unit* target = DcUtil::FindHostileNear(bot, static_cast<float>(radius));
+                return target ? Attack(bot, target) : advanceStep();
             }
-            return true; // keep waiting
+
+            uint32 const alive = CountAliveCreatures(bot, step.entry, static_cast<float>(radius));
+            if (alive < step.count)
+                return advanceStep();
+            Creature* target = FindAliveCreature(bot, step.entry, static_cast<float>(radius));
+            return target ? Attack(bot, target) : true;
+        }
+
+        case DcEventStepType::ClearRadius:
+        {
+            float const radius = step.radius > 0.0f ? step.radius : 40.0f;
+            if (bot->GetDistance(step.x, step.y, step.z) > radius * 0.75f)
+                return MoveTo(map->GetId(), step.x, step.y, step.z, false, false, false, true);
+
+            Unit* target = FindHostileForClearStep(bot, step, radius);
+            if (!target)
+                return advanceStep();
+            return Attack(bot, target);
         }
 
         case DcEventStepType::WaitMs:
-            // Simple: advance next tick after first sight — full timer omitted for MVP.
-            ++stepIdx;
-            return true;
+            return WorldTimer::getMSTimeDiff(stepStartedAt, now) >= step.waitMs
+                ? advanceStep() : true;
 
         case DcEventStepType::Custom:
-            // Custom hooks: grant gunpowder + use cannon etc. — best-effort UseGO on cannon.
-            if (GameObject* go = DcUtil::FindGONear(bot, 16398, 20.0f))
-                go->Use(bot);
-            ++stepIdx;
-            return true;
+            if (step.customFn)
+                return step.customFn(ai, bot) ? advanceStep() : false;
+            // Keep the historical Deadmines cannon retry as an explicit
+            // compatibility hook.  Unknown custom labels must fail visibly;
+            // silently advancing a missing script is worse than pausing.
+            if (step.text == "cannon volley")
+            {
+                if (GameObject* go = DcUtil::FindGONear(bot, 16398, 20.0f))
+                {
+                    go->Use(bot);
+                    return advanceStep();
+                }
+            }
+            return failEvent("unsupported custom event step: ");
     }
-    ++stepIdx;
-    return true;
+    return failEvent("unsupported event step: ");
 }
 
 bool DungeonClearFollowTankAction::Execute(Event& /*event*/)

@@ -1,4 +1,5 @@
 #include "Util/DungeonClearUtil.h"
+#include "Util/DcAddonComm.h"
 #include "playerbot/playerbot.h"
 #include "playerbot/strategy/values/NearestGameObjects.h"
 #include "Group/Group.h"
@@ -10,6 +11,11 @@
 #include "Chat/Chat.h"
 #include "DcValueKeys.h"
 #include "DcRunState.h"
+#include "Value/DungeonBossesValue.h"
+#include "Value/NextDungeonBossValue.h"
+#include <optional>
+#include <unordered_set>
+#include <vector>
 
 namespace DcUtil
 {
@@ -119,12 +125,30 @@ namespace DcUtil
         return st && st->enabled && st->paused;
     }
 
+    void ResetDungeonClearRun(PlayerbotAI* ai, Player* bot)
+    {
+        if (!ai || !bot || !ai->GetAiObjectContext())
+            return;
+
+        AiObjectContext* context = ai->GetAiObjectContext();
+        context->GetValue<DcRunState&>(DcKey::RunState)->Get().Reset();
+        context->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get().clear();
+        context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get().clear();
+        context->GetValue<std::string&>(DcKey::StallReason)->Get().clear();
+        context->GetValue<uint32&>(DcKey::EventProgress)->Get() = 0;
+        context->GetValue<uint32&>(DcKey::EventStartedAt)->Get() = 0;
+        context->GetValue<uint32&>(DcKey::EventStepStartedAt)->Get() = 0;
+        context->GetValue<std::vector<DungeonBossInfo>>(DcKey::DungeonBosses)->Reset();
+        context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Reset();
+    }
+
     void DisableDungeonClear(PlayerbotAI* ai, Player* bot, char const* reason)
     {
         if (!ai || !bot || !ai->GetAiObjectContext())
             return;
-        DcRunState& st = ai->GetAiObjectContext()->GetValue<DcRunState&>(DcKey::RunState)->Get();
-        st.Reset();
+        if (bot)
+            DcAddonComm::UnmarkActiveTank(bot->GetObjectGuid());
+        ResetDungeonClearRun(ai, bot);
         if (reason)
             TellGroup(ai, bot, std::string("Dungeon clear stopped: ") + reason);
     }
@@ -133,15 +157,10 @@ namespace DcUtil
     {
         if (!ai || !bot)
             return;
+        // Quiet path for the companion addon; avoid party-chat spam.
+        DcAddonComm::SendToGroup(ai, bot, "CHAT\t" + msg);
         if (Player* master = ai->GetMaster())
             ai->TellPlayerNoFacing(master, msg);
-        if (Group* g = bot->GetGroup())
-        {
-            WorldPacket data;
-            ChatHandler::BuildChatPacket(data, CHAT_MSG_PARTY, msg.c_str(), LANG_UNIVERSAL,
-                CHAT_TAG_NONE, bot->GetObjectGuid(), bot->GetName());
-            g->BroadcastPacket(&data, true);
-        }
     }
 
     Unit* FindHostileNear(Player* bot, float range)

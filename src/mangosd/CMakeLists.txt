@@ -130,7 +130,10 @@ endif()
 
 if(BUILD_DUNGEON_CLEAR)
   # Static-lib constructors (module auto-init) must not be stripped.
-  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  if(MSVC)
+    target_link_libraries(${EXECUTABLE_NAME} dungeonclear)
+    target_link_options(${EXECUTABLE_NAME} PRIVATE "/WHOLEARCHIVE:$<TARGET_FILE:dungeonclear>")
+  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_link_libraries(${EXECUTABLE_NAME} -Wl,--whole-archive dungeonclear -Wl,--no-whole-archive)
   else()
     target_link_libraries(${EXECUTABLE_NAME} dungeonclear)

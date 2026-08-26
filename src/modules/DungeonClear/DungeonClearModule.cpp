@@ -8,6 +8,7 @@
 #include "DcStrategyGate.h"
 #include "Settings/DcSettings.h"
 #include "Data/DungeonEventRegistry.h"
+#include "Util/DcAddonComm.h"
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "Chat/Chat.h"
 #include "Log.h"
@@ -42,7 +43,6 @@ namespace DungeonClearModule
 {
     void Initialize()
     {
-        sDcSettings.Load();
         DungeonEventRegistry::Instance().Initialize();
 
         sPlayerbotAiExtension.RegisterStrategyFactory(&MakeStrategyCtx);
@@ -50,6 +50,7 @@ namespace DungeonClearModule
         sPlayerbotAiExtension.RegisterTriggerFactory(&MakeTriggerCtx);
         sPlayerbotAiExtension.RegisterValueFactory(&MakeValueCtx);
         DcStrategyGate::Register();
+        sPlayerbotAiExtension.RegisterStartupHook(&DungeonClearModule::LoadSettings);
         sPlayerbotAiExtension.RegisterDcCommand(&DcCommandThunk);
         sPlayerbotAiExtension.RegisterWorldUpdate(&WorldUpdateThunk);
         sPlayerbotAiExtension.RegisterAddonHandler(&DungeonClear_HandleAddonMessage);
@@ -57,10 +58,21 @@ namespace DungeonClearModule
         sLog.outString("DungeonClear: module initialized");
     }
 
+    void LoadSettings()
+    {
+        // Config::SetSource() runs during mangosd startup, after static
+        // constructors have registered this module. Load only from the
+        // playerbot startup hook so the values come from mangosd.conf.
+        sDcSettings.Load();
+    }
+
     void Update(uint32 diff)
     {
         if (!sDcSettings.moduleEnabled)
             return;
+
+        DcAddonComm::TickStatusPushes(diff);
+
         s_gateAccum += diff;
         if (s_gateAccum < sDcSettings.strategyGateSweepMs)
             return;

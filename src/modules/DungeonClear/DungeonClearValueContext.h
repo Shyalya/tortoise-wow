@@ -18,6 +18,8 @@ namespace ai
             creators[DcKey::StallReason] = [](PlayerbotAI* ai) { return new DungeonClearStallReasonValue(ai); };
             creators[DcKey::ClearedAnchors] = [](PlayerbotAI* ai) { return new DungeonClearClearedAnchorsValue(ai); };
             creators[DcKey::EventProgress] = [](PlayerbotAI* ai) { return new DungeonClearEventProgressValue(ai); };
+            creators[DcKey::EventStartedAt] = [](PlayerbotAI* ai) { return new DungeonClearEventStartedAtValue(ai); };
+            creators[DcKey::EventStepStartedAt] = [](PlayerbotAI* ai) { return new DungeonClearEventStepStartedAtValue(ai); };
             creators[DcKey::DungeonBosses] = [](PlayerbotAI* ai) { return new DungeonBossesValue(ai); };
             creators[DcKey::NextDungeonBoss] = [](PlayerbotAI* ai) { return new NextDungeonBossValue(ai); };
             creators[DcKey::PartyTank] = [](PlayerbotAI* ai) { return new DungeonClearPartyTankValue(ai); };

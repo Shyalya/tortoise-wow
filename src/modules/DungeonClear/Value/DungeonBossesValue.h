@@ -10,6 +10,8 @@
 #include "DcValueKeys.h"
 #include <vector>
 
+class Player;
+
 namespace ai
 {
     class DungeonBossesValue : public CalculatedValue<std::vector<DungeonBossInfo>>
@@ -32,4 +34,8 @@ namespace ai
     // any entries marked for removal, inserts the patch's extra objective
     // anchors, then re-sorts everything by BossOrderKey.
     void ApplyRosterPatches(std::vector<DungeonBossInfo>& bosses, uint32 mapId);
+
+    // Returns the wing selected from the bot's current position for maps that
+    // host multiple dungeons under one map ID.  0xff means unknown.
+    uint8 DetermineDungeonRosterVariant(Player* bot);
 }

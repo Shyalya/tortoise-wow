@@ -100,6 +100,7 @@ void ProtectionWarriorStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
         "shield block",
         NextAction::array(0, new NextAction("shield block", ACTION_HIGH + 5), NULL)));
 
+    // Shield Slam is the primary threat button; keep Sunder stacks as filler.
     triggers.push_back(new TriggerNode(
         "sunder armor",
         NextAction::array(0, new NextAction("devastate", ACTION_HIGH + 2), NULL)));

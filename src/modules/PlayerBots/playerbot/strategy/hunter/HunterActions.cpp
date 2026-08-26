@@ -7,7 +7,8 @@ using namespace ai;
 
 bool CastSerpentStingAction::isUseful()
 {
-    return CastRangedDebuffSpellAction::isUseful() && AI_VALUE2(uint8, "health", GetTargetName()) > 50 && !(AI_VALUE2(uint8, "mana", GetTargetName()) >= 10);
+    // Match HunterNoStingsActiveTrigger (>40) so the sting window is not a dead zone.
+    return CastRangedDebuffSpellAction::isUseful() && AI_VALUE2(uint8, "health", GetTargetName()) > 40 && !(AI_VALUE2(uint8, "mana", GetTargetName()) >= 10);
 }
 
 bool CastViperStingAction::isUseful()

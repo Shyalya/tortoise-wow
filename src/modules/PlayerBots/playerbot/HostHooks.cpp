@@ -110,6 +110,7 @@ void Player::UpdatePlayerbotHooks(uint32 diff)
 void World::InitPlayerbotsAtStartup()
 {
     sPlayerbotAIConfig.Initialize();
+    sPlayerbotAiExtension.RunStartupHooks();
 }
 
 void World::FinalizePlayerbotsPostPlayerInfo()

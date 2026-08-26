@@ -79,7 +79,12 @@ void HunterStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 
     triggers.push_back(new TriggerNode(
         "aimed shot",
-        NextAction::array(0, new NextAction("aimed shot", ACTION_NORMAL + 2), NULL)));
+        NextAction::array(0, new NextAction("aimed shot", ACTION_NORMAL + 3), NULL)));
+
+    // Instant filler between Aimed Shot casts.
+    triggers.push_back(new TriggerNode(
+        "very often",
+        NextAction::array(0, new NextAction("arcane shot", ACTION_NORMAL + 2), NULL)));
 
     triggers.push_back(new TriggerNode(
         "enemy is close",
@@ -205,6 +210,11 @@ void HunterAoeStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
     triggers.push_back(new TriggerNode(
         "ranged medium aoe",
         NextAction::array(0, new NextAction("volley", ACTION_HIGH + 3), NULL)));
+
+    // Multi-Shot on small packs too, not only dense pulls.
+    triggers.push_back(new TriggerNode(
+        "ranged light aoe",
+        NextAction::array(0, new NextAction("multi-shot", ACTION_HIGH + 1), NULL)));
 
     triggers.push_back(new TriggerNode(
         "multi-shot",
@@ -455,7 +465,10 @@ void HunterStingPveStrategy::InitCombatTriggers(std::list<TriggerNode*>& trigger
 
 void HunterStingRaidStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
-
+    // Keep Serpent Sting up in raids; base sting prefers Viper only when target has mana.
+    triggers.push_back(new TriggerNode(
+        "no stings",
+        NextAction::array(0, new NextAction("serpent sting", ACTION_NORMAL + 4), NULL)));
 }
 
 void HunterAspectStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)

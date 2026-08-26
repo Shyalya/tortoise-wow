@@ -44,6 +44,12 @@ void PlayerbotAiExtension::RegisterStrategyGate(StrategyGateFn gate)
         strategyGates.push_back(gate);
 }
 
+void PlayerbotAiExtension::RegisterStartupHook(StartupFn fn)
+{
+    if (fn)
+        startupHooks.push_back(fn);
+}
+
 void PlayerbotAiExtension::ApplyToContext(AiObjectContext* context) const
 {
     if (!context)
@@ -81,6 +87,12 @@ void PlayerbotAiExtension::RunWorldUpdate(uint32 diff) const
 {
     if (worldUpdate)
         worldUpdate(diff);
+}
+
+void PlayerbotAiExtension::RunStartupHooks() const
+{
+    for (StartupFn fn : startupHooks)
+        fn();
 }
 
 bool PlayerbotAiExtension::HandleAddonMessage(Player* player, std::string const& msg) const

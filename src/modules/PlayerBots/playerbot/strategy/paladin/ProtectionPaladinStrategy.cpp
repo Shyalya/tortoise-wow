@@ -59,10 +59,7 @@ void ProtectionPaladinStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
         "medium mana",
         NextAction::array(0, new NextAction("seal of wisdom", ACTION_HIGH + 1), NULL)));
 
-    triggers.push_back(new TriggerNode(
-        "exorcism",
-        NextAction::array(0, new NextAction("exorcism", ACTION_NORMAL + 3), NULL)));
-
+    // Classic has no Seal of Vengeance; action node falls back to Seal of Righteousness.
     triggers.push_back(new TriggerNode(
         "seal",
         NextAction::array(0, new NextAction("seal of vengeance", ACTION_NORMAL + 2), NULL)));
@@ -70,6 +67,14 @@ void ProtectionPaladinStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
     triggers.push_back(new TriggerNode(
         "judgement",
         NextAction::array(0, new NextAction("judgement", ACTION_NORMAL + 1), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "exorcism",
+        NextAction::array(0, new NextAction("exorcism", ACTION_NORMAL), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "hammer of justice interrupt",
+        NextAction::array(0, new NextAction("hammer of justice", ACTION_INTERRUPT), NULL)));
 }
 
 void ProtectionPaladinStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -236,6 +241,11 @@ void ProtectionPaladinAoeRaidStrategy::InitNonCombatTriggers(std::list<TriggerNo
 void ProtectionPaladinBuffStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
     PaladinBuffStrategy::InitCombatTriggers(triggers);
+
+    // Keep Righteous Fury up in combat - it is the entire threat kit for paladin tanks.
+    triggers.push_back(new TriggerNode(
+        "righteous fury",
+        NextAction::array(0, new NextAction("righteous fury", ACTION_HIGH + 1), NULL)));
 }
 
 void ProtectionPaladinBuffStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -754,6 +764,11 @@ void ProtectionPaladinAoeRaidStrategy::InitNonCombatTriggers(std::list<TriggerNo
 void ProtectionPaladinBuffStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
     PaladinBuffStrategy::InitCombatTriggers(triggers);
+
+    // Keep Righteous Fury up in combat - it is the entire threat kit for paladin tanks.
+    triggers.push_back(new TriggerNode(
+        "righteous fury",
+        NextAction::array(0, new NextAction("righteous fury", ACTION_HIGH + 1), NULL)));
 }
 
 void ProtectionPaladinBuffStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -1269,6 +1284,11 @@ void ProtectionPaladinAoeRaidStrategy::InitNonCombatTriggers(std::list<TriggerNo
 void ProtectionPaladinBuffStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
     PaladinBuffStrategy::InitCombatTriggers(triggers);
+
+    // Keep Righteous Fury up in combat - it is the entire threat kit for paladin tanks.
+    triggers.push_back(new TriggerNode(
+        "righteous fury",
+        NextAction::array(0, new NextAction("righteous fury", ACTION_HIGH + 1), NULL)));
 }
 
 void ProtectionPaladinBuffStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)

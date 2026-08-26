@@ -13,7 +13,7 @@ namespace DcStrategyGate
             return;
 
         Map* map = bot->GetMap();
-        bool inDungeon = map && map->IsDungeon();
+        bool inDungeon = map && (map->IsDungeon() || map->IsRaid());
 
         bool hasNC = ai->HasStrategy("dungeon clear", BotState::BOT_STATE_NON_COMBAT);
         bool hasC = ai->HasStrategy("dungeon clear combat", BotState::BOT_STATE_COMBAT);

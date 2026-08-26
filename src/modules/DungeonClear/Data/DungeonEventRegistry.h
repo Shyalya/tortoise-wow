@@ -19,29 +19,41 @@ namespace ai
 {
     class AiObjectContext;
 
+    using EventCondition = std::function<bool(Player*, AiObjectContext*)>;
+
     enum class DcEventStepType : uint8
     {
         MoveTo = 0,
-        UseGO = 1,
-        TalkNpc = 2,
-        WaitGOState = 3,
-        WaitMs = 4,
-        Custom = 5
+        Jump = 1,
+        UseGO = 2,
+        TalkNpc = 3,
+        WaitForSpawn = 4,
+        WaitGOState = 5,
+        KillCreature = 6,
+        ClearRadius = 7,
+        WaitMs = 8,
+        Custom = 9
     };
 
     struct DcEventStep
     {
         DcEventStepType type = DcEventStepType::MoveTo;
-        uint32 entry = 0;              // GameObject/NPC entry for UseGO/TalkNpc/WaitGOState.
+        uint32 entry = 0;              // GO/NPC/creature entry for typed steps.
         float x = 0.0f, y = 0.0f, z = 0.0f; // Target position for MoveTo.
         float radius = 3.0f;           // Arrival/interaction radius.
-        uint32 goState = 0;            // Expected GO state for WaitGOState (informational).
-        uint32 waitMs = 0;             // Duration for WaitMs (informational; executor just advances).
+        float zBand = 0.0f;             // Vertical band for ClearRadius.
+        uint32 goState = 0;            // Expected GO state for WaitGOState.
+        uint32 waitMs = 0;             // Duration for WaitMs.
+        uint32 timeoutMs = 0;          // Per-step timeout; 0 means no per-step timeout.
+        uint32 count = 1;              // KillCreature alive-count threshold.
+        uint32 searchRadius = 0;        // Search radius; 0 uses a step default.
+        int32 gossipOption = -1;        // -1 opens gossip only; >=0 selects an option.
+        bool wantAlive = true;          // WaitForSpawn: wait for alive or gone.
+        std::vector<uint32> excludeEntries; // ClearRadius entries that must not be pulled.
         std::string text;              // Gossip text / step label, cosmetic.
 
-        // Optional hook for Custom steps. Not currently invoked by the
-        // executor (DungeonClearRunEventAction has a fixed cannon fallback
-        // for Custom), but kept for future scripted-step authors.
+        // Optional hook for Custom steps. If absent, the executor retains its
+        // legacy cannon fallback for the built-in Deadmines event.
         std::function<bool(PlayerbotAI*, Player*)> customFn;
     };
 
@@ -55,7 +67,10 @@ namespace ai
         std::string name;
         int32 encounterIndex = -1;     // -1 = only reachable via explicit eventId lookup.
         bool persistent = false;       // If true, can run again after being marked cleared.
-        uint32 timeoutMs = 30000;      // Informational safety-net budget for the whole event.
+        uint32 timeoutMs = 30000;      // Safety-net budget for the whole event.
+        bool required = true;           // Optional events skip failures instead of pausing the run.
+        bool conditional = false;       // Conditional events are due from their predicate, not an anchor.
+        EventCondition condition;
         std::vector<DcEventStep> steps;
     };
 
@@ -69,11 +84,22 @@ namespace ai
         EventBuilder& Persistent();
         EventBuilder& Timeout(uint32 ms);
         EventBuilder& MoveTo(float x, float y, float z, float radius = 3.0f);
+        EventBuilder& Jump(float x, float y, float z, float radius = 3.0f);
         EventBuilder& UseGO(uint32 goEntry, float radius = 5.0f);
-        EventBuilder& TalkTo(uint32 npcEntry, float radius = 5.0f);
-        EventBuilder& WaitForGOState(uint32 goEntry, uint32 expectedState);
+        EventBuilder& TalkTo(uint32 npcEntry, float radius = 5.0f, int32 gossipOption = -1);
+        EventBuilder& WaitForSpawn(uint32 creatureEntry, bool wantAlive = true,
+            uint32 timeoutMs = 0, float searchRadius = 80.0f);
+        EventBuilder& WaitForGOState(uint32 goEntry, uint32 expectedState,
+            uint32 timeoutMs = 0, float searchRadius = 80.0f);
+        EventBuilder& KillCreature(uint32 creatureEntry, float radius = 40.0f,
+            uint32 count = 1, uint32 timeoutMs = 0);
+        EventBuilder& ClearRadius(float x, float y, float z, float radius,
+            float zBand = 0.0f, uint32 timeoutMs = 0);
+        EventBuilder& ExcludeEntries(std::vector<uint32> entries);
         EventBuilder& Wait(uint32 ms);
         EventBuilder& Custom(std::string label, std::function<bool(PlayerbotAI*, Player*)> fn = nullptr);
+        EventBuilder& Optional();
+        EventBuilder& Conditional(EventCondition condition);
 
         DungeonEvent Build() const { return event; }
 
