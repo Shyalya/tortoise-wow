@@ -7,6 +7,35 @@
 
 using namespace ai;
 
+namespace
+{
+    bool IsBossCcTarget(Unit* creature)
+    {
+        if (Creature* boss = creature->ToCreature())
+            return boss->IsWorldBoss() || boss->HasExtraFlag(CREATURE_FLAG_EXTRA_INSTANCE_BIND);
+
+        return false;
+    }
+
+    bool IsAlreadyControlled(Unit* creature)
+    {
+        return creature->HasBreakableByDamageCrowdControlAura() ||
+               creature->HasAuraType(SPELL_AURA_MOD_FEAR) ||
+               creature->HasAuraType(SPELL_AURA_MOD_ROOT) ||
+               creature->HasAuraType(SPELL_AURA_MOD_STUN) ||
+               creature->HasAuraType(SPELL_AURA_MOD_CHARM) ||
+               creature->HasAuraType(SPELL_AURA_MOD_POSSESS) ||
+               creature->HasAuraType(SPELL_AURA_MOD_PACIFY) ||
+               creature->HasAuraType(SPELL_AURA_MOD_PACIFY_SILENCE);
+    }
+
+    bool IsCurrentTankTarget(PlayerbotAI* ai, Unit* creature)
+    {
+        Player* victim = dynamic_cast<Player*>(creature->GetVictim());
+        return victim && ai->IsTank(victim);
+    }
+}
+
 class FindTargetForCcStrategy : public FindTargetStrategy
 {
 public:
@@ -21,8 +50,6 @@ public:
     {
         Player* bot = ai->GetBot();
 
-        AiObjectContext* context = ai->GetAiObjectContext();
-
         if (!ai->CanCastSpell(spell, creature, true, nullptr, false, true))
             return;
 
@@ -36,6 +63,9 @@ public:
             return;
 
         if (AI_VALUE(Unit*,"rti target") == creature)
+            return;
+
+        if (IsBossCcTarget(creature) || IsCurrentTankTarget(ai, creature) || IsAlreadyControlled(creature))
             return;
 
         uint8 health = creature->GetHealthPercent();
@@ -61,10 +91,16 @@ public:
         {
             int tankCount, dpsCount;
             GetPlayerCount(creature, &tankCount, &dpsCount);
-            if (!tankCount || !dpsCount)
+
+            // Prefer free adds, but don't repeatedly CC something the current tank
+            // is already holding by themselves.
+            if (tankCount && !dpsCount)
+                return;
+
+            if (!tankCount && !dpsCount && !result)
             {
                 result = creature;
-                return;
+                maxDistance = minDistance;
             }
         }
 

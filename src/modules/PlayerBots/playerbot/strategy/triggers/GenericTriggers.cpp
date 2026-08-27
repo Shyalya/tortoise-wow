@@ -690,8 +690,13 @@ bool HasCcTargetTrigger::IsActive()
 
         // In dungeons the group raid marker is the shared CC assignment. This
         // prevents every controller from independently selecting the same add.
+        // If no CC icon is currently assigned, allow the value-layer fallback to
+        // pick one safe target instead of suppressing CC entirely.
         if (bot->GetMap() && bot->GetMap()->IsDungeon() && !bot->GetMap()->IsRaid())
-            return AI_VALUE(Unit*, "rti cc target") == ccTarget;
+        {
+            Unit* rtiCcTarget = AI_VALUE(Unit*, "rti cc target");
+            return !rtiCcTarget || rtiCcTarget == ccTarget;
+        }
 
         return true;
     }
