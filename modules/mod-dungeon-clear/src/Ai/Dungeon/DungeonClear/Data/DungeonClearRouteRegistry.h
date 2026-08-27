@@ -12,6 +12,7 @@
 #include "Common.h"
 #include "DBCEnums.h"
 #include "WaypointHint.h"
+#include <mutex>
 
 // Per-dungeon, per-boss list of waypoint anchors. The chunked pathfinder uses
 // these as trusted intermediate hops between the bot's current position and
@@ -31,7 +32,19 @@ class DungeonClearRouteRegistry
 {
 public:
     static void Register(uint32 mapId, Difficulty difficulty, uint32 bossEntry, std::vector<WaypointHint> hints);
-    static std::vector<WaypointHint> const* Get(uint32 mapId, Difficulty difficulty, uint32 bossEntry);
+    // Copy, not a pointer. Routes are registered while the server runs now
+    // (the recorder enters every leg it closes), so a reader holding a
+    // pointer into the table could watch it rehash under him on another map
+    // thread. Returns false when nothing is registered for that boss.
+    static bool TryGet(uint32 mapId, Difficulty difficulty, uint32 bossEntry,
+                       std::vector<WaypointHint>& out);
+
+    // "Is there a route at all?" - the callers that only branch on presence
+    // do not need the anchors copied.
+    static bool Has(uint32 mapId, Difficulty difficulty, uint32 bossEntry);
+
+    // Drop a route that has proven unwalkable. Returns true if one was there.
+    static bool Forget(uint32 mapId, Difficulty difficulty, uint32 bossEntry);
 
 private:
     struct Key
@@ -58,6 +71,7 @@ private:
     };
 
     static std::unordered_map<Key, std::vector<WaypointHint>, KeyHash>& Store();
+    static std::mutex& RegistryLock();
 };
 
 #endif

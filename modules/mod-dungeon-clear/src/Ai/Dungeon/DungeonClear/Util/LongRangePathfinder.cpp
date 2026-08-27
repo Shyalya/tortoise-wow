@@ -403,9 +403,53 @@ LongRangePathfinder::RawResult LongRangePathfinder::BuildCoreFromMesh(
     dtStatus const smoothStatus = FindSmoothPath(query, navMesh, &filter, startNearest, endNearest,
                                                  corridor.data(), static_cast<uint32>(npolys),
                                                  smooth.data(), &nsmooth, LR_MAX_POINTS);
-    if (dtStatusFailed(smoothStatus) || nsmooth < 2)
+
+    // Did the smoothing actually ARRIVE? FindSmoothPath walks the corridor
+    // with moveAlongSurface, i.e. sliding across the polygons, and a climb
+    // that gains twenty yards over very little ground defeats that walk: the
+    // Deadmines ship ramp stopped it every time. What came back was either a
+    // hard failure or - worse - a stub ending halfway, and `reachable` was
+    // set for the stub because nothing here ever checked the far end. Both
+    // ways the party gave up beside the ship and ended in the harbour water,
+    // and [DC-MESH] reported the boss unreachable although a plain Detour
+    // query walks that corridor in 55 polygons (measured with
+    // tools/meshprobe.cpp against the very tiles the core loads).
+    bool arrived = !dtStatusFailed(smoothStatus) && nsmooth >= 2;
+    if (arrived)
     {
-        result.failureReason = "smooth-path build failed";
+        float const* last = &smooth[(nsmooth - 1) * VERTEX_SIZE];
+        float const dx = last[0] - endNearest[0];
+        float const dy = last[1] - endNearest[1];
+        float const dz = last[2] - endNearest[2];
+        arrived = (dx * dx + dy * dy + dz * dz) <= (6.0f * 6.0f);
+    }
+
+    if (!arrived)
+    {
+        // The corridor is sound; only the way we turned it into points was
+        // not. findStraightPath gives the corner points of that same
+        // corridor - the canonical line through it - and it has no surface
+        // walk to get stuck on. Coarser than the smoothed polyline (corners
+        // can sit 30-40yd apart), but every corner lies on the corridor, so
+        // walking corner to corner stays on the ground the corridor covers.
+        thread_local std::vector<float> corners(LR_MAX_POLYS * VERTEX_SIZE);
+        thread_local std::vector<unsigned char> cornerFlags(LR_MAX_POLYS);
+        thread_local std::vector<dtPolyRef> cornerRefs(LR_MAX_POLYS);
+        int ncorners = 0;
+        dtStatus const cornerStatus =
+            query->findStraightPath(startNearest, endNearest, corridor.data(), npolys,
+                                    corners.data(), cornerFlags.data(), cornerRefs.data(),
+                                    &ncorners, static_cast<int>(LR_MAX_POLYS), 0);
+        if (dtStatusFailed(cornerStatus) || ncorners < 2)
+        {
+            result.failureReason = "smooth-path build failed and no corner path either";
+            return result;
+        }
+        result.rawPts.reserve(ncorners);
+        for (int i = 0; i < ncorners; ++i)
+            result.rawPts.emplace_back(corners[i * VERTEX_SIZE + 2], corners[i * VERTEX_SIZE + 0],
+                                       corners[i * VERTEX_SIZE + 1]);
+        result.reachable = true;
         return result;
     }
 

@@ -50,6 +50,11 @@ namespace DcRouteRecorder
     // working directory. Configurable so a packaged server can point it at its
     // own writable location; the default is the in-tree module folder.
     std::string OutputDir();
+
+    // Move the stored files for one boss aside (.bad), so a route that turned
+    // out to be unwalkable is not loaded again on the next start. The
+    // in-memory copy is dropped by DungeonClearRouteRegistry::Forget.
+    void DiscardRoute(uint32 mapId, uint32 bossEntry);
 }
 
 #endif  // _PLAYERBOT_DCROUTERECORDER_H

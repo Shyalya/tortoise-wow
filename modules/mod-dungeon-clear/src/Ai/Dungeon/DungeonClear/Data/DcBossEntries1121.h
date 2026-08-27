@@ -24,7 +24,7 @@
 // order block when a dungeon misroutes.
 
 inline constexpr uint32 DC_BOSS_ENTRIES_1121[] = {
-639,646,647,1666,1696,1717,1853,2748,3654,3669,3670,3674,3872,3914,3927,3974,3975,4275,4278,4279,4421,4424,4543,4829,4831,4842,4854,4887,5709,5710,5712,5715,5719,5720,5721,5722,5775,6228,6229,6235,6487,6488,6910,7023,7206,7228,7267,7271,7291,7355,7356,7357,7358,7604,7800,8127,8443,8580,8983,9016,9017,9024,9030,9033,9156,9196,9218,9236,9237,9568,9816,9938,10184,10220,10264,10339,10363,10429,10430,10432,10433,10435,10437,10440,10504,10507,10508,10516,10558,10584,10596,10811,10812,10813,10901,10997,11143,11488,11489,11490,11492,11496,11502,11517,11518,11519,11520,11622,11982,12018,12056,12057,12098,12118,12119,12129,12201,12203,12236,12237,12258,12259,12264,13280,13282,13601,14321,14323,14325,14326,14327,14354,40068,61961,61963,2000092,63129,63130,63131,63132,63133,62037,62038,62056,62057,62067,62069,62070,62071,62072
+639,646,647,1666,1696,1717,1853,2748,3653,3654,3669,3670,3671,3673,3674,3872,3914,3927,3974,3975,4275,4278,4279,4421,4424,4543,4829,4831,4842,4854,4887,5709,5710,5712,5715,5719,5720,5721,5722,5775,6228,6229,6235,6487,6488,6910,7023,7206,7228,7267,7271,7291,7355,7356,7357,7358,7604,7800,8127,8443,8580,8983,9016,9017,9024,9030,9033,9156,9196,9218,9236,9237,9568,9816,9938,10184,10220,10264,10339,10363,10429,10430,10432,10433,10435,10437,10440,10504,10507,10508,10516,10558,10584,10596,10811,10812,10813,10901,10997,11143,11488,11489,11490,11492,11496,11502,11517,11518,11519,11520,11622,11982,12018,12056,12057,12098,12118,12119,12129,12201,12203,12236,12237,12258,12259,12264,13280,13282,13601,14321,14323,14325,14326,14327,14354,40068,61961,61963,61965,61968,2000092,63129,63130,63131,63132,63133,62037,62038,62056,62057,62067,62069,62070,62071,62072
 };
 
 // Per-dungeon encounter order, plus the door bosses the curated kith_boss
@@ -40,6 +40,36 @@ struct DcBossOrderRow
 };
 
 inline constexpr DcBossOrderRow DC_BOSS_ORDER_1121[] = {
+    // Wailing Caverns (map 43). Without these rows the map got no order at
+    // all and the indices fell out in build order - Verdan 0, so the party
+    // went for him FIRST. He is the one boss with no navmesh path from the
+    // entrance (measured with tools/meshprobe.cpp: no complete corridor from
+    // (-158,132,-74), and the only start that has one is Lord Serpentis's
+    // shelf, 69yd away). Verdan sits BEHIND the drop, so every run opened by
+    // searching 1100-1600yd for a boss it could not reach until somebody
+    // stumbled into him.
+    //
+    // The keys leave room for the event objectives, which carry their own:
+    // the drop to Serpentis is 5 and the hole-drop/escort are 7 (see
+    // WailingCavernsEvents.cpp), so Verdan takes 7 (index 6) and Mutanus 8.
+    { 43, 3671, 1 },  // Lady Anacondra   (221yd from the entrance; 4 pool spawns, one alive)
+    { 43, 3653, 2 },  // Kresh            (298yd)
+    { 43, 3669, 3 },  // Lord Cobrahn     (897yd)
+    { 43, 3670, 4 },  // Lord Pythas      (1193yd)
+    { 43, 3674, 5 },  // Skum             (western water; 360yd on from Pythas)
+    { 43, 61965, 6 }, // Vangros          (Turtle custom, 693yd on from SKUM - and no
+                      //                   corridor at all from Pythas, which is why he
+                      //                   comes after Skum and not before)
+    { 43, 61968, 7 }, // Zandara Windhoof (Turtle custom, 1229yd)
+    //  key 8 (index 7) is the drop-to-Serpentis objective — see
+    //  WailingCavernsEvents.cpp. Everything below it is only reachable from
+    //  the shelf that drop lands on.
+    { 43, 3673, 9 },  // Lord Serpentis   (on the landing shelf)
+    { 43, 5775, 10 }, // Verdan the Everliving (69yd off Serpentis's shelf, and
+                      //                        unreachable from anywhere else)
+    //  key 11 (index 10) is the hole-drop and the Naralex escort.
+    { 43, 3654, 12 }, // Mutanus the Devourer (summoned at the end of the escort)
+
     // The Deadmines (map 36): Rhahk'Zor -> Sneed's Shredder (Sneed rides it)
     // -> Gilnid -> Mr. Smite -> Captain Greenskin -> VanCleef -> Cookie.
     { 36,  644, 1 },  // Rhahk'Zor (opens the first door)

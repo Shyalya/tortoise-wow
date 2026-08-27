@@ -609,8 +609,8 @@ namespace DcActionShared
         Map* map = bot->FindMap();
         bool hasAnchorRoute = false;
         if (map)
-            hasAnchorRoute = DungeonClearRouteRegistry::Get(target.mapId, map->GetDifficulty(),
-                                                            target.entry) != nullptr;
+            hasAnchorRoute = DungeonClearRouteRegistry::Has(target.mapId, map->GetDifficulty(),
+                                                            target.entry);
 
         if (!asyncEnabled || hasAnchorRoute)
         {

@@ -167,8 +167,11 @@ class MotionMaster : std::stack<MovementGenerator *>
         // AzerothCore spelling, and it takes the path by pointer.
         void MoveSplinePath(Movement::PointsArray const* pointPath, uint32 moveMode)
         { if (pointPath) MovePath(*pointPath, moveMode, false, false); }
-        // MoveFall: cmangos returns bool. Stub returns false.
-        bool MoveFall() { return false; }
+        // Drop straight down to the first floor below. Returns false when
+        // there is nothing to fall to. Implemented in MotionMaster.cpp - it
+        // was a stub returning false for the whole life of this port, which
+        // is why no dungeon drop-down ever happened.
+        bool MoveFall();
         // DistanceYourself: cmangos move-away action. Stub no-op (multiple forms).
         void DistanceYourself(float /*distance*/) {}
         void DistanceYourself(Unit* /*target*/) {}

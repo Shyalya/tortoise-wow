@@ -24,6 +24,8 @@
 
 #include "LockedQueue.h"
 
+#include <string>
+
 class Database;
 class SqlOperation;
 class SqlConnection;
@@ -38,7 +40,11 @@ class SqlDelayThread
         SqlQueue m_serialDelayQueue;
         SqlConnection *m_dbConnection;                     ///< Pointer to DB connection
         volatile bool m_running;
-        const char* Name;
+        // BY VALUE, not a pointer. The caller hands this down from a local
+        // std::string in Master::_StartDB (name.c_str()), which dies the
+        // moment that function returns - after which the delay thread was
+        // reading whatever the world thread had since put on that stack.
+        std::string Name;
 
 
         //process all enqueued requests

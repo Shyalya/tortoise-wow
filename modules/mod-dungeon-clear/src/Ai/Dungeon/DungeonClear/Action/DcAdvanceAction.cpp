@@ -42,6 +42,7 @@
 #include "Ai/Dungeon/DungeonClear/Util/DungeonClearApproachIo.h"
 #include "Ai/Dungeon/DungeonClear/Settings/DcSettings.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonClearRouteRegistry.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcRouteRecorder.h"
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Util/DungeonEventExecutor.h"
@@ -669,6 +670,22 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryLootYield(AdvanceS
     // relevance, above the loot pipeline — means stock can't re-pick a skipped
     // corpse this tick, so the flags below and the timeout's give-up stay in
     // sync and the yield doesn't re-arm on something we just abandoned.
+    // Nothing to wait for when this party is not allowed to loot at all.
+    // The gate strips the stock "loot" strategy for a clear (DcStrategyGate),
+    // and the yield below arms on VALUES - HasAvailableLoot / CanLoot - not on
+    // whether anybody is going to act on them. Leaving it armed made things
+    // strictly worse than before the strip: previously someone took the loot
+    // and the yield released early, afterwards nobody did and every corpse
+    // burned the full fifteen seconds (89 timeouts in ten minutes, against 88
+    // in twenty-three before). The yield exists so the party does not walk off
+    // without a member standing at a corpse; with no loot strategy in play,
+    // that member cannot exist.
+    if (!botAI->HasStrategy("loot", BOT_STATE_NON_COMBAT))
+    {
+        context->GetValue<DcApproachState&>(DcKey::ApproachState)->Get().lootYieldStartMs = 0;
+        return Step::Continue;
+    }
+
     DcLootPolicy::StripSkippedLoot(botAI);
     // Proactively skip a corpse with nothing takeable for us (un-finishable
     // group-roll/reserved loot, or below DungeonClear.LootMinQuality) BEFORE we
@@ -1044,6 +1061,26 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoStuckRecover(Advanc
                      bot->GetName(), appr.nudgeAttempts, DC_MAX_NUDGE_ATTEMPTS, next->name);
             DcStatusPublisher::SendAddonMessage(botAI, "CHAT\tRepathing around " + next->name + " \xe2\x80\x94 nudging onto the navmesh.");
             return Step::ReturnTrue;
+        }
+        // Before giving up: was this route a REGISTERED one? Anchors are
+        // walked in a straight line with no pathfinding between them, so a
+        // single anchor behind a wall blocks everything past it and no amount
+        // of nudging helps. Drop the route and let the router have the leg;
+        // the recorder can learn it again from whoever gets through.
+        if (Map* stuckMap = bot->FindMap())
+        {
+            if (DungeonClearRouteRegistry::Forget(next->mapId, stuckMap->GetDifficulty(),
+                                                  next->entry))
+            {
+                DcRouteRecorder::DiscardRoute(next->mapId, next->entry);
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] stuck ladder exhausted near {} on a recorded route "
+                         "-> dropped that route, replanning without it",
+                         bot->GetName(), next->name);
+                appr.nudgeAttempts = 0;
+                appr.longPathExpiresMs = 0;
+                return Step::ReturnTrue;
+            }
         }
         LOG_INFO("playerbots.dungeonclear",
                  "[DC:{}] stuck ladder exhausted near {} ({} nudge(s) bought no ground) -> stalling",

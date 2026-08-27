@@ -4,6 +4,12 @@
  */
 
 #include "DcStrategyGate.h"
+#include <utility>
+#include <string>
+#include <vector>
+#include <map>
+#include <set>
+#include <mutex>
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
 
 #include "Map.h"
@@ -55,10 +61,77 @@ namespace
     }
 }
 
+namespace
+{
+    // Cross-thread mailbox for follow-strip requests (see RequestFollowStrip).
+    std::mutex g_followStripMutex;
+    std::set<ObjectGuid> g_followStripWanted;
+    std::set<ObjectGuid> g_strategyResetWanted;
+    std::map<ObjectGuid, std::vector<std::pair<std::string, uint8>>> g_strategyQueue;
+}
+
 namespace DcStrategyGate
 {
+    void RequestFollowStrip(ObjectGuid guid)
+    {
+        if (guid.IsEmpty())
+            return;
+        std::lock_guard<std::mutex> lock(g_followStripMutex);
+        g_followStripWanted.insert(guid);
+    }
+
+    void RequestStrategyReset(ObjectGuid guid)
+    {
+        if (guid.IsEmpty())
+            return;
+        std::lock_guard<std::mutex> lock(g_followStripMutex);
+        g_strategyResetWanted.insert(guid);
+    }
+
+    void RequestStrategy(ObjectGuid guid, std::string spec, uint8 state)
+    {
+        if (guid.IsEmpty() || spec.empty())
+            return;
+        std::lock_guard<std::mutex> lock(g_followStripMutex);
+        g_strategyQueue[guid].emplace_back(std::move(spec), state);
+    }
+
     void Reconcile(Player* bot)
     {
+        // Drain the mailbox first: this function runs on the bot's own map
+        // thread, the only place ChangeStrategy is safe.
+        if (bot)
+        {
+            bool wantReset = false;
+            bool wantStrip = false;
+            std::vector<std::pair<std::string, uint8>> queued;
+            {
+                std::lock_guard<std::mutex> lock(g_followStripMutex);
+                wantReset = g_strategyResetWanted.erase(bot->GetObjectGuid()) > 0;
+                wantStrip = g_followStripWanted.erase(bot->GetObjectGuid()) > 0;
+                auto qit = g_strategyQueue.find(bot->GetObjectGuid());
+                if (qit != g_strategyQueue.end())
+                {
+                    queued.swap(qit->second);
+                    g_strategyQueue.erase(qit);
+                }
+            }
+            if (PlayerbotAI* stripAI =
+                    (wantReset || wantStrip || !queued.empty()) ? GET_PLAYERBOT_AI(bot) : nullptr)
+            {
+                // Reset first: it puts stock follow back, so stripping has to
+                // come after it or the strip is undone in the same tick.
+                if (wantReset)
+                    stripAI->ResetStrategies();
+                if (wantStrip)
+                {
+                    stripAI->ChangeStrategy("-follow", BOT_STATE_NON_COMBAT);
+                    stripAI->ChangeStrategy("-follow", BOT_STATE_COMBAT);
+                }
+                for (auto const& q : queued)
+                    stripAI->ChangeStrategy(q.first, static_cast<BotState>(q.second));
+            }
+        }
         if (!bot)
             return;
 
@@ -144,7 +217,7 @@ namespace DcStrategyGate
         switch (plan.nonCombat)
         {
             case Action::Install:
-                botAI->ChangeStrategy("+dungeon clear,-grind,-travel,-rpg,-rpg jump,-follow,-wander,-bg,-battleground,-lfg",
+                botAI->ChangeStrategy("+dungeon clear,-grind,-travel,-rpg,-rpg jump,-follow,-wander,-bg,-battleground,-lfg,-loot,-gather",
                                       BOT_STATE_NON_COMBAT);
                 // DIAG(riddle, binary test): does the call bite on THIS
                 // object? after=1 and next sweep still hasNon=0 => something
@@ -158,7 +231,7 @@ namespace DcStrategyGate
                          botAI->HasStrategy("grind", BOT_STATE_NON_COMBAT) ? 1 : 0);
                 break;
             case Action::Strip:
-                botAI->ChangeStrategy("-dungeon clear,+grind,+travel,+rpg,+rpg jump,+follow,+bg,+battleground,+lfg",
+                botAI->ChangeStrategy("-dungeon clear,+grind,+travel,+rpg,+rpg jump,+follow,+bg,+battleground,+lfg,+loot,+gather",
                                       BOT_STATE_NON_COMBAT);
                 break;
             case Action::None:

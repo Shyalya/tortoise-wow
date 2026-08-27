@@ -59,7 +59,12 @@ namespace
     // "bots did not finish logging in" setup failures under parallel load -
     // the logins were not failing, just still in line.
     constexpr uint32 SPAWN_TIMEOUT_MS = 180 * 1000;
-    constexpr uint32 PROVISION_TIMEOUT_MS = 60 * 1000;
+    // 180s, not 60. Provisioning gives every bot its level, talents, gear,
+    // food and ammo; under an AddressSanitizer build the whole server runs
+    // two to three times slower and six of eight groups timed out here at
+    // ~70s while doing nothing wrong. The window only bounds a setup that
+    // has genuinely wedged, so a generous one costs nothing.
+    constexpr uint32 PROVISION_TIMEOUT_MS = 180 * 1000;
     constexpr uint32 GROUP_TIMEOUT_MS = 30 * 1000;
     // Covers BOTH teleport waves (leader, then the rest — see TickTeleporting),
     // and the stage clock does not restart between them.
@@ -244,8 +249,11 @@ void DcTestRunJob::ReassertMaster()
         // stock follow-master back. Re-strip it on the repair path exactly as
         // Grouping does, so a reinstated GM master can never start a bot jogging
         // toward the invisible driver parked outside the instance.
-        botAI->ChangeStrategy("-follow", BOT_STATE_NON_COMBAT);
-        botAI->ChangeStrategy("-follow", BOT_STATE_COMBAT);
+        // NOT here: this runs in the world tick, and ChangeStrategy rebuilds
+        // the engine's trigger list under a bot that is walking it on its own
+        // map thread (two SIGSEGV in NextAction::clone). Hand it to the gate,
+        // which applies it in the bot's own update.
+        DcStrategyGate::RequestFollowStrip(bot->GetObjectGuid());
     }
 }
 
@@ -945,7 +953,10 @@ void DcTestRunJob::TickProvisioning(bool& provisionBudget)
     // drinks for classes without mana.
     factory.AddFood();   // public wrapper for InitFood
 
-    botAI->ResetStrategies();
+    // Not inline: provisioning ticks in the world thread and this bot is
+    // already logged in and thinking on its map thread. ResetStrategies
+    // rebuilds the trigger list, which is what tore NextAction::clone apart.
+    DcStrategyGate::RequestStrategyReset(bot->GetObjectGuid());
 
     DcTestRunRecord::CompEntry entry;
     entry.name = bot->GetName();
@@ -1043,7 +1054,8 @@ void DcTestRunJob::TickProvisioningRoster()
             return;  // transient — retry next tick; the stage timeout bounds it
 
         UndoUnwantedGuild(bot, slot);
-        botAI->ResetStrategies();
+        // Same reason as in TickProvisioning: off the world thread.
+        DcStrategyGate::RequestStrategyReset(bot->GetObjectGuid());
 
         // What the character's talents actually say, next to what the human
         // marked it as. A wrong marking is human error at roster time and the run
@@ -1177,8 +1189,9 @@ void DcTestRunJob::TickGrouping()
                 {
                     if (gm)
                         botAI->SetMaster(gm);
-                    botAI->ChangeStrategy("-follow", BOT_STATE_NON_COMBAT);
-                    botAI->ChangeStrategy("-follow", BOT_STATE_COMBAT);
+                    // Same reason as the repair path above: requested here,
+                    // carried out on the bot's own thread.
+                    DcStrategyGate::RequestFollowStrip(bot->GetObjectGuid());
                 }
 
         EnterStage(Stage::Teleporting);
@@ -1545,21 +1558,24 @@ void DcTestRunJob::SweepPartyGeometry()
 
                     float const bz = bot->GetPositionZ();
                     // Boss-band rescue first (see the header note above).
-                    if (bz > bossFloorZ + 25.0f)
-                        LOG_INFO("playerbots.dungeonclear",
-                                 "TESTRUN {} deck-tripwire: {} bz={:.1f} bossZ={:.1f} haveFloor={} teleporting={}",
-                                 _record.runId, bot->GetName(), bz, bossFloorZ,
-                                 haveBossFloor ? 1 : 0, bot->IsBeingTeleported() ? 1 : 0);
-                    if (haveBossFloor && bz > bossFloorZ + 25.0f && !bot->IsBeingTeleported())
+                    //
+                    // 80 yards, not 25. The phantom deck sits ~200y over the
+                    // mine, but the mine ITSELF is 40y tall - Cookie stands at
+                    // Z 17, Rhahk'Zor at Z 54, and the custom Voss wing at Z 54
+                    // hangs 35y over Gilnid's foundry floor at Z 19. At 25y this
+                    // rescue therefore fired on parties that were exactly where
+                    // they belonged and dropped them a storey, 444 times in one
+                    // evening: a vertical teleport that skipped the climb and
+                    // wrote a jump into the route recording. The gap between
+                    // "wrong deck" and "other floor of the same mine" is what
+                    // the threshold has to name, and 80y names it.
+                    float const DECK_BAND = 80.0f;
+                    if (haveBossFloor && bz > bossFloorZ + DECK_BAND && !bot->IsBeingTeleported())
                     {
                         NavmeshSnap::Result const floorHit = NavmeshSnap::SnapColumn(
                             botMap, bot->GetPositionX(), bot->GetPositionY(),
                             bossFloorZ, /*halfHeight*/ 40.0f, /*radius*/ 8.0f);
-                        LOG_INFO("playerbots.dungeonclear",
-                                 "TESTRUN {} deck-tripwire: {} band snap ok={} hitZ={:.1f}",
-                                 _record.runId, bot->GetName(), floorHit.ok ? 1 : 0,
-                                 floorHit.ok ? floorHit.z : 0.0f);
-                        if (floorHit.ok && bz - floorHit.z > 25.0f)
+                        if (floorHit.ok && bz - floorHit.z > DECK_BAND)
                         {
                             bot->GetMotionMaster()->Clear();
                             bot->NearTeleportTo(floorHit.x, floorHit.y, floorHit.z,
@@ -1567,9 +1583,9 @@ void DcTestRunJob::SweepPartyGeometry()
                                                 /*casting*/ false, /*vehicle*/ false,
                                                 /*withPet*/ true);
                             LOG_INFO("playerbots.dungeonclear",
-                                     "TESTRUN {} altitude sanity: {} floor-banded {:.0f}y "
+                                     "TESTRUN {} altitude sanity: {} floor-banded {}y "
                                      "down off the phantom deck",
-                                     _record.runId, bot->GetName(), bz - floorHit.z);
+                                     _record.runId, bot->GetName(), int(bz - floorHit.z));
                             continue;
                         }
                     }
@@ -1583,8 +1599,8 @@ void DcTestRunJob::SweepPartyGeometry()
                                             /*casting*/ false, /*vehicle*/ false,
                                             /*withPet*/ true);
                         LOG_INFO("playerbots.dungeonclear",
-                                 "TESTRUN {} altitude sanity: {} column-snapped {:.0f}y onto the mesh",
-                                 _record.runId, bot->GetName(), std::fabs(column.z - bz));
+                                 "TESTRUN {} altitude sanity: {} column-snapped {}y onto the mesh",
+                                 _record.runId, bot->GetName(), int(std::fabs(column.z - bz)));
                     }
                 }
             }

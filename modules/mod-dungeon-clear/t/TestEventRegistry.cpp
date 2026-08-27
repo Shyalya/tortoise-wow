@@ -19,6 +19,15 @@
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/ObjectiveHookRegistry.h"
 
+// Die Ablage gibt seit der Laufzeit-Eintragung Kopien heraus statt
+// Zeiger; die Tests wollen weiter einen Wert vergleichen.
+static std::vector<WaypointHint> DcTestRouteAnchors(uint32 mapId, Difficulty diff, uint32 boss)
+{
+    std::vector<WaypointHint> out;
+    DungeonClearRouteRegistry::TryGet(mapId, diff, boss, out);
+    return out;
+}
+
 // Registry cross-reference + persistence lint over the authored event data
 // (events-system review F1/F2/F3, plus the F9 anchored-event wiring check). These
 // registries reference each other by bare integers, and every dangling reference
@@ -1267,14 +1276,14 @@ TEST(DungeonEventIntegrityTest, AzjolNerubAnchorsTheRouteToAnubarak)
 {
     constexpr uint32 kAnubarak = 29120;
     std::vector<WaypointHint> const* route =
-        DungeonClearRouteRegistry::Get(601, DUNGEON_DIFFICULTY_NORMAL, kAnubarak);
+        DcTestRouteAnchors(601, DUNGEON_DIFFICULTY_NORMAL, kAnubarak);
     ASSERT_NE(route, nullptr)
         << "Azjol-Nerub (601) has no authored route to Anub'arak; the long-range "
            "pathfinder would be asked to smooth across the x=533.3333 mmtile seam";
     ASSERT_GE(route->size(), 2u);
 
     // Heroic shares the geometry and must inherit the same row.
-    EXPECT_EQ(DungeonClearRouteRegistry::Get(601, DUNGEON_DIFFICULTY_HEROIC, kAnubarak), route);
+    EXPECT_EQ(DcTestRouteAnchors(601, DUNGEON_DIFFICULTY_HEROIC, kAnubarak), route);
 
     // Leg length. DungeonPathFollower::RESNAP_RADIUS is 45yd and InstallLongPath
     // resets the follower cursor to segment 0 on every rebuild, so a leg longer

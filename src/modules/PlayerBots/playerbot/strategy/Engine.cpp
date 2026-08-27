@@ -625,9 +625,24 @@ bool Engine::removeStrategy(const std::string& name, bool init)
         return false;
 
     LogAction("S:-%s", name.c_str());
-    i->second->OnStrategyRemoved(state);
+
+    // DETACH FIRST, notify second. OnStrategyRemoved is allowed to change the
+    // strategy set - RpgStrategy's removes "rpg bg" - and that invalidates the
+    // iterator we are holding. The old order then read i->first and erased a
+    // node that no longer existed, which tears the tree apart on rebalance
+    // (SIGABRT in std::_Rb_tree_rebalance_for_erase, reached through
+    // ChangeStrategy from inside OnStrategyRemoved).
+    //
+    // Notifying afterwards also matches what the name promises: by the time a
+    // strategy hears it was removed, it is removed. The map holds raw pointers
+    // and does not own the strategies (removeAllStrategies only clear()s), so
+    // the pointer stays good across the erase.
+    Strategy* const removed = i->second;
     strategiesHash ^= StrategyNameHash(i->first);
     strategies.erase(i);
+
+    if (removed)
+        removed->OnStrategyRemoved(state);
 
     if (init)
     {

@@ -176,6 +176,39 @@ public:
     }
 };
 
+// Strategy gate + route sampling, on the bot's OWN thread.
+//
+// Both used to run in the world tick over every online player. Sampling was
+// harmless (it only reads a position), but the gate calls ChangeStrategy, and
+// doing that from the world thread while the bot's map thread is inside its AI
+// tick tears the trigger list apart underneath it: NextAction::clone then
+// copies a string that is being rebuilt, and the server aborts. That is the
+// crash signature we hit twice within a minute once ten groups were running
+// (Engine::ProcessTriggers -> TriggerNode::getHandlers -> NextAction::clone).
+//
+// PLAYERHOOK_ON_UPDATE fires from Player::Update, i.e. on the map thread that
+// owns this bot - the same thread its AI runs on. Same work, no second thread.
+class DungeonClearGateScript : public PlayerScript
+{
+public:
+    DungeonClearGateScript()
+        : PlayerScript("DungeonClearGateScript", {
+            PLAYERHOOK_ON_UPDATE
+        }) {}
+
+    void OnUpdate(Player* player, uint32 /*p_time*/) override
+    {
+        if (!player)
+            return;
+        PlayerbotAI* ai = GET_PLAYERBOT_AI(player);
+        if (!ai)
+            return;                      // real players are not gated
+        DcStrategyGate::Reconcile(player);
+        if (DcRun::Of(ai).enabled)
+            DcRouteRecorder::Sample(player);
+    }
+};
+
 class DungeonClearRegistrarWorldScript : public WorldScript
 {
 public:
@@ -207,6 +240,7 @@ public:
         // map threads only run inside sMapMgr->Update, never concurrently with
         // this world-thread hook.
         new DungeonClearSpectatorMoverEndScript();
+        new DungeonClearGateScript();
 
         // The dashboard's test-plan start form needs the dungeon catalogue +
         // caps; publish them once the config is final (first world tick).
@@ -465,24 +499,14 @@ public:
         if (_gateSweepAccumMs >= DC_STRATEGY_GATE_SWEEP_MS)
         {
             _gateSweepAccumMs = 0;
-            DcStrategyGate::ReconcileAllBots();
+            // Der Strategie-Abgleich sitzt NICHT mehr hier: siehe
+            // DungeonClearGateScript. Ein Welt-Tick, der ChangeStrategy auf
+            // Bots ruft, die gerade auf ihrem Karten-Thread denken, zerlegt
+            // deren Auslöserliste (zwei SIGABRT unter Zehn-Gruppen-Last).
 
-            // Route recorder: sample every dc leader that is driving a
-            // dungeon. Cheap (a distance check, a push_back at most every
-            // ~4yd of travel) and strictly passive - it never influences the
-            // run it observes.
-            for (auto const& kv : sObjectAccessor.GetPlayers())
-            {
-                Player* p = kv.second;
-                if (!p)
-                    continue;
-                PlayerbotAI* pai = GET_PLAYERBOT_AI(p);
-                if (!pai)
-                    continue;
-                if (!DcRun::Of(pai).enabled)
-                    continue;
-                DcRouteRecorder::Sample(p);
-            }
+
+            // Die Routen-Abtastung liegt ebenfalls im Spieler-Haken.
+
         }
     }
 

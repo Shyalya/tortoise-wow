@@ -842,17 +842,70 @@ void MotionMaster::UpdateFinalDistanceToTarget(float fDistance)
         top()->UpdateFinalDistance(fDistance);
 }
 
-void MotionMaster::MoveJump(float x, float y, float z, float horizontalSpeed, float max_height, uint32 id)
+void MotionMaster::MoveJump(float x, float y, float z, float horizontalSpeed, float /*max_height*/, uint32 /*id*/)
 {
-    // MOVE JUMP DOESN'T EXIST IN 1.12
-    /*Movement::MoveSplineInit init(*m_owner);
-    init.MoveTo(x,y,z);
-    init.SetParabolic(max_height, 0, true);
-    init.SetVelocity(horizontalSpeed);
-    // TODO: Effet moche. Ameliorer !
-    init.SetFall();
+    // 1.12 has no parabolic MONSTER_MOVE, which is why this used to be an
+    // empty body. That silence had a price: every drop-down step in every
+    // dungeon event called this and nothing happened, so the bot stood on the
+    // ledge until the run timed out. Wailing Caverns sat at 4/8 for 142 runs
+    // with the tank parked exactly on the lip it was supposed to leap from.
+    //
+    // What a jump has to do here is get the unit across an off-mesh gap and
+    // onto the landing spot. A straight spline does that: the destination
+    // carries the landing height, so the unit arrives where the event expects
+    // it and the step's arrival check (distance to the landing point) closes.
+    // No arc - the commented-out version called its own parabola "moche", and
+    // over nine yards of gap with five of drop the straight line is what a
+    // player does anyway: step off and come down.
+    //
+    // Launched exactly like MotionMaster::MovePath below: MoveSplineInit
+    // directly. No generator is needed because the one caller tests
+    // isMoving() to see the jump through - MoveFall does mutate an
+    // EffectMovementGenerator, because ITS caller reads the generator type.
+    // (An earlier version of this comment claimed the core has no such
+    // generator; it does, in PointMovementGenerator.h.)
+    if (!m_owner->IsStopped())
+        m_owner->StopMoving();
+
+    Movement::MoveSplineInit init(*m_owner, "MotionMaster::MoveJump");
+    init.MoveTo(x, y, z);
+    init.SetVelocity(horizontalSpeed > 0.0f ? horizontalSpeed : m_owner->GetSpeed(MOVE_RUN));
     init.Launch();
-    Mutate(new EffectMovementGenerator(id));*/
+}
+
+bool MotionMaster::MoveFall()
+{
+    // Was `return false;` in the header, so every caller's drop silently did
+    // nothing. Live consequence: the Wailing Caverns hole-drop logged
+    // "DropInHole: MoveFall from ..." 12415 times for a single bot while the
+    // party stood over the open shaft for the rest of the run.
+    Map* map = m_owner->GetMap();
+    if (!map)
+        return false;
+
+    float const x = m_owner->GetPositionX();
+    float const y = m_owner->GetPositionY();
+    float const z = m_owner->GetPositionZ();
+
+    // Straight down, vmap included, and far enough for a real shaft - the
+    // Wailing Caverns one is some seventy yards deep, well past the default
+    // search distance. The caller has already parked the unit over the open
+    // mouth, so the first floor found is the bottom and not a ledge.
+    float const ground = map->GetHeight(x, y, z, /*vmap*/ true, 300.0f);
+    if (ground <= INVALID_HEIGHT || z - ground < 1.0f)
+        return false;
+
+    Movement::MoveSplineInit init(*m_owner, "MotionMaster::MoveFall");
+    init.MoveTo(x, y, ground);          // same x/y: no horizontal travel, so
+    init.SetFall();                     // the descent cannot clip a wall
+    init.Launch();
+
+    // The caller tells "still falling" apart from "landed" by the generator
+    // type (EFFECT_MOTION_TYPE), deliberately not by MOVEMENTFLAG_FALLING -
+    // a server-side bot never clears that flag and would read as falling
+    // forever. So give it the generator to look at.
+    Mutate(new EffectMovementGenerator(0));
+    return true;
 }
 
 void MotionMaster::MoveCharge(Unit* target, uint32 delay, bool triggerAutoAttack)

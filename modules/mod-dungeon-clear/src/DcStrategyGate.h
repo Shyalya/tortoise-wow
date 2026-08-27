@@ -3,6 +3,8 @@
  * and/or modify it under version 3 of the License, or (at your option), any later version.
  */
 
+#include "ObjectGuid.h"
+#include <string>
 #ifndef _DC_STRATEGY_GATE_H
 #define _DC_STRATEGY_GATE_H
 
@@ -115,6 +117,25 @@ namespace DcStrategyGate
     // tick (login/map-change hooks and the world OnUpdate all qualify) — never
     // from a DC trigger/action.
     void Reconcile(Player* bot);
+
+    // Ask for stock "follow" to be stripped from one bot. Callable from ANY
+    // thread: the request is only recorded, and carried out inside Reconcile(),
+    // which runs from the player's own update hook - i.e. on the map thread
+    // that owns the bot. ChangeStrategy rebuilds the engine's trigger list,
+    // and doing that from the world tick while the bot walks that very list is
+    // what tore NextAction::clone apart.
+    void RequestFollowStrip(ObjectGuid guid);
+
+    // Same mailbox, for ResetStrategies(). Provisioning runs in the world
+    // tick on bots that are already logged in and thinking on their map
+    // thread, and ResetStrategies rebuilds the trigger list just like
+    // ChangeStrategy does.
+    void RequestStrategyReset(ObjectGuid guid);
+
+    // ...and for one arbitrary strategy change. Same contract: callable from
+    // any thread, applied in Reconcile() on the thread that owns the bot.
+    // Queued in order; the reset above, when both are pending, runs first.
+    void RequestStrategy(ObjectGuid guid, std::string spec, uint8 state);
 
     // Re-assert the invariant for every online bot. Cheap per bot; call on a
     // throttled cadence from the world tick. This is the correctness net for the

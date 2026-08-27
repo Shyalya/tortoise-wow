@@ -1310,10 +1310,21 @@ bool MovementAction::MoveTo2(const WorldPosition& endPos, bool idle, bool react,
             // Log first few path points
             char pathBuf[512];
             snprintf(pathBuf, sizeof(pathBuf), "[BOT PATH BUG] Path points: ");
-            int logCount = std::min((int)movePath.getPointPath().size(), 5);
+            // Hold the vector. getPointPath() returns BY VALUE, so
+            // `getPointPath()[i]` handed out a reference into a temporary that
+            // died at the end of that very statement - the next line then read
+            // freed memory (AddressSanitizer: heap-use-after-free, freed and
+            // read two lines apart inside this function). Binding a const& to
+            // the result of operator[] does not extend the vector's lifetime;
+            // only binding to the temporary itself would.
+            //
+            // It also rebuilt the whole vector on every call, so printing five
+            // points cost six rebuilds.
+            std::vector<WorldPosition> const pathPoints = movePath.getPointPath();
+            int logCount = std::min((int)pathPoints.size(), 5);
             for (int i = 0; i < logCount; i++)
             {
-                const auto& p = movePath.getPointPath()[i];
+                WorldPosition const& p = pathPoints[i];
                 char pointBuf[64];
                 snprintf(pointBuf, sizeof(pointBuf), "[#%d: %.1f,%.1f,%.1f] ", i, p.coord_x, p.coord_y, p.coord_z);
                 strncat(pathBuf, pointBuf, sizeof(pathBuf) - strlen(pathBuf) - 1);

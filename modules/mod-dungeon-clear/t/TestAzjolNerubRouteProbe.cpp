@@ -95,10 +95,12 @@ TEST(AzjolNerubRouteProbe, EveryAnchorStandsOnDryGround)
     if (!mesh)
         GTEST_SKIP() << "no map-601 navmesh under " << dir << "/mmaps";
 
-    std::vector<WaypointHint> const* route =
-        DungeonClearRouteRegistry::Get(MAP_AZJOL_NERUB, DUNGEON_DIFFICULTY_NORMAL, AN_ANUBARAK);
-    ASSERT_NE(route, nullptr) << "no authored route to Anub'arak on map 601";
-    ASSERT_FALSE(route->empty());
+    // Die Ablage gibt Kopien heraus, seit der Rekorder im Betrieb eintraegt.
+    std::vector<WaypointHint> routeStore;
+    ASSERT_TRUE(DungeonClearRouteRegistry::TryGet(MAP_AZJOL_NERUB, DUNGEON_DIFFICULTY_NORMAL,
+                                                  AN_ANUBARAK, routeStore))
+        << "no authored route to Anub'arak on map 601";
+    std::vector<WaypointHint> const* route = &routeStore;
 
     std::printf("=== Azjol-Nerub (601) route liquid probe ===\n");
 
@@ -145,10 +147,10 @@ TEST(AzjolNerubRouteProbe, TheLandingPathsOnToTheBoss)
     if (!mesh)
         GTEST_SKIP() << "no map-601 navmesh under " << dir << "/mmaps";
 
-    std::vector<WaypointHint> const* route =
-        DungeonClearRouteRegistry::Get(MAP_AZJOL_NERUB, DUNGEON_DIFFICULTY_NORMAL, AN_ANUBARAK);
-    ASSERT_NE(route, nullptr);
-    ASSERT_FALSE(route->empty());
+    std::vector<WaypointHint> routeStore;
+    ASSERT_TRUE(DungeonClearRouteRegistry::TryGet(MAP_AZJOL_NERUB, DUNGEON_DIFFICULTY_NORMAL,
+                                                  AN_ANUBARAK, routeStore));
+    std::vector<WaypointHint> const* route = &routeStore;
 
     // The teleport has to put the party somewhere that can actually go on. A
     // landing that snaps off-mesh, or onto a shelf the boss is not reachable

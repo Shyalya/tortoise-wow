@@ -11,6 +11,15 @@
 #include "Ai/Dungeon/DungeonClear/Data/DungeonEventRegistry.h"
 #include "Ai/Dungeon/DungeonClear/Overrides/BossRosterRegistry.h"
 
+// Die Ablage gibt seit der Laufzeit-Eintragung Kopien heraus statt
+// Zeiger; die Tests wollen weiter einen Wert vergleichen.
+static std::vector<WaypointHint> DcTestRouteAnchors(uint32 mapId, Difficulty diff, uint32 boss)
+{
+    std::vector<WaypointHint> out;
+    DungeonClearRouteRegistry::TryGet(mapId, diff, boss, out);
+    return out;
+}
+
 // Heroic-dungeon difficulty plumbing (see
 // deployment-files/docs/mod-dungeon-clear_heroic-dungeons_plan.md): the gate
 // type itself, the roster registry's difficulty-aware Apply, the route
@@ -185,7 +194,7 @@ TEST(DcDifficultyGateTest, RouteRegistryHeroicFallsBackToNormalRow)
 
     // Heroic lookup with no heroic row: the normal route is returned.
     std::vector<WaypointHint> const* viaFallback =
-        DungeonClearRouteRegistry::Get(kMap, DUNGEON_DIFFICULTY_HEROIC, kBoss);
+        DcTestRouteAnchors(kMap, DUNGEON_DIFFICULTY_HEROIC, kBoss);
     ASSERT_NE(viaFallback, nullptr);
     EXPECT_FLOAT_EQ((*viaFallback)[0].x, 1.0f);
 
@@ -194,12 +203,12 @@ TEST(DcDifficultyGateTest, RouteRegistryHeroicFallsBackToNormalRow)
     heroicHint.x = 2.0f;
     DungeonClearRouteRegistry::Register(kMap, DUNGEON_DIFFICULTY_HEROIC, kBoss, {heroicHint});
     std::vector<WaypointHint> const* heroicRow =
-        DungeonClearRouteRegistry::Get(kMap, DUNGEON_DIFFICULTY_HEROIC, kBoss);
+        DcTestRouteAnchors(kMap, DUNGEON_DIFFICULTY_HEROIC, kBoss);
     ASSERT_NE(heroicRow, nullptr);
     EXPECT_FLOAT_EQ((*heroicRow)[0].x, 2.0f);
 
     // A boss with no row on either difficulty still misses cleanly.
-    EXPECT_EQ(DungeonClearRouteRegistry::Get(kMap, DUNGEON_DIFFICULTY_HEROIC, kBoss + 1), nullptr);
+    EXPECT_FALSE(DungeonClearRouteRegistry::Has(kMap, DUNGEON_DIFFICULTY_HEROIC, kBoss + 1));
 }
 
 // --- Conditional(mapId, difficulty) overload ------------------------------

@@ -212,19 +212,22 @@ void RegisterWailingCavernsRoster(std::vector<BossRosterPatch>& t)
         DungeonBossInfo mutanus =
             MakeBoss(3654, 43, "Mutanus the Devourer",
                      151.27f, 252.26f, -102.82f, /*completionFrom*/ 0);
-        mutanus.encounterIndex = 7;
+        // 11, not 7: five more bosses were missing from the roster entirely
+        // (Anacondra, Kresh, Serpentis and Turtle's Vangros and Zandara), so
+        // every key past them moved up. See DC_BOSS_ORDER_1121 for map 43.
+        mutanus.encounterIndex = 11;
 
         p.add = {
-            MakeObjective(OBJ(1), /*encounterIndex*/ 5, 43, "Drop to Lord Serpentis",
+            MakeObjective(OBJ(1), /*encounterIndex*/ 7, 43, "Drop to Lord Serpentis",
                           -290.65567f, -3.8297224f, -58.30473f, /*arriveRadius*/ 6.0f,
                           /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 1),
             // Return-fall off Verdan's shelf (key 7, BEFORE the escort by
             // insertion order; see the (3) note above). Backed by event 3.
-            MakeObjective(OBJ(3), /*encounterIndex*/ 7, 43,
+            MakeObjective(OBJ(3), /*encounterIndex*/ 10, 43,
                           "Drop down to the lower caverns",
                           -55.89f, 44.32f, -29.01f, /*arriveRadius*/ 6.0f,
                           /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 3),
-            MakeObjective(OBJ(2), /*encounterIndex*/ 7, 43,
+            MakeObjective(OBJ(2), /*encounterIndex*/ 10, 43,
                           "Escort the Disciple of Naralex",
                           -134.97f, 125.40f, -78.09f, /*arriveRadius*/ 18.0f,
                           /*gateEntry*/ 0, /*hook*/ 0, /*eventId*/ 2),

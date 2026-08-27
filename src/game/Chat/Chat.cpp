@@ -2589,9 +2589,16 @@ char* ChatHandler::ExtractLiteralArg(char** args, char const* lit /*= nullptr*/)
         return arg;
     }
 
-    char* name = strtok(head, " ");
+    // strtok_r, not strtok: strtok keeps its position in a static, process-wide
+    // pointer, so the second call below resumes wherever the LAST caller left
+    // off - on any thread. This function runs out of every bot's reaction
+    // engine (SpellIdValue -> extractSpellId), i.e. from several map threads at
+    // once, over short-lived std::strings. AddressSanitizer caught exactly
+    // that: strtok reading a buffer another thread had already freed.
+    char* saveptr = nullptr;
+    char* name = strtok_r(head, " ", &saveptr);
 
-    char* tail = strtok(nullptr, "");
+    char* tail = strtok_r(nullptr, "", &saveptr);
 
     *args = tail ? tail : (char*)"";                        // *args don't must be nullptr
 

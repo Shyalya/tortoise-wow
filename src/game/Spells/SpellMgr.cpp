@@ -1051,8 +1051,12 @@ bool SpellMgr::IsNoStackSpellDueToSpell(uint32 spellId_1, uint32 spellId_2) cons
             if (spellInfo_2->SpellFamilyName == SPELLFAMILY_WARRIOR)
             {
                 // Rend and Deep Wound
-                if (((spellInfo_1->SpellFamilyFlags & UI64LIT(0x20)) && (spellInfo_2->SpellFamilyFlags & UI64LIT(0x1000000000))) ||
-                        ((spellInfo_2->SpellFamilyFlags & UI64LIT(0x20)) && (spellInfo_1->SpellFamilyFlags & UI64LIT(0x1000000000))))
+                if (((spellInfo_1->SpellIconID == 243 && spellInfo_2->SpellIconID == 245) ||
+                        (spellInfo_2->SpellIconID == 243 && spellInfo_1->SpellIconID == 245)) &&
+                        spellInfo_1->Effect[EFFECT_INDEX_0] == SPELL_EFFECT_APPLY_AURA &&
+                        spellInfo_2->Effect[EFFECT_INDEX_0] == SPELL_EFFECT_APPLY_AURA &&
+                        spellInfo_1->EffectApplyAuraName[EFFECT_INDEX_0] == SPELL_AURA_PERIODIC_DAMAGE &&
+                        spellInfo_2->EffectApplyAuraName[EFFECT_INDEX_0] == SPELL_AURA_PERIODIC_DAMAGE)
                     return false;
 
                 // Battle Shout and Rampage

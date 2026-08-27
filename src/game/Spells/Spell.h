@@ -358,7 +358,16 @@ class Spell
 
         Spell(Unit* caster, SpellEntry const *info, bool triggered, ObjectGuid originalCasterGUID = ObjectGuid(), SpellEntry const* triggeredBy = nullptr, Unit* victim = nullptr, SpellEntry const* triggeredByParent = nullptr, bool bCanIgnoreLOS = false);
         Spell(GameObject* caster, SpellEntry const *info, bool triggered, ObjectGuid originalCasterGUID = ObjectGuid(), SpellEntry const* triggeredBy = nullptr, Unit* victim = nullptr, SpellEntry const* triggeredByParent = nullptr, bool bCanIgnoreLOS = false);
-        ~Spell();
+        // VIRTUAL. Spell::Delete() ends in `delete this` on a Spell const*,
+        // and mod-playerbots derives from this class (BotUseItemSpell adds a
+        // bool, making it 760 bytes against Spell's 752). Without a virtual
+        // destructor that delete frees the base size and leaves eight bytes
+        // behind, which corrupts the allocator's bookkeeping - found with
+        // AddressSanitizer as a new-delete-type-mismatch out of
+        // Player::Update -> EventProcessor::Update -> ~SpellEvent. The crash
+        // it caused always surfaced somewhere else entirely, whoever touched
+        // that region next.
+        virtual ~Spell();
 
         SpellCastResult prepare(SpellCastTargets targets, Aura* triggeredByAura = nullptr, uint32 chance = 0);
         SpellCastResult prepare(Aura* triggeredByAura = nullptr, uint32 chance = 0);
