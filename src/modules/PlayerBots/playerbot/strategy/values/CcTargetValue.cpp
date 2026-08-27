@@ -49,6 +49,7 @@ public:
     virtual void CheckAttacker(Unit* creature, ThreatManager* threatManager)
     {
         Player* bot = ai->GetBot();
+        AiObjectContext* context = ai->GetAiObjectContext();
 
         if (!ai->CanCastSpell(spell, creature, true, nullptr, false, true))
             return;

@@ -12,6 +12,7 @@
 #include "playerbot/strategy/values/ItemUsageValue.h"
 #include "playerbot/strategy/values/ItemCountValue.h"
 #include "playerbot/strategy/values/QuestValues.h"
+#include "playerbot/strategy/values/SharedValueContext.h"
 #include "playerbot/TravelMgr.h"
 
 using namespace ai;
@@ -239,7 +240,24 @@ namespace
         Item* item = nullptr;
         Unit* unitTarget = nullptr;
         GameObject* goTarget = nullptr;
+        std::string retryKey;
     };
+
+    static constexpr time_t QUEST_ITEM_RETRY_SECONDS = 15;
+
+    std::string QuestItemRetryKey(Item* item, ObjectGuid targetGuid)
+    {
+        if (!item || !targetGuid)
+            return {};
+
+        return "quest item retry " + std::to_string(item->GetEntry()) + " " + std::to_string(targetGuid.GetRawValue());
+    }
+
+    bool IsQuestItemRetryBlocked(PlayerbotAI* ai, const std::string& retryKey)
+    {
+        return ai && !retryKey.empty() &&
+               ai->GetAiObjectContext()->GetValue<time_t>("manual time", retryKey)->Get() > time(0);
+    }
 
     bool HasTargetedOnUseSpell(const ItemPrototype* proto)
     {
@@ -317,7 +335,12 @@ namespace
 
         for (uint8 i = 0; i < MAX_ITEM_PROTO_SPELLS; ++i)
         {
+#ifdef MANGOSBOT_ZERO
+            if (proto->Spells[i].SpellTrigger != ITEM_SPELLTRIGGER_ON_USE &&
+                proto->Spells[i].SpellTrigger != ITEM_SPELLTRIGGER_ON_NO_DELAY_USE)
+#else
             if (proto->Spells[i].SpellTrigger != ITEM_SPELLTRIGGER_ON_USE)
+#endif
                 continue;
 
             if (proto->Spells[i].SpellId > 0)
@@ -611,7 +634,12 @@ namespace
         if (!context)
             return candidates;
 
-        EntryQuestRelationMap relationMap = GAI_VALUE(EntryQuestRelationMap, "entry quest relation");
+        auto* relationValue = dynamic_cast<SingleCalculatedValue<EntryQuestRelationMap>*>(
+            sSharedObjectContext.GetUntypedValue("entry quest relation"));
+        if (!relationValue)
+            return candidates;
+
+        const EntryQuestRelationMap& relationMap = relationValue->GetReference();
         std::list<Item*> questItems = AI_VALUE2(std::list<Item*>, "inventory items", "quest");
         if (questItems.empty())
             return candidates;
@@ -640,8 +668,15 @@ namespace
                 if (!IsValidQuestUseTarget(target))
                     continue;
 
+                std::string retryKey = QuestItemRetryKey(item, guid);
+                if (IsQuestItemRetryBlocked(ai, retryKey))
+                    continue;
+
                 if (HasQuestItemUseForUnitTarget(ai, bot, item, target, int32(target->GetEntry()), relationMap))
-                    candidates.push_back({ item, target, nullptr });
+                {
+                    candidates.push_back({ item, target, nullptr, retryKey });
+                    return candidates;
+                }
             }
 
             for (const ObjectGuid& guid : hostileOrNeutralUnits)
@@ -650,8 +685,15 @@ namespace
                 if (!IsValidQuestUseTarget(target))
                     continue;
 
+                std::string retryKey = QuestItemRetryKey(item, guid);
+                if (IsQuestItemRetryBlocked(ai, retryKey))
+                    continue;
+
                 if (HasQuestItemUseForUnitTarget(ai, bot, item, target, int32(target->GetEntry()), relationMap))
-                    candidates.push_back({ item, target, nullptr });
+                {
+                    candidates.push_back({ item, target, nullptr, retryKey });
+                    return candidates;
+                }
             }
 
             for (const ObjectGuid& guid : deadUnits)
@@ -660,8 +702,15 @@ namespace
                 if (!IsValidQuestUseTarget(target))
                     continue;
 
+                std::string retryKey = QuestItemRetryKey(item, guid);
+                if (IsQuestItemRetryBlocked(ai, retryKey))
+                    continue;
+
                 if (HasQuestItemUseForUnitTarget(ai, bot, item, target, int32(target->GetEntry()), relationMap))
-                    candidates.push_back({ item, target, nullptr });
+                {
+                    candidates.push_back({ item, target, nullptr, retryKey });
+                    return candidates;
+                }
             }
 
             for (const ObjectGuid& guid : gameObjects)
@@ -670,8 +719,15 @@ namespace
                 if (!IsValidQuestUseTarget(target))
                     continue;
 
+                std::string retryKey = QuestItemRetryKey(item, guid);
+                if (IsQuestItemRetryBlocked(ai, retryKey))
+                    continue;
+
                 if (HasQuestItemUseForGameObjectTarget(ai, bot, item, target, -int32(target->GetEntry()), relationMap))
-                    candidates.push_back({ item, nullptr, target });
+                {
+                    candidates.push_back({ item, nullptr, target, retryKey });
+                    return candidates;
+                }
             }
         }
 
@@ -1850,19 +1906,22 @@ bool UseRandomQuestItemAction::isUseful()
     if (ai->HasActivePlayerMaster() || bot->InBattleGround() || bot->IsTaxiFlying())
         return false;
 
-    if (!CollectQuestItemUseCandidates(ai, bot).empty())
-        return true;
-
     std::list<Item*> questItems = AI_VALUE2(std::list<Item*>, "inventory items", "quest");
     for (Item* item : questItems)
     {
         const ItemPrototype* proto = item ? item->GetProto() : nullptr;
-        if (!proto || !proto->StartQuest)
+        if (!proto)
             continue;
 
-        Quest const* qInfo = sObjectMgr.GetQuestTemplate(proto->StartQuest);
-        if (qInfo && bot->CanTakeQuest(qInfo, false))
+        if (IsQuestItemOwnedAndUsable(bot, item) && !HasQuestItemCooldown(bot, proto) && HasTargetedOnUseSpell(proto))
             return true;
+
+        if (proto->StartQuest)
+        {
+            Quest const* qInfo = sObjectMgr.GetQuestTemplate(proto->StartQuest);
+            if (qInfo && bot->CanTakeQuest(qInfo, false))
+                return true;
+        }
     }
 
     return false;
@@ -1876,11 +1935,14 @@ bool UseRandomQuestItemAction::Execute(Event& event)
     bool success = false;
     if (!candidates.empty())
     {
-        QuestItemUseCandidate& candidate = candidates[urand(0, candidates.size() - 1)];
+        QuestItemUseCandidate& candidate = candidates.front();
         if (candidate.goTarget)
             success = UseItem(requester, candidate.item->GetEntry(), candidate.goTarget);
         else
             success = UseItem(requester, candidate.item->GetEntry(), candidate.unitTarget);
+
+        context->GetValue<time_t>("manual time", candidate.retryKey)->Set(
+            success ? time_t(0) : time(0) + QUEST_ITEM_RETRY_SECONDS);
     }
     else
     {
