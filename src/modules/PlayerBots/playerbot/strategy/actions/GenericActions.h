@@ -102,12 +102,12 @@ namespace ai
 
         bool isUseful() override
         {
-            return FindNearbySummoningRitual(ai);
+            return FindNearbySummoningRitual();
         }
 
         bool Execute(Event& event) override
         {
-            GameObject* go = FindNearbySummoningRitual(ai);
+            GameObject* go = FindNearbySummoningRitual();
             if (!go)
                 return false;
 
@@ -125,17 +125,27 @@ namespace ai
         }
 
     private:
+        ObjectGuid ritualGameObject;
+
         static float GetMaxAssistRange() { return INTERACTION_DISTANCE * 3.0f; }
 
-        static GameObject* FindNearbySummoningRitual(PlayerbotAI* ai)
+        // Trigger IsActive, Engine isUseful, and Execute can all ask in one tick.
+        // Reuse a still-valid cached ritual before scanning nearest game objects again.
+        GameObject* FindNearbySummoningRitual()
         {
             Player* bot = ai ? ai->GetBot() : nullptr;
             if (!bot || !bot->IsInWorld() || !bot->IsAlive())
+            {
+                ritualGameObject.Clear();
                 return nullptr;
+            }
 
             AiObjectContext* context = ai->GetAiObjectContext();
             if (!context)
+            {
+                ritualGameObject.Clear();
                 return nullptr;
+            }
 
             if (!ai->HasActivePlayerMaster() ||
                 !bot->GetGroup() ||
@@ -144,7 +154,19 @@ namespace ai
                 bot->hasUnitState(UNIT_STAT_CAN_NOT_REACT_OR_LOST_CONTROL) ||
                 bot->IsNonMeleeSpellCasted(false, false, true) ||
                 sServerFacade.IsInCombat(bot))
+            {
+                ritualGameObject.Clear();
                 return nullptr;
+            }
+
+            if (!ritualGameObject.IsEmpty())
+            {
+                GameObject* cachedGo = ai->GetGameObject(ritualGameObject);
+                if (IsValidSummoningRitual(ai, cachedGo))
+                    return cachedGo;
+
+                ritualGameObject.Clear();
+            }
 
             GameObject* bestGo = nullptr;
             float bestDistance = GetMaxAssistRange() + 1.0f;
@@ -162,6 +184,7 @@ namespace ai
                 }
             }
 
+            ritualGameObject = bestGo ? bestGo->GetObjectGuid() : ObjectGuid();
             return bestGo;
         }
 
