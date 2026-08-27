@@ -18,37 +18,37 @@ namespace ai
 	class CastRejuvenationAction : public CastHealingSpellAction 
 	{
 	public:
-		CastRejuvenationAction(PlayerbotAI* ai) : CastHealingSpellAction(ai, "rejuvenation") {}
+        CastRejuvenationAction(PlayerbotAI* ai) : CastHealingSpellAction(ai, "rejuvenation", 15, HealingManaEfficiency::VERY_HIGH) {}
 	};
 
 	class CastRegrowthAction : public CastHealingSpellAction 
 	{
 	public:
-		CastRegrowthAction(PlayerbotAI* ai) : CastHealingSpellAction(ai, "regrowth") {}
+        CastRegrowthAction(PlayerbotAI* ai) : CastHealingSpellAction(ai, "regrowth", 30, HealingManaEfficiency::LOW) {}
 	};
 
     class CastHealingTouchAction : public CastHealingSpellAction 
 	{
     public:
-        CastHealingTouchAction(PlayerbotAI* ai) : CastHealingSpellAction(ai, "healing touch") {}
+        CastHealingTouchAction(PlayerbotAI* ai) : CastHealingSpellAction(ai, "healing touch", 50, HealingManaEfficiency::MEDIUM) {}
     };
 
     class CastRejuvenationOnPartyAction : public HealPartyMemberAction
     {
     public:
-        CastRejuvenationOnPartyAction(PlayerbotAI* ai) : HealPartyMemberAction(ai, "rejuvenation") {}
+        CastRejuvenationOnPartyAction(PlayerbotAI* ai) : HealPartyMemberAction(ai, "rejuvenation", 15, HealingManaEfficiency::VERY_HIGH) {}
     };
 
     class CastRegrowthOnPartyAction : public HealPartyMemberAction
     {
     public:
-        CastRegrowthOnPartyAction(PlayerbotAI* ai) : HealPartyMemberAction(ai, "regrowth") {}
+        CastRegrowthOnPartyAction(PlayerbotAI* ai) : HealPartyMemberAction(ai, "regrowth", 30, HealingManaEfficiency::LOW) {}
     };
 
     class CastHealingTouchOnPartyAction : public HealPartyMemberAction
     {
     public:
-        CastHealingTouchOnPartyAction(PlayerbotAI* ai) : HealPartyMemberAction(ai, "healing touch") {}
+        CastHealingTouchOnPartyAction(PlayerbotAI* ai) : HealPartyMemberAction(ai, "healing touch", 50, HealingManaEfficiency::MEDIUM) {}
     };
 
 	class CastReviveAction : public ResurrectPartyMemberAction
@@ -723,6 +723,10 @@ namespace ai
             strategiesRequired = { "offheal" };
             strategiesToUpdate.emplace_back(BotState::BOT_STATE_COMBAT, "offheal pve", strategiesRequired);
             strategiesToUpdate.emplace_back(BotState::BOT_STATE_NON_COMBAT, "offheal pve", strategiesRequired);
+
+            strategiesRequired = { "offdps" };
+            strategiesToUpdate.emplace_back(BotState::BOT_STATE_COMBAT, "offdps pve", strategiesRequired);
+            strategiesToUpdate.emplace_back(BotState::BOT_STATE_NON_COMBAT, "offdps pve", strategiesRequired);
         }
     };
 
@@ -860,6 +864,10 @@ namespace ai
             strategiesRequired = { "offheal" };
             strategiesToUpdate.emplace_back(BotState::BOT_STATE_COMBAT, "offheal pvp", strategiesRequired);
             strategiesToUpdate.emplace_back(BotState::BOT_STATE_NON_COMBAT, "offheal pvp", strategiesRequired);
+
+            strategiesRequired = { "offdps" };
+            strategiesToUpdate.emplace_back(BotState::BOT_STATE_COMBAT, "offdps pvp", strategiesRequired);
+            strategiesToUpdate.emplace_back(BotState::BOT_STATE_NON_COMBAT, "offdps pvp", strategiesRequired);
         }
     };
 
@@ -997,6 +1005,10 @@ namespace ai
             strategiesRequired = { "offheal" };
             strategiesToUpdate.emplace_back(BotState::BOT_STATE_COMBAT, "offheal raid", strategiesRequired);
             strategiesToUpdate.emplace_back(BotState::BOT_STATE_NON_COMBAT, "offheal raid", strategiesRequired);
+
+            strategiesRequired = { "offdps" };
+            strategiesToUpdate.emplace_back(BotState::BOT_STATE_COMBAT, "offdps raid", strategiesRequired);
+            strategiesToUpdate.emplace_back(BotState::BOT_STATE_NON_COMBAT, "offdps raid", strategiesRequired);
         }
     };
 }

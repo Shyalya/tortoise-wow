@@ -131,6 +131,7 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
     ActionBasket* basket = NULL;
 
     time_t currentTime = time(0);
+    ai->RollForceRebuffCycle();
     aiObjectContext->Update();
     ProcessTriggers(minimal);
     PushDefaultActions();

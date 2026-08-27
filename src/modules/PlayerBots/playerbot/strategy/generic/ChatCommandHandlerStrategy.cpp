@@ -75,6 +75,7 @@ ChatCommandHandlerStrategy::ChatCommandHandlerStrategy(PlayerbotAI* ai) : PassTr
     supported.push_back("who");
     supported.push_back("where");
     supported.push_back("save mana");
+    supported.push_back("rebuff");
     supported.push_back("formation");
     supported.push_back("stance");
     supported.push_back("sendmail");
@@ -316,4 +317,8 @@ void ChatCommandHandlerStrategy::InitReactionTriggers(std::list<TriggerNode*> &t
     triggers.push_back(new TriggerNode(
         "ready",
         NextAction::array(0, new NextAction("ready check", relevance), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "rebuff",
+        NextAction::array(0, new NextAction("force rebuff", relevance), NULL)));
 }

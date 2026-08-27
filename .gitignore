@@ -1,6 +1,7 @@
 /samples/
 /data/
 /build/
+/AGENTS.md
 /.vscode/
 *.kate-swp
 *.exe

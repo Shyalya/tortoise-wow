@@ -11,6 +11,10 @@ void MeleeCombatStrategy::InitCombatTriggers(std::list<TriggerNode*> &triggers)
         NextAction::array(0, new NextAction("reach melee", ACTION_MOVE), NULL)));
 
     triggers.push_back(new TriggerNode(
+        "not facing target",
+        NextAction::array(0, new NextAction("set facing", ACTION_MOVE + 1), NULL)));
+
+    triggers.push_back(new TriggerNode(
         "enemy too close for melee",
         NextAction::array(0, new NextAction("move out of enemy contact", static_cast<float>(ACTION_NORMAL) + 8.0f), NULL)));
 }

@@ -35,7 +35,9 @@ public:
             }
 #endif
 
-            if (ai->HasAura(*i, unit))
+            if (ai->HasAura(*i, unit) &&
+                !(ai->IsForceRebuffPending() && !ai->IsForceRebuffExpired() &&
+                  !ai->IsForceRebuffBuffCompleted(*i, unit)))
                 return false;
         }
 
@@ -96,7 +98,9 @@ public:
 
         for (std::vector<std::string>::iterator i = auras.begin(); i != auras.end(); ++i)
         {
-            if (ai->HasMyAura(*i, unit))
+            if (ai->HasMyAura(*i, unit) &&
+                !(ai->IsForceRebuffPending() && !ai->IsForceRebuffExpired() &&
+                  !ai->IsForceRebuffBuffCompleted(*i, unit)))
                 return false;
         }
 
@@ -139,7 +143,9 @@ public:
                 bool missingAura = false;
                 for (std::vector<std::string>::iterator i = auras.begin(); i != auras.end(); ++i)
                 {
-                    if (!ai->HasAura(*i, unit))
+                    if (!ai->HasAura(*i, unit) ||
+                        (ai->IsForceRebuffPending() && !ai->IsForceRebuffExpired() &&
+                         !ai->IsForceRebuffBuffCompleted(*i, unit)))
                     {
                         missingAura = true;
                         break;

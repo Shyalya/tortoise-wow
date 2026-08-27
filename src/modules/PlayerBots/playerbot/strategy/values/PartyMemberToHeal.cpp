@@ -30,19 +30,34 @@ bool compareByHealth(const Unit *u1, const Unit *u2)
     return u1->GetHealthPercent() < u2->GetHealthPercent();
 }
 
-bool compareByMissingHealth(const Unit* u1, const Unit* u2, bool incomingDamage = false)
+static float HealTriageScore(PlayerbotAI* ai, const Unit* unit, bool incomingDamage)
 {
-    uint32 hp1 = u1->GetHealth() - (incomingDamage ? getIncomingdamage(u1) : 0);
-    uint32 hpmax1 = u1->GetMaxHealth();
-    uint32 hp2 = u2->GetHealth() - (incomingDamage ? getIncomingdamage(u2) : 0);
-    uint32 hpmax2 = u2->GetMaxHealth();
-    return (hpmax1 - hp1) > (hpmax2 - hp2);
+    uint32 hp = unit->GetHealth();
+    if (incomingDamage)
+    {
+        uint32 incoming = getIncomingdamage(unit);
+        if (incoming >= hp)
+            hp = 0;
+        else
+            hp -= incoming;
+    }
+
+    uint32 const hpMax = unit->GetMaxHealth();
+    if (!hpMax)
+        return 0.0f;
+
+    float missing = float(hpMax - hp);
+
+    // Prefer tanks when injured: they take the most damage and drop the party if they die.
+    if (unit->IsPlayer() && ai->IsTank((Player*)unit))
+        missing *= 1.35f;
+
+    return missing;
 }
 
 Unit* PartyMemberToHeal::Calculate()
 {
     std::vector<Unit*> needHeals;
-    std::vector<Unit*> tankTargets;
     if (bot->GetSelectionGuid())
     {
         Unit* target = ai->GetUnit(bot->GetSelectionGuid());
@@ -74,14 +89,13 @@ Unit* PartyMemberToHeal::Calculate()
     if (!partyMembers.empty() || !needHeals.empty())
     {
         IsTargetOfHealingSpell predicate;
+        bool const preHealing = ai->HasStrategy("preheal", BotState::BOT_STATE_COMBAT);
         for (Player* player : partyMembers)
         {
             if (!Check(player) || !sServerFacade.IsAlive(player))
             {
                 continue;
             }
-
-            bool isTank = ai->IsTank(player);
 
             // do not heal dueling members
             if (player->m_duel && player->m_duel->opponent)
@@ -90,44 +104,47 @@ Unit* PartyMemberToHeal::Calculate()
             }
 
             uint32 incomingDamage = 0;
-            if (ai->HasStrategy("preheal", BotState::BOT_STATE_COMBAT))
+            if (preHealing)
                 incomingDamage = getIncomingdamage(player);
 
-            uint8 health = (((player->GetHealth() - incomingDamage) * 100.0f) / player->GetMaxHealth());
-            if (isTank || (health < sPlayerbotAIConfig.almostFullHealth && !IsTargetOfSpellCast(player, predicate)))
-            { 
+            int32 effectiveHp = int32(player->GetHealth()) - int32(incomingDamage);
+            if (effectiveHp < 0)
+                effectiveHp = 0;
+            uint8 health = uint8((float(effectiveHp) * 100.0f) / float(player->GetMaxHealth()));
+
+            bool isTank = ai->IsTank(player);
+
+            // Only queue people who actually need a heal. Full-health tanks used
+            // to always enter the list and then steal healer index slots, leaving
+            // injured DPS/healers unhealed while a second healer idled.
+            if (health < sPlayerbotAIConfig.almostFullHealth && !IsTargetOfSpellCast(player, predicate))
+            {
+                needHeals.push_back(player);
+            }
+            else if (isTank && preHealing && incomingDamage > 0 && health < 100)
+            {
                 needHeals.push_back(player);
             }
 
             Pet* pet = player->GetPet();
-            if (pet && CanHealPet(pet))
+            if (pet && CanHealPet(pet) && pet->GetHealthPercent() < sPlayerbotAIConfig.almostFullHealth)
             {
-                health = pet->GetHealthPercent();
-                if (health < sPlayerbotAIConfig.almostFullHealth || !IsTargetOfSpellCast(player, predicate))
-                {
-                    needHeals.push_back(pet);
-                }
-            }
-
-            if (isTank && bot->IsInGroup(player))
-            {
-                tankTargets.push_back(player);
+                needHeals.push_back(pet);
             }
         }
     }
 
-    if (needHeals.empty() && tankTargets.empty())
+    if (needHeals.empty())
     {
         return nullptr;
     }
 
-    if (needHeals.empty() && !tankTargets.empty())
-    {
-        needHeals = tankTargets;
-    }
-
     bool preHealing = ai->HasStrategy("preheal", BotState::BOT_STATE_COMBAT);
-    sort(needHeals.begin(), needHeals.end(), [preHealing](const Unit* u1, const Unit* u2) { return compareByMissingHealth(u1, u2, preHealing); });
+    PlayerbotAI* healAi = ai;
+    sort(needHeals.begin(), needHeals.end(), [healAi, preHealing](const Unit* u1, const Unit* u2)
+    {
+        return HealTriageScore(healAi, u1, preHealing) > HealTriageScore(healAi, u2, preHealing);
+    });
 
     int healerIndex = 0;
     if (!partyMembers.empty())
@@ -160,11 +177,9 @@ Unit* PartyMemberToHeal::Calculate()
     healerIndex = healerIndex % needHeals.size();
 
     // Spreading the targets over several healers is only worth doing while there
-    // is more than one worth spreading. needHeals holds every tank regardless of
-    // health, so with a single injured member the second healer's index lands on
-    // somebody at full health - the health triggers then find nothing to do, never
-    // fire, and nobody gets healed at all while the healer stands there doing
-    // damage. Fall back to whoever is worst off.
+    // is more than one worth spreading. With a single injured member the second
+    // healer's index used to land on somebody at full health. Fall back to the
+    // worst-off target.
     Unit* chosen = needHeals[healerIndex];
     if (chosen && chosen->GetHealthPercent() >= sPlayerbotAIConfig.almostFullHealth)
         chosen = needHeals[0];

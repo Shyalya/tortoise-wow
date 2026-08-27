@@ -15,6 +15,14 @@ NextAction** FrostMageStrategy::GetDefaultCombatActions()
 void FrostMageStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
     MageStrategy::InitCombatTriggers(triggers);
+
+    triggers.push_back(new TriggerNode(
+        "enemy is close",
+        NextAction::array(0, new NextAction("frost nova", ACTION_HIGH + 1), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "enemy is close",
+        NextAction::array(0, new NextAction("cone of cold", ACTION_HIGH), NULL)));
 }
 
 void FrostMageStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)

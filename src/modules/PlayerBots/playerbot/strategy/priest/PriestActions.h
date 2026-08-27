@@ -8,7 +8,7 @@ namespace ai
     BUFF_PARTY_ACTION(CastPowerWordFortitudeOnPartyAction, "power word: fortitude");
     GREATER_BUFF_PARTY_ACTION(CastPrayerOfFortitudeOnPartyAction, "prayer of fortitude");
     BUFF_ACTION(CastPowerWordShieldAction, "power word: shield");
-    HEAL_PARTY_ACTION(CastPowerWordShieldOnPartyAction, "power word: shield");
+    HEAL_PARTY_ACTION_E(CastPowerWordShieldOnPartyAction, "power word: shield", 15, HealingManaEfficiency::VERY_HIGH);
     BUFF_ACTION(CastInnerFireAction, "inner fire");
     CURE_ACTION(CastDispelMagicAction, "dispel magic");
     CURE_PARTY_ACTION(CastDispelMagicOnPartyAction, "dispel magic", DISPEL_MAGIC);
@@ -28,16 +28,16 @@ namespace ai
     BUFF_ACTION(CastPainSuppressionAction, "pain suppression");
     PROTECT_ACTION(CastPainSuppressionProtectAction, "pain suppression");
 
-    // holy
-    HEAL_ACTION(CastLesserHealAction, "lesser heal");
-    HEAL_PARTY_ACTION(CastLesserHealOnPartyAction, "lesser heal");
-    HEAL_ACTION(CastHealAction, "heal");
-    HEAL_PARTY_ACTION(CastHealOnPartyAction, "heal");
-    HEAL_ACTION(CastGreaterHealAction, "greater heal");
-    HEAL_PARTY_ACTION(CastGreaterHealOnPartyAction, "greater heal");
-    HEAL_ACTION(CastFlashHealAction, "flash heal");
-    HEAL_PARTY_ACTION(CastFlashHealOnPartyAction, "flash heal");
-    HEAL_ACTION(CastRenewAction, "renew");
+    // holy — efficiency tags drive Classic save-mana (Flash is expensive).
+    HEAL_ACTION_E(CastLesserHealAction, "lesser heal", 40, HealingManaEfficiency::MEDIUM);
+    HEAL_PARTY_ACTION_E(CastLesserHealOnPartyAction, "lesser heal", 40, HealingManaEfficiency::MEDIUM);
+    HEAL_ACTION_E(CastHealAction, "heal", 50, HealingManaEfficiency::MEDIUM);
+    HEAL_PARTY_ACTION_E(CastHealOnPartyAction, "heal", 50, HealingManaEfficiency::MEDIUM);
+    HEAL_ACTION_E(CastGreaterHealAction, "greater heal", 55, HealingManaEfficiency::MEDIUM);
+    HEAL_PARTY_ACTION_E(CastGreaterHealOnPartyAction, "greater heal", 55, HealingManaEfficiency::MEDIUM);
+    HEAL_ACTION_E(CastFlashHealAction, "flash heal", 20, HealingManaEfficiency::LOW);
+    HEAL_PARTY_ACTION_E(CastFlashHealOnPartyAction, "flash heal", 20, HealingManaEfficiency::LOW);
+    HEAL_ACTION_E(CastRenewAction, "renew", 15, HealingManaEfficiency::VERY_HIGH);
     HEAL_HOT_PARTY_ACTION(CastRenewOnPartyAction, "renew");
     // holy 2.4.3
     HEAL_PARTY_ACTION(CastPrayerOfMendingAction, "prayer of mending");

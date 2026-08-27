@@ -102,6 +102,13 @@ namespace ai
         {
             valueContexts.Add(sharedValues);
         }
+
+        // Used by optional modules (DungeonClear) via PlayerbotAiExtension.
+        void AddStrategyContext(NamedObjectContext<Strategy>* ctx) { if (ctx) strategyContexts.Add(ctx); }
+        void AddActionContext(NamedObjectContext<Action>* ctx) { if (ctx) actionContexts.Add(ctx); }
+        void AddTriggerContext(NamedObjectContext<Trigger>* ctx) { if (ctx) triggerContexts.Add(ctx); }
+        void AddValueContext(NamedObjectContext<UntypedValue>* ctx) { if (ctx) valueContexts.Add(ctx); }
+
         std::list<std::string> Save();
         void Load(std::list<std::string> data);
 

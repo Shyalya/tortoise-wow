@@ -145,17 +145,22 @@ bool ReadyCheckAction::Execute(Event& event)
     WorldPacket p = event.getPacket();
     ObjectGuid player;
     p.rpos(0);
-    if (!p.empty())
+    bool incomingReadyCheck = !p.empty();
+    if (incomingReadyCheck)
     {
         p >> player;
         if (player == bot->GetObjectGuid())
             return false;
     }
 
-	return ReadyCheck(requester);
+    if (incomingReadyCheck && sPlayerbotAIConfig.forceRebuffOnReadyCheck &&
+        !bot->IsInCombat() && ai->HasStrategy("force rebuff", BotState::BOT_STATE_NON_COMBAT))
+        return ReadyCheck(requester, true);
+
+    return ReadyCheck(requester);
 }
 
-bool ReadyCheckAction::ReadyCheck(Player* requester)
+bool ReadyCheckAction::ReadyCheck(Player* requester, bool deferForRebuff)
 {
     if (ReadyChecker::checkers.empty())
     {
@@ -200,6 +205,12 @@ bool ReadyCheckAction::ReadyCheck(Player* requester)
 
     ai->TellPlayer(requester, out, PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, false);
 
+    if (deferForRebuff)
+    {
+        ai->BeginForceRebuff(true);
+        return true;
+    }
+
     WorldPacket packet(MSG_RAID_READY_CHECK);
     packet << uint8(1);
     bot->GetSession()->HandleRaidReadyCheckOpcode(packet);
@@ -213,4 +224,41 @@ bool FinishReadyCheckAction::Execute(Event& event)
 {
     Player* requester = event.getOwner() ? event.getOwner() : GetMaster();
     return ReadyCheck(requester);
+}
+
+bool ForceRebuffAction::Execute(Event& event)
+{
+    if (bot->IsInCombat() || !ai->HasStrategy("force rebuff", BotState::BOT_STATE_NON_COMBAT))
+        return false;
+
+    ai->BeginForceRebuff(false);
+    return true;
+}
+
+bool ReadyReplyAction::isUseful()
+{
+    if (!ai->IsForceRebuffPending() || bot->IsInCombat())
+        return false;
+
+    if (bot->GetCurrentSpell(CURRENT_GENERIC_SPELL) || bot->GetCurrentSpell(CURRENT_CHANNELED_SPELL))
+        return false;
+
+    return ai->IsForceRebuffExpired() || !ai->HasForceRebuffBuffWorkThisCycle();
+}
+
+bool ReadyReplyAction::Execute(Event& event)
+{
+    if (!isUseful())
+        return false;
+
+    if (ai->ShouldReplyToReadyCheck())
+    {
+        WorldPacket packet(MSG_RAID_READY_CHECK);
+        packet << uint8(1);
+        bot->GetSession()->HandleRaidReadyCheckOpcode(packet);
+    }
+
+    ai->EndForceRebuff();
+    SetDuration(sPlayerbotAIConfig.globalCoolDown);
+    return true;
 }

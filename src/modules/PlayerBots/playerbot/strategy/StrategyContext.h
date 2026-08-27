@@ -16,6 +16,7 @@
 #include "generic/StayStrategy.h"
 #include "generic/UseFoodStrategy.h"
 #include "generic/ConserveManaStrategy.h"
+#include "generic/ForceRebuffStrategy.h"
 #include "generic/EmoteStrategy.h"
 #include "generic/TankAssistStrategy.h"
 #include "generic/DpsAssistStrategy.h"
@@ -72,6 +73,8 @@ namespace ai
             creators["emote"] = [](PlayerbotAI* ai) { return new EmoteStrategy(ai); };
             creators["passive"] = [](PlayerbotAI* ai) { return new PassiveStrategy(ai); };
             creators["conserve mana"] = [](PlayerbotAI* ai) { return new ConserveManaStrategy(ai); };
+            creators["save mana"] = [](PlayerbotAI* ai) { return new HealerAutoSaveManaStrategy(ai); };
+            creators["force rebuff"] = [](PlayerbotAI* ai) { return new ForceRebuffStrategy(ai); };
             creators["food"] = [](PlayerbotAI* ai) { return new UseFoodStrategy(ai); };
             creators["consumables"] = [](PlayerbotAI* ai) { return new ConsumableStrategy(ai); };
             creators["chat"] = [](PlayerbotAI* ai) { return new ChatCommandHandlerStrategy(ai); };
@@ -154,6 +157,7 @@ namespace ai
             creators["focus heal targets"] = [](PlayerbotAI* ai) { return new FocusHealTargetsStrategy(ai); };
             creators["focus rti targets"] = [](PlayerbotAI* ai) { return new FocusRtiTargetsStrategy(ai); };
             creators["heal interrupt"] = [](PlayerbotAI* ai) { return new HealInterruptStrategy(ai); };
+            creators["tank face"] = [](PlayerbotAI* ai) { return new TankFaceStrategy(ai); };
             creators["preheal"] = [](PlayerbotAI* ai) { return new PreHealStrategy(ai); };
             creators["wbuff"] = [](PlayerbotAI* ai) { return new WorldBuffStrategy(ai); };
             creators["wbuff travel"] = [](PlayerbotAI* ai) { return new WorldBuffTravelStrategy(ai); };

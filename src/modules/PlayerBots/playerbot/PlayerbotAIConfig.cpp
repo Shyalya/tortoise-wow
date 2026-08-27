@@ -128,6 +128,8 @@ bool PlayerbotAIConfig::Initialize()
     sLog.outString("Bot configuration read from %s.", config.GetFilename().c_str());
 
     enabled = config.GetBoolDefault("AiPlayerbot.Enabled", false);
+    autoSaveMana = config.GetBoolDefault("AiPlayerbot.AutoSaveMana", true);
+    forceRebuffOnReadyCheck = config.GetBoolDefault("AiPlayerbot.ForceRebuffOnReadyCheck", false);
     if (!enabled)
     {
         sLog.outString("AI Playerbot is Disabled in aiplayerbot.conf");
@@ -191,6 +193,7 @@ bool PlayerbotAIConfig::Initialize()
     almostFullHealth = config.GetIntDefault("AiPlayerbot.AlmostFullHealth", 90);
     lowMana = config.GetIntDefault("AiPlayerbot.LowMana", 15);
     mediumMana = config.GetIntDefault("AiPlayerbot.MediumMana", 40);
+    saveManaThreshold = config.GetIntDefault("AiPlayerbot.SaveManaThreshold", 60);
 
     randomGearMaxLevel = config.GetIntDefault("AiPlayerbot.RandomGearMaxLevel", 500);
     randomGearMaxDiff = config.GetIntDefault("AiPlayerbot.RandomGearMaxDiff", 9);
@@ -343,7 +346,7 @@ bool PlayerbotAIConfig::Initialize()
 
     randomChangeMultiplier = config.GetFloatDefault("AiPlayerbot.RandomChangeMultiplier", 1.0);
 
-    randomBotCombatStrategies = config.GetStringDefault("AiPlayerbot.RandomBotCombatStrategies", "-threat,+custom::say");
+    randomBotCombatStrategies = config.GetStringDefault("AiPlayerbot.RandomBotCombatStrategies", "+threat,+custom::say");
     randomBotNonCombatStrategies = config.GetStringDefault("AiPlayerbot.RandomBotNonCombatStrategies", "+custom::say");
     randomBotReactStrategies = config.GetStringDefault("AiPlayerbot.RandomBotReactStrategies", "");
     randomBotDeadStrategies = config.GetStringDefault("AiPlayerbot.RandomBotDeadStrategies", "");

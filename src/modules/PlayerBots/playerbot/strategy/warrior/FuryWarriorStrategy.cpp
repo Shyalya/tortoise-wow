@@ -61,6 +61,7 @@ void FuryWarriorStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
         "whirlwind",
         NextAction::array(0, new NextAction("whirlwind", ACTION_NORMAL + 2), NULL)));
 
+    // Keep HS queued when rage is high so GCDs are not wasted on auto-attack only.
     triggers.push_back(new TriggerNode(
         "heroic strike",
         NextAction::array(0, new NextAction("heroic strike", ACTION_NORMAL + 1), NULL)));

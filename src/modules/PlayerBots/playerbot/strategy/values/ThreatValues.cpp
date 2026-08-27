@@ -144,9 +144,12 @@ uint8 ThreatValue::Calculate(Unit* target)
     bool fleeing = target->GetMotionMaster()->GetCurrentMovementGeneratorType() == FLEEING_MOTION_TYPE ||
         target->GetMotionMaster()->GetCurrentMovementGeneratorType() == TIMED_FLEEING_MOTION_TYPE;
 
-    // return high threat if tank has no threat
+    // Tank has not established threat yet. Returning 100 here historically
+    // made every DPS ability useless on pull (bots auto-attacked only), which
+    // is why default configs carried `-threat`. Soft-throttle AoE instead:
+    // ThreatMultiplier blocks AoE at >= 50 while still allowing single-target.
     if (target->IsInCombat() && maxThreat == 0 && !fleeing)
-        return 100;
+        return 50;
 
     // return low threat if mob if fleeing
     if (maxThreat > 0 && fleeing)

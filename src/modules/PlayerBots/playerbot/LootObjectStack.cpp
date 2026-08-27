@@ -261,6 +261,12 @@ bool LootObject::IsLootPossible(Player* bot)
         GameObject* go = ai->GetGameObject(guid);
         if (go)
         {
+            if (go->HasFlag(GAMEOBJECT_FLAGS, GO_FLAG_NO_INTERACT))
+                return false;
+
+            if (go->HasFlag(GAMEOBJECT_FLAGS, GO_FLAG_INTERACT_COND) && !go->ActivateToQuest(bot))
+                return false;
+
             // Ignore for mining nodes and herbs
             if (skillId != SKILL_MINING && skillId != SKILL_HERBALISM)
             {
@@ -390,4 +396,3 @@ std::vector<LootObject> LootObjectStack::OrderByDistance(float maxDistance)
         result.push_back(i->second);
     return result;
 }
-

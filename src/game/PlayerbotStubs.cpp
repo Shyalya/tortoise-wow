@@ -49,3 +49,5 @@ bool ChatHandler::HandleAhBotCommand(char*)
     { SendSysMessage("AHBot not built (BUILD_PLAYERBOTS=OFF)."); return true; }
 bool ChatHandler::HandlePerfMonCommand(char*)
     { SendSysMessage("Bot performance monitor not built (BUILD_PLAYERBOTS=OFF)."); return true; }
+bool ChatHandler::HandleDungeonClearCommand(char*)
+    { SendSysMessage("DungeonClear not built (BUILD_DUNGEON_CLEAR=OFF)."); return true; }

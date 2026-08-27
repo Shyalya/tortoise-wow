@@ -26,13 +26,17 @@ bool LootAction::Execute(Event& event)
     std::vector<LootObject> candidates = AI_VALUE(LootObjectStack*, "available loot")->OrderByDistance(sPlayerbotAIConfig.lootDistance);
     for (LootObject& candidate : candidates)
     {
+        Creature* candidateCreature = ai->GetCreature(candidate.guid);
+        if (HAS_AI_VALUE("dungeon clear ignore chests")
+            && AI_VALUE(bool, "dungeon clear ignore chests") && !candidateCreature)
+            continue;
+
         if (master && master != bot)
         {
-            Creature* c = ai->GetCreature(candidate.guid);
-            if (c && sServerFacade.GetDeathState(c) == CORPSE)
+            if (candidateCreature && sServerFacade.GetDeathState(candidateCreature) == CORPSE)
             {
-                float safeRange = sPlayerbotAIConfig.followDistance + bot->GetMaxLootDistance(c);
-                if (sServerFacade.GetDistance2d(master, c) > safeRange)
+                float safeRange = sPlayerbotAIConfig.followDistance + bot->GetMaxLootDistance(candidateCreature);
+                if (sServerFacade.GetDistance2d(master, candidateCreature) > safeRange)
                     continue;
             }
         }
@@ -181,6 +185,15 @@ bool OpenLootAction::DoLoot(LootObject& lootObject)
     }
 
     GameObject* go = ai->GetGameObject(lootObject.guid);
+    if (go && go->HasFlag(GAMEOBJECT_FLAGS, GO_FLAG_NO_INTERACT))
+        return false;
+
+    // Conditional objects are only usable when the bot actually satisfies the
+    // server-side quest condition. Keep stale/nearby objects out of the loot
+    // action instead of repeatedly sending an invalid open request.
+    if (go && go->HasFlag(GAMEOBJECT_FLAGS, GO_FLAG_INTERACT_COND) && !go->ActivateToQuest(bot))
+        return false;
+
     if (go && sServerFacade.GetDistance2d(bot, go) > INTERACTION_DISTANCE)
         return false;
 
@@ -440,6 +453,44 @@ bool StoreLootAction::Execute(Event& event)
         ItemPrototype const *proto = sItemStorage.LookupEntry<ItemPrototype>(itemid);
         if (!proto)
             continue;
+
+        // DungeonClear exposes this as an optional value instead of making
+        // the general loot system depend on the module.  Keep low-quality
+        // vendor trash out of long dungeon runs, but never discard items that
+        // have an actionable reason to be kept.
+        uint32 const dungeonClearMinQuality = HAS_AI_VALUE("dungeon clear loot quality minimum")
+            ? AI_VALUE(uint32, "dungeon clear loot quality minimum") : 0;
+        if (dungeonClearMinQuality && proto->Quality < dungeonClearMinQuality)
+        {
+            std::set<uint32>& alwaysLootItems = AI_VALUE(std::set<uint32>&, "always loot list");
+            bool exempt = alwaysLootItems.find(itemid) != alwaysLootItems.end()
+                || proto->StartQuest || proto->Class == ITEM_CLASS_QUEST
+                || ItemUsageValue::IsNeededForQuest(bot, itemid)
+                || ItemUsageValue::IsItemUsedToCraftAnything(proto)
+                || ItemUsageValue::IsHpFoodOrDrink(proto)
+                || ItemUsageValue::IsManaFoodOrDrink(proto)
+                || ItemUsageValue::IsHealingPotion(proto)
+                || ItemUsageValue::IsManaPotion(proto)
+                || ItemUsageValue::IsBandage(proto)
+                || ItemUsageValue::IsAntiVenom(proto);
+
+            if (!exempt)
+            {
+                ItemUsage const usage = ItemUsageValue::QueryItemUsageForEquip(itemQualifier, bot);
+                exempt = usage == ItemUsage::ITEM_USAGE_EQUIP
+                    || usage == ItemUsage::ITEM_USAGE_QUEST
+                    || usage == ItemUsage::ITEM_USAGE_USE
+                    || usage == ItemUsage::ITEM_USAGE_SKILL
+                    || usage == ItemUsage::ITEM_USAGE_KEEP;
+            }
+
+            if (!exempt)
+            {
+                sLog.outDebug("[BOT LOOT] %s: skip item=%u quality=%u below DungeonClear minimum=%u",
+                    bot->GetName(), itemid, proto->Quality, dungeonClearMinQuality);
+                continue;
+            }
+        }
 
         LootItem* lootItem = loot->GetLootItemInSlot(itemindex);
 

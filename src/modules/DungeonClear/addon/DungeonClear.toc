@@ -1,0 +1,8 @@
+## Interface: 1800
+## Title: DungeonClear
+## Notes: Companion panel for Tortoise DungeonClear (ported from mod-dungeon-clear-addon).
+## Author: Jared / Tortoise-WoW
+## Version: 3.5-turtle
+## SavedVariables: DungeonClearDB
+
+DungeonClear.lua

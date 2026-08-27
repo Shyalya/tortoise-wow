@@ -32,6 +32,12 @@ void FireMageStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
     MageStrategy::InitCombatTriggers(triggers);
 
+    // Instant Fire Blast whenever it is ready - biggest Classic fire DPS leak was
+    // only using it in execute range.
+    triggers.push_back(new TriggerNode(
+        "very often",
+        NextAction::array(0, new NextAction("fire blast", ACTION_NORMAL + 3), NULL)));
+
     triggers.push_back(new TriggerNode(
         "no fire vulnerability",
         NextAction::array(0, new NextAction("scorch", ACTION_NORMAL + 2), NULL)));

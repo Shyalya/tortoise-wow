@@ -12,6 +12,7 @@
 #include "actions/WorldPacketActionContext.h"
 #include "values/ValueContext.h"
 #include "values/SharedValueContext.h"
+#include "playerbot/PlayerbotAiExtension.h"
 
 
 using namespace ai;
@@ -35,6 +36,9 @@ AiObjectContext::AiObjectContext(PlayerbotAI* ai) : PlayerbotAIAware(ai)
     valueContexts.Add(new ValueContext());
 
     //valueContexts.Add(&sSharedValueContext);
+
+    // Optional modules (DungeonClear, …) append their contexts here.
+    sPlayerbotAiExtension.ApplyToContext(this);
 }
 
 void AiObjectContext::ClearValues(std::string findName)

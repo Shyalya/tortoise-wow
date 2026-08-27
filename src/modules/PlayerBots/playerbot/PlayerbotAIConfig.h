@@ -113,6 +113,8 @@ public:
 	bool IsInPvpProhibitedZone(uint32 id);
 
     bool enabled;
+    bool autoSaveMana;
+    bool forceRebuffOnReadyCheck;
     bool allowGuildBots;
     bool allowMultiAccountAltBots;
     uint32 globalCoolDown, reactDelay, maxWaitForMove, expireActionTime, dispelAuraDuration, passiveDelay, repeatDelay,
@@ -123,6 +125,8 @@ public:
         aoeRadius, rpgDistance, targetPosRecalcDistance, farDistance, healDistance, healDistanceBg, aggroDistance, proximityDistance, maxFreeMoveDistance, freeMoveDelay, walkDistance;
     uint32 criticalHealth, lowHealth, mediumHealth, almostFullHealth;
     uint32 lowMana, mediumMana;
+    // Healer auto save-mana: skip inefficient heals below this mana %.
+    uint32 saveManaThreshold;
 
     uint32 openGoSpell;
     bool randomBotAutologin;
@@ -473,4 +477,3 @@ private:
 };
 
 #define sPlayerbotAIConfig MaNGOS::Singleton<PlayerbotAIConfig>::Instance()
-

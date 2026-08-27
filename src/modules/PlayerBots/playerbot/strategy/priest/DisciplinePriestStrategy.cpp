@@ -23,6 +23,12 @@ DisciplinePriestStrategy::DisciplinePriestStrategy(PlayerbotAI* ai) : PriestStra
 
 #ifdef MANGOSBOT_ZERO // Vanilla
 
+NextAction** DisciplinePriestStrategy::GetDefaultCombatActions()
+{
+    // Mana-free wand filler between heals — allowed in dungeons/raids.
+    return NextAction::array(0, new NextAction("shoot", ACTION_IDLE), NULL);
+}
+
 void DisciplinePriestStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
     PriestStrategy::InitCombatTriggers(triggers);
@@ -35,7 +41,7 @@ void DisciplinePriestStrategy::InitCombatTriggers(std::list<TriggerNode*>& trigg
     triggers.push_back(new TriggerNode(
         "party member low health",
         NextAction::array(0, new NextAction("power word: shield on party", ACTION_MEDIUM_HEAL + 2),
-                             new NextAction("greater heal on party", ACTION_MEDIUM_HEAL + 1), NULL)));
+                             new NextAction("flash heal on party", ACTION_MEDIUM_HEAL + 1), NULL)));
 
     triggers.push_back(new TriggerNode(
         "party member medium health",
@@ -369,6 +375,11 @@ void DisciplinePriestCureRaidStrategy::InitNonCombatTriggers(std::list<TriggerNo
 
 #endif
 #ifdef MANGOSBOT_ONE // TBC
+
+NextAction** DisciplinePriestStrategy::GetDefaultCombatActions()
+{
+    return NextAction::array(0, new NextAction("shoot", ACTION_IDLE), NULL);
+}
 
 void DisciplinePriestStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
@@ -728,6 +739,11 @@ void DisciplinePriestCureRaidStrategy::InitNonCombatTriggers(std::list<TriggerNo
 
 #endif
 #ifdef MANGOSBOT_TWO // WOTLK
+
+NextAction** DisciplinePriestStrategy::GetDefaultCombatActions()
+{
+    return NextAction::array(0, new NextAction("shoot", ACTION_IDLE), NULL);
+}
 
 void DisciplinePriestStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {

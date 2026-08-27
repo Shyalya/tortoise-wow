@@ -999,6 +999,7 @@ ChatCommand * ChatHandler::getCommandTable()
         { "bot",            SEC_PLAYER,           false, &ChatHandler::HandlePlayerbotCommand,           "", nullptr },
         { "rndbot",         SEC_PLAYER,          true,  &ChatHandler::HandleRandomPlayerbotCommand,     "", nullptr },
         { "ahbot",          SEC_MODERATOR,       true,  &ChatHandler::HandleAhBotCommand,               "", nullptr },
+        { "dc",             SEC_PLAYER,          false, &ChatHandler::HandleDungeonClearCommand,        "", nullptr },
         { "perfmon",        SEC_MODERATOR,       true,  &ChatHandler::HandlePerfMonCommand,             "", nullptr },
         { nullptr,          0,                   false, nullptr,                                        "", nullptr }
     };

@@ -716,6 +716,18 @@ public:
     bool IsStateActive(BotState state) const;
     time_t GetCombatStartTime() const;
 
+    void BeginForceRebuff(bool replyToReadyCheck = false);
+    void EndForceRebuff();
+    bool IsForceRebuffPending() const;
+    bool IsForceRebuffExpired() const;
+    bool ShouldReplyToReadyCheck() const;
+    void RollForceRebuffCycle();
+    void NoteForceRebuffBuffProposed();
+    void NoteForceRebuffBuffWork();
+    bool HasForceRebuffBuffWorkThisCycle() const;
+    bool IsForceRebuffBuffCompleted(const std::string& spell, Unit* target) const;
+    void MarkForceRebuffBuffCompleted(const std::string& spell, Unit* target);
+
     void OnCombatStarted();
     void OnCombatEnded();
     void OnDeath();
@@ -816,6 +828,11 @@ protected:
     bool m_recordIncommingMessages = false;
     std::vector<std::string> m_recordedMessages;
     Event lastEvent;
+    bool forceRebuffPending = false;
+    bool forceRebuffReplyToReadyCheck = false;
+    bool forceRebuffBuffWorkThisCycle = false;
+    time_t forceRebuffStartTime = 0;
+    std::set<std::string> forceRebuffCompletedBuffs;
 
 public:
     void RecordMessages(bool record, bool incomming = false) { m_recordMessages = record; m_recordIncommingMessages = incomming; if (!record) m_recordedMessages.clear(); }

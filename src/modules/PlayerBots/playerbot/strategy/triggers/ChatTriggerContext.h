@@ -106,6 +106,7 @@ namespace ai
             creators["who"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "who"); };
             creators["where"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "where"); };
             creators["save mana"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "save mana"); };
+            creators["rebuff"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "rebuff"); };
             creators["max dps"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "max dps"); };
             creators["possible attack targets"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "possible attack targets"); };
             creators["attackers"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "attackers"); };

@@ -159,6 +159,11 @@ void PriestPvpStrategy::InitDeadTriggers(std::list<TriggerNode*>& triggers)
 void PriestPveStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
     ClassPveStrategy::InitCombatTriggers(triggers);
+
+    // Fade on threat in 5-mans too - not only raids (mod-playerbots style).
+    triggers.push_back(new TriggerNode(
+        "medium threat",
+        NextAction::array(0, new NextAction("fade", ACTION_DISPEL), NULL)));
 }
 
 void PriestPveStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)

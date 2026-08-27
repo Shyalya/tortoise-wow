@@ -5,6 +5,30 @@
 
 using namespace ai;
 
+namespace
+{
+    bool HasEngagedGroupTank(PlayerbotAI* ai)
+    {
+        Player* bot = ai->GetBot();
+        Group* group = bot ? bot->GetGroup() : nullptr;
+        if (!group)
+            return false;
+
+        Group::MemberSlotList const& slots = group->GetMemberSlots();
+        for (Group::MemberSlotList::const_iterator i = slots.begin(); i != slots.end(); ++i)
+        {
+            Player* member = sObjectMgr.GetPlayer(i->guid);
+            if (!member || member == bot || !member->IsAlive() || !PlayerbotAI::IsTank(member))
+                continue;
+
+            if (member->IsInCombat() || member->GetVictim())
+                return true;
+        }
+
+        return false;
+    }
+}
+
 void CombatStrategy::InitCombatTriggers(std::list<TriggerNode*> &triggers)
 {
     triggers.push_back(new TriggerNode(
@@ -99,11 +123,12 @@ bool WaitForAttackStrategy::ShouldWait(PlayerbotAI* ai)
     // Only check if the bot has the strategy enabled
     if (ai->HasStrategy("wait for attack", BotState::BOT_STATE_COMBAT))
     {
-        // Only check if bot is in a group with a real player
+        // Grouped pulls: give the tank a short head-start on threat.
+        // Works for real masters and all-bot groups (DungeonClear).
         Player* bot = ai->GetBot();
-        AiObjectContext* context = ai->GetAiObjectContext();
-        if (bot->GetGroup() && ai->HasRealPlayerMaster())
+        if (bot->GetGroup() && HasEngagedGroupTank(ai) && ai->IsStateActive(BotState::BOT_STATE_COMBAT))
         {
+            AiObjectContext* context = ai->GetAiObjectContext();
             // Don't wait if the current target is an enemy player
             bool enemyPlayer = false;
             Unit* target = ai->GetAiObjectContext()->GetValue<Unit*>("current target")->Get();
@@ -112,14 +137,19 @@ bool WaitForAttackStrategy::ShouldWait(PlayerbotAI* ai)
                 Player* player = dynamic_cast<Player*>(target);
                 if (player)
                 {
-                    enemyPlayer = !sServerFacade.IsFriendlyTo(target, player);
+                    enemyPlayer = !sServerFacade.IsFriendlyTo(bot, player);
                 }
             }
 
             if (!enemyPlayer)
             {
                 // Check if bot is currently in combat
-                const time_t combatStartTime = AI_VALUE(time_t, "combat start time");
+                time_t combatStartTime = AI_VALUE(time_t, "combat start time");
+                if (!combatStartTime)
+                {
+                    combatStartTime = time(0);
+                    SET_AI_VALUE(time_t, "combat start time", combatStartTime);
+                }
                 if (combatStartTime > 0)
                 {
                     // Check the amount of time elapsed from the combat start
@@ -168,4 +198,11 @@ void HealInterruptStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers
 void HealInterruptStrategy::InitReactionTriggers(std::list<TriggerNode*>& triggers)
 {
     InitCombatTriggers(triggers);
+}
+
+void TankFaceStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
+{
+    triggers.push_back(new TriggerNode(
+        "has aggro",
+        NextAction::array(0, new NextAction("tank face", ACTION_MOVE + 2), NULL)));
 }

@@ -5,6 +5,7 @@
 #include <iomanip>
 
 #include "playerbot/AiFactory.h"
+#include "playerbot/PlayerbotAiExtension.h"
 
 #include "Movement/MovementGenerator.h"
 #include "Maps/GridNotifiers.h"
@@ -1014,6 +1015,80 @@ time_t PlayerbotAI::GetCombatStartTime() const
     return aiObjectContext->GetValue<time_t>("combat start time")->Get();
 }
 
+namespace
+{
+    std::string ForceRebuffBuffKey(const std::string& spell, Unit* target)
+    {
+        return spell + ":" + std::to_string(target ? target->GetObjectGuid().GetRawValue() : 0);
+    }
+}
+
+void PlayerbotAI::BeginForceRebuff(bool replyToReadyCheck)
+{
+    forceRebuffPending = true;
+    forceRebuffReplyToReadyCheck = forceRebuffReplyToReadyCheck || replyToReadyCheck;
+    forceRebuffStartTime = time(0);
+    forceRebuffBuffWorkThisCycle = false;
+    forceRebuffCompletedBuffs.clear();
+}
+
+void PlayerbotAI::EndForceRebuff()
+{
+    forceRebuffPending = false;
+    forceRebuffReplyToReadyCheck = false;
+    forceRebuffBuffWorkThisCycle = false;
+    forceRebuffStartTime = 0;
+    forceRebuffCompletedBuffs.clear();
+}
+
+bool PlayerbotAI::IsForceRebuffPending() const
+{
+    return forceRebuffPending;
+}
+
+bool PlayerbotAI::IsForceRebuffExpired() const
+{
+    return forceRebuffPending && forceRebuffStartTime && time(0) - forceRebuffStartTime >= 120;
+}
+
+bool PlayerbotAI::ShouldReplyToReadyCheck() const
+{
+    return forceRebuffPending && forceRebuffReplyToReadyCheck;
+}
+
+void PlayerbotAI::RollForceRebuffCycle()
+{
+    if (forceRebuffPending)
+        forceRebuffBuffWorkThisCycle = false;
+}
+
+void PlayerbotAI::NoteForceRebuffBuffProposed()
+{
+    if (forceRebuffPending && !IsForceRebuffExpired() && !bot->IsInCombat())
+        forceRebuffBuffWorkThisCycle = true;
+}
+
+void PlayerbotAI::NoteForceRebuffBuffWork()
+{
+    NoteForceRebuffBuffProposed();
+}
+
+bool PlayerbotAI::HasForceRebuffBuffWorkThisCycle() const
+{
+    return forceRebuffBuffWorkThisCycle;
+}
+
+bool PlayerbotAI::IsForceRebuffBuffCompleted(const std::string& spell, Unit* target) const
+{
+    return target && forceRebuffCompletedBuffs.find(ForceRebuffBuffKey(spell, target)) != forceRebuffCompletedBuffs.end();
+}
+
+void PlayerbotAI::MarkForceRebuffBuffCompleted(const std::string& spell, Unit* target)
+{
+    if (forceRebuffPending && !IsForceRebuffExpired() && target)
+        forceRebuffCompletedBuffs.insert(ForceRebuffBuffKey(spell, target));
+}
+
 void PlayerbotAI::OnCombatStarted()
 {
     if(!IsStateActive(BotState::BOT_STATE_COMBAT))
@@ -1079,6 +1154,7 @@ void PlayerbotAI::OnDeath()
         if (bot->GetCorpse() && bot->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_GHOST))
         {
             ChangeEngine(BotState::BOT_STATE_DEAD);
+            sPlayerbotAiExtension.RunStrategyGates(this, bot);
             return;
         }
 
@@ -1165,6 +1241,7 @@ void PlayerbotAI::OnDeath()
         SET_AI_VALUE2(bool, "manual bool", "enemies near corpse", false);
         SET_AI_VALUE2(bool, "manual bool", "enemies near graveyard", false);
         ChangeEngine(BotState::BOT_STATE_DEAD);
+        sPlayerbotAiExtension.RunStrategyGates(this, bot);
     }
 }
 
@@ -1180,6 +1257,7 @@ void PlayerbotAI::OnResurrected()
         }
 
         ChangeEngine(BotState::BOT_STATE_NON_COMBAT);
+        sPlayerbotAiExtension.RunStrategyGates(this, bot);
     }
 }
 
@@ -2310,6 +2388,14 @@ void PlayerbotAI::DoNextAction(bool min)
 #ifdef MANGOSBOT_ZERO
     if (bot->InBattleGround() && !HasStrategy("battleground", BotState::BOT_STATE_NON_COMBAT))
         ResetStrategies();
+
+    // Classic healers keep offdps from open-world init; drop it once they enter an instance.
+    if (HasStrategy("offdps", BotState::BOT_STATE_COMBAT))
+    {
+        Map* map = bot->GetMap();
+        if (bot->InBattleGround() || (map && (map->IsDungeon() || map->IsRaid())))
+            ChangeStrategy("-offdps", BotState::BOT_STATE_COMBAT);
+    }
 #else
     if ((bot->InBattleGround() && (!bot->IsBeingTeleported() && !bot->InArena()) && !HasStrategy("battleground", BotState::BOT_STATE_NON_COMBAT)) || ((!bot->IsBeingTeleported()&&bot->InArena()) && !HasStrategy("arena", BotState::BOT_STATE_NON_COMBAT)))
         ResetStrategies();
@@ -2638,6 +2724,11 @@ void PlayerbotAI::ResetStrategies(bool autoLoad)
 
     if (bot->IsInWorld())
         ApplyInstanceStrategies(bot->GetMapId());
+
+    // Optional modules (DungeonClear) re-assert dungeon-gated strategies after
+    // every rebuild — ResetStrategies wipes the engine and would otherwise drop
+    // mid-run triggers until the next map change.
+    sPlayerbotAiExtension.RunStrategyGates(this, bot);
 }
 
 bool PlayerbotAI::IsRanged(Player* player, bool inGroup)
@@ -2812,6 +2903,8 @@ void PlayerbotAI::ApplyInstanceStrategies(uint32 mapId, bool /*tellMaster*/)
 
     if (mapId == 409)
         ChangeStrategy("+molten core", BotState::BOT_STATE_ALL);
+
+    sPlayerbotAiExtension.RunStrategyGates(this, bot);
 }
 
 namespace MaNGOS

@@ -148,6 +148,16 @@ namespace ai
         virtual bool isPossible() override;
     };
 
+    // Keep the mob's frontal cone pointed away from non-tank party members
+    // (cleaves / breaths). Only moves when the tank already has aggro.
+    class TankFaceAction : public MovementAction
+    {
+    public:
+        TankFaceAction(PlayerbotAI* ai) : MovementAction(ai, "tank face") {}
+        bool Execute(Event& event) override;
+        bool isUseful() override;
+    };
+
     class MoveOutOfCollisionAction : public MovementAction
     {
     public:
