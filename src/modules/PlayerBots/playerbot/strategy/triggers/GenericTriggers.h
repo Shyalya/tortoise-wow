@@ -179,6 +179,13 @@ namespace ai
         TargetOfFearCastTrigger(PlayerbotAI* ai, std::string name = "target of fear cast") : TargetOfCastedAuraTypeTrigger(ai, name, AuraType::SPELL_AURA_MOD_FEAR) {}
     };
 
+    class AssistSummoningRitualTrigger : public Trigger
+    {
+    public:
+        AssistSummoningRitualTrigger(PlayerbotAI* ai, std::string name = "assist summoning ritual", int checkInterval = 1) : Trigger(ai, name, checkInterval) {}
+        bool IsActive() override;
+    };
+
     class DeflectSpellTrigger : public SpellTrigger
     {
     public:

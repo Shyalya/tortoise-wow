@@ -30,6 +30,15 @@ bool HighManaTrigger::IsActive()
     return AI_VALUE2(bool, "has mana", "self target") && AI_VALUE2(uint8, "mana", "self target") < 65;
 }
 
+bool AssistSummoningRitualTrigger::IsActive()
+{
+    if (!ai->HasActivePlayerMaster())
+        return false;
+
+    Action* action = context->GetAction("assist summoning ritual");
+    return action && action->isUseful();
+}
+
 bool AlmostFullManaTrigger::IsActive()
 {
     return AI_VALUE2(bool, "has mana", "self target") && AI_VALUE2(uint8, "mana", "self target") > 85;

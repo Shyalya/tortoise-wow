@@ -97,6 +97,7 @@ namespace ai
             creators["crpg"] = [](PlayerbotAI* ai) { return new CRpgAction(ai); };
             creators["choose rpg target"] = [](PlayerbotAI* ai) { return new ChooseRpgTargetAction(ai); };
             creators["move to rpg target"] = [](PlayerbotAI* ai) { return new MoveToRpgTargetAction(ai); };
+            creators["assist summoning ritual"] = [](PlayerbotAI* ai) { return new AssistSummoningRitualAction(ai); };
 			creators["travel"] = [](PlayerbotAI* ai) { return new TravelAction(ai); };
 			creators["choose travel target"] = [](PlayerbotAI* ai) { return new ChooseTravelTargetAction(ai); };
             creators["choose group travel target"] = [](PlayerbotAI* ai) { return new ChooseGroupTravelTargetAction(ai); };
