@@ -9,8 +9,8 @@ namespace ai
         SellAction(PlayerbotAI* ai, std::string name = "sell") : ChatCommandAction(ai, name) {}
         virtual bool Execute(Event& event) override;
 
-        bool Sell(Player* requester, FindItemVisitor* visitor);
-        bool Sell(Player* requester, Item* item);
+        bool Sell(Player* requester, FindItemVisitor* visitor, ObjectGuid vendorGuid = ObjectGuid());
+        bool Sell(Player* requester, Item* item, ObjectGuid vendorGuid = ObjectGuid());
 
 #ifdef GenerateBotHelp
         virtual std::string GetHelpName() { return "sell"; } //Must equal iternal name

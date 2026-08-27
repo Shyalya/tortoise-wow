@@ -9,7 +9,13 @@ using namespace ai;
 bool RepairAllAction::Execute(Event& event)
 {
     Player* requester = event.getOwner() ? event.getOwner() : GetMaster();
-    std::list<ObjectGuid> npcs = AI_VALUE(std::list<ObjectGuid>, "nearest npcs");
+    std::list<ObjectGuid> npcs;
+    ObjectGuid npcGuid = event.getObject();
+    if (npcGuid)
+        npcs.push_back(npcGuid);
+    else
+        npcs = AI_VALUE(std::list<ObjectGuid>, "nearest npcs");
+
     for (std::list<ObjectGuid>::iterator i = npcs.begin(); i != npcs.end(); i++)
     {
         Creature *unit = bot->GetNPCIfCanInteractWith(*i, UNIT_NPC_FLAG_REPAIR);
@@ -86,6 +92,9 @@ bool RepairAllAction::Execute(Event& event)
 
         return durability < 100 && AI_VALUE(uint8, "durability inventory") > durability;
     }
+
+    if (event.getSource() == "master gossip maintenance")
+        return false;
 
     ai->TellPlayerNoFacing(requester, "Cannot find any npc to repair at");
     return false;

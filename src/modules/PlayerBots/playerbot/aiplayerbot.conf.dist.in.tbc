@@ -360,6 +360,12 @@ AiPlayerbot.SyncQuestWithPlayer = 0
 # Bot automatically trains spells when talking to trainer (yes = train all available spells as long as the bot has the money, free = auto trains with no money cost, no = only list spells)
 AiPlayerbot.AutoTrainSpells = yes
 
+# When a real master opens gossip with a nearby vendor or repair NPC, controlled group bots can opportunistically
+# sell their normal vendor-trash and repair at that same NPC. This reuses the existing sell/repair rules and does
+# not buy consumables or other vendor items automatically.
+# Default: 0 (disabled)
+AiPlayerbot.AutoMaintenanceOnMasterVendor = 0
+
 # Bot automatically picks talent points based on current spec (full = pick spec based on probability if multiple are like current spec, semi = only apply points if 1 spec looks like current spec, no = no auto talent points)
 AiPlayerbot.AutoPickTalents = full
 
