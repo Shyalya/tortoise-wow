@@ -61,13 +61,19 @@ void ArmsWarriorStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
         "enemy out of melee",
         NextAction::array(0, new NextAction("charge", ACTION_MOVE + 1), NULL)));
 
+    // Open with rage so Mortal Strike / Overpower are not delayed.
+    triggers.push_back(new TriggerNode(
+        "bloodrage",
+        NextAction::array(0, new NextAction("bloodrage", ACTION_HIGH + 1), NULL)));
+
     triggers.push_back(new TriggerNode(
         "target critical health",
         NextAction::array(0, new NextAction("execute", ACTION_HIGH + 2), NULL)));
 
+    // Overpower window is short — keep it above MS/WW.
     triggers.push_back(new TriggerNode(
         "overpower",
-        NextAction::array(0, new NextAction("overpower", ACTION_HIGH), NULL)));
+        NextAction::array(0, new NextAction("overpower", ACTION_HIGH + 2), NULL)));
 
     triggers.push_back(new TriggerNode(
         "mortal strike",

@@ -1036,6 +1036,12 @@ AiPlayerbot.FleeingEnabled = 1
 #AiPlayerbot.AlmostFullHealth = 85
 #AiPlayerbot.LowMana = 15
 #AiPlayerbot.MediumMana = 40
+# Enable healer-specific mana conservation in combat and while preparing buffs.
+AiPlayerbot.AutoSaveMana = 1
+# Below this mana %, healers skip inefficient heals on lightly injured targets (Classic).
+AiPlayerbot.SaveManaThreshold = 60
+# Defer ready-check replies until the bot has refreshed its persistent buffs.
+AiPlayerbot.ForceRebuffOnReadyCheck = 0
 
 # Random bot default strategies (applied after defaults)
 AiPlayerbot.RandomBotCombatStrategies = +dps,+dps assist,+threat,+dungeon

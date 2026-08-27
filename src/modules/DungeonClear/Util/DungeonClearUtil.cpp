@@ -11,14 +11,42 @@
 #include "Chat/Chat.h"
 #include "DcValueKeys.h"
 #include "DcRunState.h"
+#include "Settings/DcSettings.h"
 #include "Value/DungeonBossesValue.h"
 #include "Value/NextDungeonBossValue.h"
 #include <optional>
 #include <unordered_set>
 #include <vector>
 
+namespace
+{
+    bool IsUsableHostile(Unit* unit)
+    {
+        if (!unit || !unit->IsAlive() || unit->GetTypeId() != TYPEID_UNIT)
+            return false;
+        Creature* creature = static_cast<Creature*>(unit);
+        return !creature->IsCivilian() && !creature->IsCritter();
+    }
+}
+
 namespace DcUtil
 {
+    namespace
+    {
+        DcRunState* OverrideState(Player* anyMember)
+        {
+            if (!anyMember)
+                return nullptr;
+            Player* tank = FindEnabledTank(anyMember);
+            if (!tank)
+                tank = anyMember;
+            PlayerbotAI* tankAi = tank->GetPlayerbotAI();
+            if (!tankAi || !tankAi->GetAiObjectContext())
+                return nullptr;
+            return &tankAi->GetAiObjectContext()->GetValue<DcRunState&>(DcKey::RunState)->Get();
+        }
+    }
+
     bool IsRealCommander(Player* owner, Player* bot)
     {
         if (!owner || !bot)
@@ -125,6 +153,169 @@ namespace DcUtil
         return st && st->enabled && st->paused;
     }
 
+    bool EffectivePreventBotRelease(Player* anyMember)
+    {
+        DcRunState* state = OverrideState(anyMember);
+        return state && state->enabled && state->hasPreventBotReleaseOverride
+            ? state->preventBotReleaseOverride : sDcSettings.preventBotRelease;
+    }
+
+    bool DungeonClearShouldPreventAutoRelease(Player* bot)
+    {
+        return IsEnabledRun(bot) && EffectivePreventBotRelease(bot);
+    }
+
+    uint32 EffectiveLootQualityMin(Player* anyMember)
+    {
+        DcRunState* state = OverrideState(anyMember);
+        return state && state->enabled && state->hasLootQualityOverride
+            ? state->lootQualityOverride : sDcSettings.lootQualityMin;
+    }
+
+    bool EffectiveIgnoreChests(Player* anyMember)
+    {
+        DcRunState* state = OverrideState(anyMember);
+        return state && state->enabled && state->hasIgnoreChestsOverride
+            ? state->ignoreChestsOverride : true;
+    }
+
+    float EffectivePartyMaxSpread(Player* anyMember)
+    {
+        DcRunState* state = OverrideState(anyMember);
+        return state && state->enabled && state->hasPartyMaxSpreadOverride
+            ? state->partyMaxSpreadOverride : sDcSettings.partyMaxSpread;
+    }
+
+    bool PartyNeedsRegroup(Player* anyMember)
+    {
+        if (!anyMember || !anyMember->GetGroup())
+            return false;
+
+        float const maxSpread = EffectivePartyMaxSpread(anyMember);
+        uint32 const mapId = anyMember->GetMapId();
+        for (GroupReference* ref = anyMember->GetGroup()->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->getSource();
+            if (!member || member == anyMember || !member->IsInWorld()
+                || member->GetMapId() != mapId || !member->IsAlive())
+                continue;
+            if (anyMember->GetDistance(member) > maxSpread)
+                return true;
+        }
+        return false;
+    }
+
+    float EffectiveRestHealth(Player* anyMember)
+    {
+        DcRunState* state = OverrideState(anyMember);
+        return state && state->enabled && state->hasRestHealthOverride
+            ? state->restHealthOverride : sDcSettings.restHealth;
+    }
+
+    float EffectiveRestMana(Player* anyMember)
+    {
+        DcRunState* state = OverrideState(anyMember);
+        return state && state->enabled && state->hasRestManaOverride
+            ? state->restManaOverride : sDcSettings.restMana;
+    }
+
+    uint32 EffectivePullMax(Player* anyMember)
+    {
+        DcRunState* state = OverrideState(anyMember);
+        return state && state->enabled && state->hasPullMaxOverride
+            ? state->pullMaxOverride : sDcSettings.pullDynamicMaxLeeroyMobs;
+    }
+
+    bool PartyNeedsRest(Player* anyMember)
+    {
+        if (!anyMember)
+            return false;
+
+        Group* group = anyMember->GetGroup();
+        if (!group)
+        {
+            if (!anyMember->IsAlive())
+                return false;
+            if (anyMember->GetHealthPercent() < EffectiveRestHealth(anyMember))
+                return true;
+            uint32 maxMana = anyMember->GetMaxPower(POWER_MANA);
+            return anyMember->GetPowerType() == POWER_MANA && maxMana
+                && (100.0f * anyMember->GetPower(POWER_MANA) / maxMana) < EffectiveRestMana(anyMember);
+        }
+
+        uint32 const mapId = anyMember->GetMapId();
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->getSource();
+            if (!member || !member->IsInWorld() || member->GetMapId() != mapId || !member->IsAlive())
+                continue;
+            if (member->GetHealthPercent() < EffectiveRestHealth(anyMember))
+                return true;
+            uint32 maxMana = member->GetMaxPower(POWER_MANA);
+            if (member->GetPowerType() == POWER_MANA && maxMana
+                && (100.0f * member->GetPower(POWER_MANA) / maxMana) < EffectiveRestMana(anyMember))
+                return true;
+        }
+        return false;
+    }
+
+    bool PartyReadyToResume(Player* anyMember)
+    {
+        if (!anyMember || !anyMember->IsInWorld() || anyMember->IsBeingTeleported())
+            return false;
+
+        Group* group = anyMember->GetGroup();
+        if (!group)
+            return anyMember->IsInWorld() && anyMember->IsAlive() && !PartyNeedsRest(anyMember);
+
+        uint32 const mapId = anyMember->GetMapId();
+        uint32 const instanceId = anyMember->GetInstanceId();
+        bool foundMember = false;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->getSource();
+            // Only online, in-world members participate in recovery.  Offline
+            // members have no GroupReference and are intentionally excluded
+            // so a disconnected player cannot deadlock a bot-only run, while
+            // every online participant must be back in this exact instance
+            // before the route resumes.
+            if (!member || !member->IsInWorld())
+                continue;
+            foundMember = true;
+            if (member->IsBeingTeleported() || member->GetMapId() != mapId
+                || member->GetInstanceId() != instanceId)
+                return false;
+            if (!member->IsAlive() || member->IsInCombat())
+                return false;
+            if (member->GetHealthPercent() < EffectiveRestHealth(anyMember))
+                return false;
+            uint32 maxMana = member->GetMaxPower(POWER_MANA);
+            if (member->GetPowerType() == POWER_MANA && maxMana
+                && (100.0f * member->GetPower(POWER_MANA) / maxMana) < EffectiveRestMana(anyMember))
+                return false;
+        }
+        return foundMember;
+    }
+
+    void CancelDungeonClearEvent(PlayerbotAI* ai)
+    {
+        if (!ai || !ai->GetAiObjectContext())
+            return;
+
+        AiObjectContext* context = ai->GetAiObjectContext();
+        DcRunState& state = context->GetValue<DcRunState&>(DcKey::RunState)->Get();
+        state.eventId = 0;
+        state.eventInstanceId = 0;
+        state.eventLastDriveAt = 0;
+        state.eventMaxStep = 0;
+        state.eventProgressAt = 0;
+        state.eventActionSent = false;
+        state.eventActionMenuId = 0;
+        context->GetValue<uint32&>(DcKey::EventProgress)->Get() = 0;
+        context->GetValue<uint32&>(DcKey::EventStartedAt)->Get() = 0;
+        context->GetValue<uint32&>(DcKey::EventStepStartedAt)->Get() = 0;
+    }
+
     void ResetDungeonClearRun(PlayerbotAI* ai, Player* bot)
     {
         if (!ai || !bot || !ai->GetAiObjectContext())
@@ -135,9 +326,7 @@ namespace DcUtil
         context->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get().clear();
         context->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get().clear();
         context->GetValue<std::string&>(DcKey::StallReason)->Get().clear();
-        context->GetValue<uint32&>(DcKey::EventProgress)->Get() = 0;
-        context->GetValue<uint32&>(DcKey::EventStartedAt)->Get() = 0;
-        context->GetValue<uint32&>(DcKey::EventStepStartedAt)->Get() = 0;
+        CancelDungeonClearEvent(ai);
         context->GetValue<std::vector<DungeonBossInfo>>(DcKey::DungeonBosses)->Reset();
         context->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Reset();
     }
@@ -175,10 +364,7 @@ namespace DcUtil
         float bestDist = range + 1.0f;
         for (Unit* u : list)
         {
-            if (!u || !u->IsAlive() || u->GetTypeId() != TYPEID_UNIT)
-                continue;
-            Creature* c = static_cast<Creature*>(u);
-            if (c->IsCivilian() || c->IsCritter())
+            if (!IsUsableHostile(u))
                 continue;
             float d = bot->GetDistance(u);
             if (d < bestDist)
@@ -188,6 +374,31 @@ namespace DcUtil
             }
         }
         return best;
+    }
+
+    uint32 CountHostileNear(Player* bot, float range)
+    {
+        return CountHostileNear(bot, bot, range);
+    }
+
+    uint32 CountHostileNear(Player* observer, Unit* center, float range)
+    {
+        if (!observer || !center)
+            return 0;
+        std::list<Unit*> list;
+        // Search around the prospective target, but evaluate friendliness
+        // from the pulling player's perspective.  Mobs in one pack are often
+        // friendly to one another, so using `center` as the observer would
+        // omit exactly the units this safety check must count.
+        MaNGOS::AnyUnfriendlyUnitInObjectRangeCheck check(center, observer, range);
+        MaNGOS::UnitListSearcher<MaNGOS::AnyUnfriendlyUnitInObjectRangeCheck> searcher(list, check);
+        Cell::VisitAllObjects(center, searcher, range);
+
+        uint32 count = 0;
+        for (Unit* unit : list)
+            if (IsUsableHostile(unit) && observer->IsHostileTo(unit))
+                ++count;
+        return count;
     }
 
     GameObject* FindGONear(Player* bot, uint32 entry, float range)

@@ -263,6 +263,31 @@ bool CastAuraSpellAction::isUseful()
     return CastSpellAction::isUseful() && !ai->HasAura(GetSpellName(), GetTarget(), false, isOwner);
 }
 
+bool CastBuffSpellAction::isUseful()
+{
+    Unit* target = GetTarget();
+    if (!target || !CastSpellAction::isUseful())
+        return false;
+
+    if (ai->IsForceRebuffPending() && !ai->IsForceRebuffExpired() && !bot->IsInCombat())
+        return !ai->IsForceRebuffBuffCompleted(GetSpellName(), target);
+
+    return !ai->HasAura(GetSpellName(), target, false, isOwner);
+}
+
+bool CastBuffSpellAction::Execute(Event& event)
+{
+    Unit* target = GetTarget();
+    bool executed = CastSpellAction::Execute(event);
+    if (executed)
+    {
+        ai->NoteForceRebuffBuffWork();
+        ai->MarkForceRebuffBuffCompleted(GetSpellName(), target);
+    }
+
+    return executed;
+}
+
 bool CastMeleeAoeSpellAction::isUseful()
 {
     return CastSpellAction::isUseful() && sServerFacade.IsDistanceLessOrEqualThan(AI_VALUE2(float, "distance", GetTargetName()), radius);

@@ -16,5 +16,7 @@ namespace DcRel
     constexpr float Advance = 20.0f;
     constexpr float FilterLoot = 18.0f;
     constexpr float FollowTank = 15.0f;
-    constexpr float Rest = 12.0f;
+    constexpr float RecoveryReady = 55.0f;
+    constexpr float Rest = 46.0f;
+    constexpr float Regroup = 43.0f;
 }

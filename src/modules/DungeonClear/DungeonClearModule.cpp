@@ -9,6 +9,7 @@
 #include "Settings/DcSettings.h"
 #include "Data/DungeonEventRegistry.h"
 #include "Util/DcAddonComm.h"
+#include "Util/DungeonClearUtil.h"
 #include "playerbot/RandomPlayerbotMgr.h"
 #include "Chat/Chat.h"
 #include "Log.h"
@@ -54,6 +55,7 @@ namespace DungeonClearModule
         sPlayerbotAiExtension.RegisterDcCommand(&DcCommandThunk);
         sPlayerbotAiExtension.RegisterWorldUpdate(&WorldUpdateThunk);
         sPlayerbotAiExtension.RegisterAddonHandler(&DungeonClear_HandleAddonMessage);
+        sPlayerbotAiExtension.RegisterAutoReleaseGuard(&DcUtil::DungeonClearShouldPreventAutoRelease);
 
         sLog.outString("DungeonClear: module initialized");
     }

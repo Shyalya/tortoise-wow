@@ -32,6 +32,9 @@ namespace ai
         using DcCommandFn = bool (*)(ChatHandler* handler, char* args);
         using WorldUpdateFn = void (*)(uint32 diff);
         using AddonMessageFn = bool (*)(Player* player, std::string const& msg);
+        // Optional modules may veto automatic corpse release for a bot while
+        // retaining the stock manual release and corpse-run actions.
+        using AutoReleaseGuardFn = bool (*)(Player* bot);
         using StartupFn = void (*)();
 
         static PlayerbotAiExtension& Instance();
@@ -44,6 +47,8 @@ namespace ai
         void RegisterDcCommand(DcCommandFn fn) { dcCommand = fn; }
         void RegisterWorldUpdate(WorldUpdateFn fn) { worldUpdate = fn; }
         void RegisterAddonHandler(AddonMessageFn fn) { addonHandler = fn; }
+        void RegisterAutoReleaseGuard(AutoReleaseGuardFn fn) { autoReleaseGuard = fn; }
+        bool ShouldPreventAutoRelease(Player* bot) const;
         void RegisterStartupHook(StartupFn fn);
 
         void ApplyToContext(AiObjectContext* context) const;
@@ -65,6 +70,7 @@ namespace ai
         DcCommandFn dcCommand = nullptr;
         WorldUpdateFn worldUpdate = nullptr;
         AddonMessageFn addonHandler = nullptr;
+        AutoReleaseGuardFn autoReleaseGuard = nullptr;
     };
 }
 

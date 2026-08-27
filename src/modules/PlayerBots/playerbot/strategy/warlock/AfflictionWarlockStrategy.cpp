@@ -25,6 +25,11 @@ void AfflictionWarlockStrategy::InitCombatTriggers(std::list<TriggerNode*>& trig
         "immolate",
         NextAction::array(0, new NextAction("immolate", ACTION_NORMAL + 1), NULL)));
 
+    // Keep CoA on the kill target even if the curse strategy is slow to refresh.
+    triggers.push_back(new TriggerNode(
+        "no curse",
+        NextAction::array(0, new NextAction("curse of agony", ACTION_NORMAL + 2), NULL)));
+
     triggers.push_back(new TriggerNode(
         "siphon life",
         NextAction::array(0, new NextAction("siphon life", ACTION_NORMAL), NULL)));

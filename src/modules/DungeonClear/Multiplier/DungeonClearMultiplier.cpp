@@ -13,7 +13,9 @@ float DungeonClearMultiplier::GetValue(Action* action)
     {
         // While paused, suppress DC driving actions but allow chat / follow.
         std::string n = action->getName();
-        if (n.find("dungeon clear") == 0 && n.find("follow") == std::string::npos)
+        if (n.find("dungeon clear") == 0
+            && n.find("follow") == std::string::npos
+            && n != "dungeon clear recover")
             return 0.0f;
     }
     return 1.0f;

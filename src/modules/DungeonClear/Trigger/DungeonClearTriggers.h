@@ -18,6 +18,27 @@ namespace ai
         bool IsActive() override;
     };
 
+    class DungeonClearRecoveryReadyTrigger : public Trigger
+    {
+    public:
+        DungeonClearRecoveryReadyTrigger(PlayerbotAI* ai) : Trigger(ai, "dungeon clear recovery ready", 1) {}
+        bool IsActive() override;
+    };
+
+    class DungeonClearRestPartyTrigger : public DungeonClearEnabledTrigger
+    {
+    public:
+        DungeonClearRestPartyTrigger(PlayerbotAI* ai) : DungeonClearEnabledTrigger(ai, "dungeon clear rest party") {}
+        bool IsActive() override;
+    };
+
+    class DungeonClearRegroupTrigger : public DungeonClearEnabledTrigger
+    {
+    public:
+        DungeonClearRegroupTrigger(PlayerbotAI* ai) : DungeonClearEnabledTrigger(ai, "dungeon clear regroup") {}
+        bool IsActive() override;
+    };
+
     class DungeonClearAllClearedTrigger : public DungeonClearEnabledTrigger
     {
     public:

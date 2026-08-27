@@ -11,6 +11,9 @@ namespace ai
         DungeonClearTriggerContext()
         {
             creators["dungeon clear party died"] = [](PlayerbotAI* ai) { return new DungeonClearPartyDiedTrigger(ai); };
+            creators["dungeon clear recovery ready"] = [](PlayerbotAI* ai) { return new DungeonClearRecoveryReadyTrigger(ai); };
+            creators["dungeon clear rest party"] = [](PlayerbotAI* ai) { return new DungeonClearRestPartyTrigger(ai); };
+            creators["dungeon clear regroup"] = [](PlayerbotAI* ai) { return new DungeonClearRegroupTrigger(ai); };
             creators["dungeon clear all cleared"] = [](PlayerbotAI* ai) { return new DungeonClearAllClearedTrigger(ai); };
             creators["dungeon clear at boss"] = [](PlayerbotAI* ai) { return new DungeonClearAtBossTrigger(ai); };
             creators["dungeon clear at objective"] = [](PlayerbotAI* ai) { return new DungeonClearAtObjectiveTrigger(ai); };

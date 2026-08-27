@@ -20,6 +20,7 @@ namespace DcAddonComm
     void SendToPlayer(Player* player, std::string const& payload);
     void SendToGroup(PlayerbotAI* ai, Player* bot, std::string const& payload);
     void SendError(Player* player, std::string const& msg);
+    void PushSettings(Player* recipient, PlayerbotAI* ai, Player* bot);
 
     std::string BuildStatusPayload(PlayerbotAI* ai, Player* bot);
     void PushStatus(PlayerbotAI* ai, Player* bot);

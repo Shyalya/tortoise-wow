@@ -4,6 +4,9 @@
 #include "playerbot/strategy/Value.h"
 #include "DcRunState.h"
 #include "DcValueKeys.h"
+#include "Settings/DcSettings.h"
+#include "Util/DungeonClearUtil.h"
+#include "playerbot/playerbot.h"
 
 namespace ai
 {
@@ -80,5 +83,33 @@ namespace ai
             : ManualSetValue<uint32&>(ai, data, DcKey::EventStepStartedAt), data(0) {}
     private:
         uint32 data;
+    };
+
+    class DungeonClearLootQualityValue : public CalculatedValue<uint32>
+    {
+    public:
+        DungeonClearLootQualityValue(PlayerbotAI* ai)
+            : CalculatedValue<uint32>(ai, DcKey::LootQualityMin, 1) {}
+
+    protected:
+        uint32 Calculate() override
+        {
+            DcRunState* state = DcUtil::LeaderRunState(ai->GetBot());
+            return state && state->enabled ? DcUtil::EffectiveLootQualityMin(ai->GetBot()) : 0;
+        }
+    };
+
+    class DungeonClearIgnoreChestsValue : public CalculatedValue<bool>
+    {
+    public:
+        DungeonClearIgnoreChestsValue(PlayerbotAI* ai)
+            : CalculatedValue<bool>(ai, DcKey::IgnoreChests, 1) {}
+
+    protected:
+        bool Calculate() override
+        {
+            DcRunState* state = DcUtil::LeaderRunState(ai->GetBot());
+            return state && state->enabled && DcUtil::EffectiveIgnoreChests(ai->GetBot());
+        }
     };
 }

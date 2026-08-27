@@ -7,10 +7,10 @@ namespace DcStrategyGate
 {
     enum class Action { None, Install, Strip };
 
-    constexpr Action Decide(bool inDungeon, bool hasStrategy)
+    constexpr Action Decide(bool shouldInstall, bool hasStrategy)
     {
-        if (inDungeon && !hasStrategy) return Action::Install;
-        if (!inDungeon && hasStrategy) return Action::Strip;
+        if (shouldInstall && !hasStrategy) return Action::Install;
+        if (!shouldInstall && hasStrategy) return Action::Strip;
         return Action::None;
     }
 

@@ -209,8 +209,8 @@ std::vector<DungeonBossInfo> ai::GetHardcodedBossTable(uint32 mapId)
             v.push_back(MakeBoss(10436, 50, mapId, "Baroness Anastari",        3470.0f, -3200.0f, 130.0f));
             v.push_back(MakeBoss(10437, 60, mapId, "Nerub'enkan",              3420.0f, -3150.0f, 130.0f));
             v.push_back(MakeBoss(10438, 70, mapId, "Maleki the Pallid",        3370.0f, -3100.0f, 130.0f));
-            v.push_back(MakeBoss(10438, 80, mapId, "Ramstein the Gorger",      3320.0f, -3050.0f, 130.0f));
-            v.push_back(MakeBoss(10439, 90, mapId, "Baron Rivendare",          3270.0f, -3000.0f, 130.0f));
+            v.push_back(MakeBoss(10439, 80, mapId, "Ramstein the Gorger",      3320.0f, -3050.0f, 130.0f));
+            v.push_back(MakeBoss(10440, 90, mapId, "Baron Rivendare",          3270.0f, -3000.0f, 130.0f));
             break;
 
         case 429: // Dire Maul wings share this mapId; filtered below.
@@ -254,6 +254,7 @@ std::vector<DungeonBossInfo> ai::GetHardcodedBossTable(uint32 mapId)
             break;
 
         case 309: // Zul'Gurub
+        {
             v.push_back(MakeBoss(14517, 10, mapId, "High Priestess Jeklik",  -12289.7f, -1382.18f, 144.643f));
             v.push_back(MakeBoss(14507, 20, mapId, "High Priest Venoxis",    -12029.8f, -1707.93f, 39.413f));
             v.push_back(MakeBoss(14510, 30, mapId, "High Priestess Mar'li", -12326.5f, -1577.11f, 133.588f));
@@ -275,6 +276,7 @@ std::vector<DungeonBossInfo> ai::GetHardcodedBossTable(uint32 mapId)
             edge.alternateEntries.push_back(15085); // Wushoolay
             v.push_back(edge);
             break;
+        }
 
         case 409: // Molten Core
             v.push_back(MakeBoss(12118, 10, mapId, "Lucifron",              1024.41f, -973.309f, -181.505f));
@@ -414,10 +416,10 @@ std::vector<DungeonBossInfo> DungeonBossesValue::Calculate()
         }
     }
 
-    // Merge in nearby elite/rare-elite/worldboss hostiles not already
-    // covered by the hardcoded table - keeps the engine useful on maps we
-    // don't have (or don't fully have) scripted, and tolerates renamed or
-    // patched mobs.
+    // Merge only genuinely rare/raid-level nearby hostiles not already
+    // covered by the hardcoded table.  Ordinary elite trash is not an
+    // encounter and must never become a required boss just because it is
+    // currently loaded near the party.
     std::list<Creature*> hostiles;
     GetHostileCreaturesListInRange(hostiles, bot, 100.0f);
 
@@ -430,10 +432,7 @@ std::vector<DungeonBossInfo> DungeonBossesValue::Calculate()
         CreatureInfo const* info = creature->GetCreatureInfo();
         if (!info || info->Rank == CREATURE_ELITE_NORMAL)
             continue;
-        // On maps with a hardcoded roster, ordinary elite trash is not an
-        // encounter. Keep the fallback useful for unknown maps while only
-        // accepting rare/raid-level additions alongside known rosters.
-        if (!result.empty() && info->Rank == CREATURE_ELITE_ELITE)
+        if (info->Rank == CREATURE_ELITE_ELITE || info->Rank == CREATURE_ELITE_RARE)
             continue;
 
         uint32 entry = creature->GetEntry();

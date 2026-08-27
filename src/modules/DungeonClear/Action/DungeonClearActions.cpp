@@ -2,6 +2,7 @@
 #include "AI/ScriptDevAI/ScriptDevAIMgr.h"
 #include "playerbot/playerbot.h"
 #include "Util/DungeonClearUtil.h"
+#include "Util/DcAddonComm.h"
 #include "Settings/DcSettings.h"
 #include "Data/DungeonEventRegistry.h"
 #include "DcValueKeys.h"
@@ -76,13 +77,27 @@ namespace
 
     Unit* FindHostileForClearStep(Player* bot, DcEventStep const& step, float radius)
     {
-        if (!bot)
+        Map* map = bot ? bot->GetMap() : nullptr;
+        if (!bot || !map)
             return nullptr;
 
+        bool const hasCenter = step.x || step.y || step.z;
+        // The visitor is centered on the objective rather than on the bot.
+        // Cell::VisitAllObjects keeps its no-create behavior, so an event only
+        // examines grids already visible to the run; it cannot load unrelated
+        // dungeon space merely because a large clear radius was configured.
+        float const centerDistance = hasCenter
+            ? bot->GetDistance(step.x, step.y, step.z) : 0.0f;
+        float const verticalReach = step.zBand > 0.0f ? step.zBand : 0.0f;
+        float const areaReach = std::sqrt(radius * radius + verticalReach * verticalReach);
+        float const searchRadius = areaReach + centerDistance + 10.0f;
         std::list<Unit*> list;
-        MaNGOS::AnyUnfriendlyUnitInObjectRangeCheck check(bot, radius + 10.0f);
+        MaNGOS::AnyUnfriendlyUnitInObjectRangeCheck check(bot, searchRadius);
         MaNGOS::UnitListSearcher<MaNGOS::AnyUnfriendlyUnitInObjectRangeCheck> searcher(list, check);
-        Cell::VisitAllObjects(bot, searcher, radius + 10.0f);
+        if (hasCenter)
+            Cell::VisitAllObjects(step.x, step.y, map, searcher, radius, true);
+        else
+            Cell::VisitAllObjects(bot, searcher, searchRadius, true);
 
         Unit* best = nullptr;
         float bestDistance = 1.0e30f;
@@ -90,12 +105,14 @@ namespace
         {
             if (!unit || unit->GetTypeId() != TYPEID_UNIT || !unit->IsAlive())
                 continue;
+            if (!unit->IsVisibleForOrDetect(bot, bot, false))
+                continue;
             Creature* creature = static_cast<Creature*>(unit);
             if (creature->IsCivilian() || creature->IsCritter())
                 continue;
             if (step.x || step.y || step.z)
             {
-                if (unit->GetDistance(step.x, step.y, step.z) > radius)
+                if (unit->GetDistance2d(step.x, step.y) > radius)
                     continue;
                 if (step.zBand > 0.0f && std::abs(unit->GetPositionZ() - step.z) > step.zBand)
                     continue;
@@ -155,6 +172,16 @@ bool DungeonClearEngageBossAction::Execute(Event& event)
         // Walk in and hope spawn is there.
         return MoveTo(next->mapId, next->x, next->y, next->z, false, false, false, true);
     }
+
+    // Persist the encounter observation together with the concrete creature
+    // we are attacking.  NextDungeonBossValue can then confirm its corpse or
+    // death state even if the party has moved beyond the anchor by the time
+    // the cached value is recalculated.
+    DcRunState& state = AI_VALUE(DcRunState&, DcKey::RunState);
+    state.observedBosses.insert(DungeonBossStateKey(*next));
+    state.activeBossGuid = boss->GetObjectGuid();
+    state.activeBossStateKey = DungeonBossStateKey(*next);
+    state.activeBossInstanceId = bot->GetInstanceId();
     return Attack(event.getOwner() ? event.getOwner() : bot, boss);
 }
 
@@ -207,6 +234,8 @@ bool DungeonClearRunEventAction::Execute(Event& /*event*/)
         state.eventLastDriveAt = 0;
         state.eventMaxStep = 0;
         state.eventProgressAt = 0;
+        state.eventActionSent = false;
+        state.eventActionMenuId = 0;
         stepIdx = 0;
         eventStartedAt = 0;
         stepStartedAt = 0;
@@ -252,6 +281,7 @@ bool DungeonClearRunEventAction::Execute(Event& /*event*/)
         state.eventProgressAt = now;
         eventStartedAt = now;
         stepStartedAt = now;
+        state.eventActionSent = false;
         stepIdx = 0;
     }
     else if (!ev->persistent && state.eventLastDriveAt
@@ -263,6 +293,7 @@ bool DungeonClearRunEventAction::Execute(Event& /*event*/)
         state.eventProgressAt = now;
         eventStartedAt = now;
         stepStartedAt = now;
+        state.eventActionSent = false;
         stepIdx = 0;
     }
     state.eventLastDriveAt = now;
@@ -280,6 +311,7 @@ bool DungeonClearRunEventAction::Execute(Event& /*event*/)
     {
         ++stepIdx;
         stepStartedAt = now;
+        state.eventActionSent = false;
         if (stepIdx > state.eventMaxStep)
         {
             state.eventMaxStep = stepIdx;
@@ -337,6 +369,23 @@ bool DungeonClearRunEventAction::Execute(Event& /*event*/)
             float const interactRadius = step.radius > 0.0f ? step.radius : INTERACTION_DISTANCE;
             if (bot->GetDistance(npc) > interactRadius)
                 return MoveNear(npc->GetMapId(), npc->GetPositionX(), npc->GetPositionY(), npc->GetPositionZ());
+
+            // Gossip is a request/response exchange.  Do not send the same
+            // interaction on every AI tick, and do not advance until the
+            // server has either closed the menu or changed its contents.
+            if (state.eventActionSent)
+            {
+                uint32 const menuItems = bot->GetPlayerMenu()
+                    ? bot->GetPlayerMenu()->GetGossipMenu().MenuItemCount() : 0;
+                uint32 const menuId = bot->GetPlayerMenu()
+                    ? bot->GetPlayerMenu()->GetGossipMenu().GetMenuId() : 0;
+                if (step.gossipOption < 0)
+                    return menuItems ? advanceStep() : true;
+                if (!menuItems || menuId != state.eventActionMenuId)
+                    return advanceStep();
+                return true;
+            }
+
             if (!sScriptDevAIMgr.OnGossipHello(bot, npc))
                 bot->PrepareGossipMenu(npc, npc->GetDefaultGossipMenuId());
             bot->SendPreparedGossip(npc);
@@ -345,6 +394,8 @@ bool DungeonClearRunEventAction::Execute(Event& /*event*/)
             {
                 if (!HasGossipOption(bot, step.gossipOption))
                     return false;
+
+                state.eventActionMenuId = bot->GetPlayerMenu()->GetGossipMenu().GetMenuId();
 
                 WorldPacket packet;
                 packet << npc->GetObjectGuid();
@@ -357,7 +408,8 @@ bool DungeonClearRunEventAction::Execute(Event& /*event*/)
                 packet << std::string();
                 bot->GetSession()->HandleGossipSelectOptionOpcode(packet);
             }
-            return advanceStep();
+            state.eventActionSent = true;
+            return true;
         }
 
         case DcEventStepType::WaitForSpawn:
@@ -395,13 +447,27 @@ bool DungeonClearRunEventAction::Execute(Event& /*event*/)
         case DcEventStepType::ClearRadius:
         {
             float const radius = step.radius > 0.0f ? step.radius : 40.0f;
-            if (bot->GetDistance(step.x, step.y, step.z) > radius * 0.75f)
+            Unit* target = FindHostileForClearStep(bot, step, radius);
+            if (target)
+                return Attack(bot, target);
+
+            if (!(step.x || step.y || step.z))
+                return advanceStep();
+
+            // Once the objective grid is loaded, the centered scan above is
+            // authoritative for the whole circle.  First settle the party at
+            // the anchor, though: this loads the relevant grid when the event
+            // was entered from an adjacent cell and removes the old 75%-of-
+            // radius blind spot.  The event/step timeout bounds an unreachable
+            // anchor instead of waiting forever for an unloaded area.
+            float const centerDistance = bot->GetDistance(step.x, step.y, step.z);
+            bool const anchorLoaded = map->IsLoaded(step.x, step.y);
+            float const settleRadius = std::max(5.0f,
+                std::min(radius * 0.25f, sDcSettings.objectiveArriveRadius));
+            if (!anchorLoaded || centerDistance > settleRadius)
                 return MoveTo(map->GetId(), step.x, step.y, step.z, false, false, false, true);
 
-            Unit* target = FindHostileForClearStep(bot, step, radius);
-            if (!target)
-                return advanceStep();
-            return Attack(bot, target);
+            return advanceStep();
         }
 
         case DcEventStepType::WaitMs:
@@ -455,6 +521,139 @@ bool DungeonClearDisableOnDeathAction::Execute(Event& /*event*/)
     return true;
 }
 
+bool DungeonClearRecoverAction::Execute(Event& event)
+{
+    DcRunState& state = AI_VALUE(DcRunState&, DcKey::RunState);
+    if (!state.enabled)
+        return false;
+
+    bool allDead = !bot->IsAlive();
+    if (Group* group = bot->GetGroup())
+    {
+        uint32 const mapId = bot->GetMapId();
+        uint32 const instanceId = bot->GetInstanceId();
+        allDead = true;
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+        {
+            Player* member = ref->getSource();
+            if (member && member->IsInWorld() && member->GetMapId() == mapId
+                && member->GetInstanceId() == instanceId && member->IsAlive())
+            {
+                allDead = false;
+                break;
+            }
+        }
+    }
+
+    if (allDead && !state.paused)
+    {
+        DcUtil::CancelDungeonClearEvent(ai);
+        state.paused = true;
+        state.pauseReason = "party wiped; waiting for recovery";
+        bool const preventRelease = DcUtil::EffectivePreventBotRelease(bot);
+
+        // Releasing is deliberately opt-in because a real player may be
+        // about to resurrect the group.  When enabled, use the existing
+        // PlayerBots manual release path so this explicit DungeonClear
+        // choice is honored even when the stock action's master-distance
+        // safety gate would otherwise defer the release.
+        bool released = false;
+        if (!preventRelease)
+        {
+            auto releaseMember = [&](Player* member)
+            {
+                if (!member || member->IsAlive())
+                    return;
+                if (PlayerbotAI* memberAi = member->GetPlayerbotAI())
+                    released = memberAi->DoSpecificAction("release", event, true) || released;
+            };
+
+            if (Group* group = bot->GetGroup())
+            {
+                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                    releaseMember(ref->getSource());
+            }
+            else
+                releaseMember(bot);
+        }
+
+        DcUtil::TellGroup(ai, bot, preventRelease
+            ? "Party wiped; waiting for resurrection."
+            : (released ? "Party wiped; releasing and waiting for recovery."
+                       : "Party wiped; waiting for recovery."));
+        DcAddonComm::PushStatus(ai, bot);
+        return true;
+    }
+
+    Map* map = bot->GetMap();
+    if (state.paused && map && (map->IsDungeon() || map->IsRaid())
+        && DcUtil::PartyReadyToResume(bot))
+    {
+        state.OnResume();
+        DcUtil::TellGroup(ai, bot, "Party recovered; dungeon clear resumed.");
+        DcAddonComm::PushStatus(ai, bot);
+        return true;
+    }
+
+    return false;
+}
+
+bool DungeonClearRestPartyAction::Execute(Event& event)
+{
+    if (!DcUtil::PartyNeedsRest(bot) || !bot->IsAlive() || bot->IsInCombat())
+        return false;
+
+    bool acted = false;
+    bool resting = false;
+    auto restMember = [&](Player* member)
+    {
+        if (!member || !member->IsAlive() || member->IsInCombat())
+            return;
+        PlayerbotAI* memberAi = member->GetPlayerbotAI();
+        if (!memberAi)
+            return;
+
+        resting = resting || member->IsSitState() || member->IsNonMeleeSpellCasted(true);
+
+        if (member->GetHealthPercent() < DcUtil::EffectiveRestHealth(bot))
+            acted = memberAi->DoSpecificAction("food", event, true) || acted;
+
+        uint32 const maxMana = member->GetMaxPower(POWER_MANA);
+        if (member->GetPowerType() == POWER_MANA && maxMana
+            && (100.0f * member->GetPower(POWER_MANA) / maxMana) < DcUtil::EffectiveRestMana(bot))
+            acted = memberAi->DoSpecificAction("drink", event, true) || acted;
+    };
+
+    if (Group* group = bot->GetGroup())
+    {
+        for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            restMember(ref->getSource());
+    }
+    else
+        restMember(bot);
+
+    // Keep the tank and the rest of the party parked while another member is
+    // eating or drinking.  This prevents the normal advance/pull strategies
+    // from dragging the group into the next pack prematurely.
+    if (!acted && !resting)
+        return false; // No usable consumable: do not deadlock the route forever.
+    SetDuration(1000);
+    return acted || DcUtil::PartyNeedsRest(bot);
+}
+
+bool DungeonClearRegroupAction::Execute(Event& /*event*/)
+{
+    if (!DcUtil::PartyNeedsRegroup(bot) || bot->IsInCombat())
+        return false;
+
+    // Let followers close the gap before the tank commits to another anchor
+    // or pack.  The normal follower strategy then supplies the movement; the
+    // tank only needs to stop briefly, avoiding a permanent manual regroup.
+    ai->StopMoving();
+    SetDuration(1000);
+    return true;
+}
+
 bool DungeonClearDisableOnClearedAction::Execute(Event& /*event*/)
 {
     DcUtil::DisableDungeonClear(ai, bot, "all bosses cleared");
@@ -480,12 +679,13 @@ bool DungeonClearRezPartyAction::Execute(Event& /*event*/)
 
 bool DungeonClearFilterLootAction::Execute(Event& /*event*/)
 {
-    // Defer to stock loot pipeline but skip low-quality via available loot prune.
+    // Opening and item-by-item filtering stay in the stock loot pipeline.  It
+    // reads the optional DungeonClear loot-quality value when the loot window
+    // is actually available, so quest/upgrade/consumable exceptions remain
+    // centralized in StoreLootAction.
     LootObjectStack* stack = AI_VALUE(LootObjectStack*, "available loot");
     if (!stack)
         return false;
-    // Stock loot actions will pick up; we just ensure DC doesn't stall — trigger
-    // "loot" via DoSpecificAction when quality is acceptable.
     return ai->DoSpecificAction("loot", Event(), true);
 }
 
@@ -496,23 +696,40 @@ bool DungeonClearPullAction::Execute(Event& event)
     if (!target)
         return false;
 
-    // Count nearby hostiles for Dynamic mode.
-    uint32 nearby = 0;
+    // Size the pack around the prospective pull target.  Counting around the
+    // tank made a distant five-mob pack look empty while the tank was scouting
+    // it, defeating Dynamic's configured safety ceiling.
+    uint32 const nearby = DcUtil::CountHostileNear(bot, target, 15.0f);
+
+    if (mode == static_cast<uint8>(DcPullMode::Dynamic)
+        && nearby > DcUtil::EffectivePullMax(bot))
     {
-        std::list<Unit*> list;
-        MaNGOS::AnyUnfriendlyUnitInObjectRangeCheck check(bot, 15.0f);
-        MaNGOS::UnitListSearcher<MaNGOS::AnyUnfriendlyUnitInObjectRangeCheck> searcher(list, check);
-        Cell::VisitAllObjects(bot, searcher, 15.0f);
-        nearby = list.size();
+        DcRunState& state = AI_VALUE(DcRunState&, DcKey::RunState);
+        state.paused = true;
+        state.pauseReason = "dynamic pull blocked: " + std::to_string(nearby) + " hostiles nearby";
+        DcUtil::TellGroup(ai, bot, "Dynamic pull paused: too many nearby hostiles.");
+        DcAddonComm::PushStatus(ai, bot);
+        return true;
     }
 
-    bool leeroy = (mode == static_cast<uint8>(DcPullMode::Leeroy))
-        || (mode == static_cast<uint8>(DcPullMode::Dynamic) && nearby <= sDcSettings.pullDynamicMaxLeeroyMobs);
+    // Leeroy deliberately charges.  Dynamic charges only when the local pack
+    // is within the configured safe ceiling; Advanced uses the class-specific
+    // pull strategy (ranged pull, judgement, faerie fire, etc.) and falls
+    // back to a normal attack when that strategy is unavailable.
+    bool const leeroy = mode == static_cast<uint8>(DcPullMode::Leeroy)
+        || (mode == static_cast<uint8>(DcPullMode::Dynamic)
+            && nearby <= DcUtil::EffectivePullMax(bot));
+    if (!leeroy && !target->IsInCombat())
+    {
+        SET_AI_VALUE(Unit*, "pull target", target);
+        if (ai->DoSpecificAction("pull action", event, true))
+            return true;
+    }
 
-    if (leeroy || mode == static_cast<uint8>(DcPullMode::Dynamic))
+    if (mode == static_cast<uint8>(DcPullMode::Leeroy)
+        || mode == static_cast<uint8>(DcPullMode::Dynamic)
+        || mode == static_cast<uint8>(DcPullMode::Advanced))
         return Attack(event.getOwner() ? event.getOwner() : bot, target);
 
-    // Advanced: shoot/pull then fall back toward camp (bot position stamped as camp).
-    // For Classic without reliable ranged pull spell, engage and kite slightly.
-    return Attack(event.getOwner() ? event.getOwner() : bot, target);
+    return false;
 }

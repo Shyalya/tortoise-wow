@@ -20,6 +20,7 @@ public:
     uint32 strategyGateSweepMs = 3000;
     bool preventBotRelease = true;
     float objectiveArriveRadius = 10.0f;
+    float partyMaxSpread = 25.0f;
 };
 
 #define sDcSettings DcSettings::Instance()

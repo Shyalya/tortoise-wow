@@ -77,6 +77,11 @@ void RetributionPaladinStrategy::InitCombatTriggers(std::list<TriggerNode*>& tri
         "low mana",
         NextAction::array(0, new NextAction("seal of wisdom", ACTION_HIGH + 1), NULL)));
 
+    // Classic ret runs dry fast — swap to Wisdom before OOM, not only at emergency.
+    triggers.push_back(new TriggerNode(
+        "medium mana",
+        NextAction::array(0, new NextAction("seal of wisdom", ACTION_HIGH), NULL)));
+
     triggers.push_back(new TriggerNode(
         "target critical health",
         NextAction::array(0, new NextAction("hammer of wrath", ACTION_HIGH), NULL)));
@@ -572,6 +577,11 @@ void RetributionPaladinStrategy::InitCombatTriggers(std::list<TriggerNode*>& tri
         "low mana",
         NextAction::array(0, new NextAction("seal of wisdom", ACTION_HIGH + 1), NULL)));
 
+    // Classic ret runs dry fast — swap to Wisdom before OOM, not only at emergency.
+    triggers.push_back(new TriggerNode(
+        "medium mana",
+        NextAction::array(0, new NextAction("seal of wisdom", ACTION_HIGH), NULL)));
+
     triggers.push_back(new TriggerNode(
         "target critical health",
         NextAction::array(0, new NextAction("hammer of wrath", ACTION_HIGH), NULL)));
@@ -1062,6 +1072,11 @@ void RetributionPaladinStrategy::InitCombatTriggers(std::list<TriggerNode*>& tri
     triggers.push_back(new TriggerNode(
         "low mana",
         NextAction::array(0, new NextAction("seal of wisdom", ACTION_HIGH + 1), NULL)));
+
+    // Classic ret runs dry fast — swap to Wisdom before OOM, not only at emergency.
+    triggers.push_back(new TriggerNode(
+        "medium mana",
+        NextAction::array(0, new NextAction("seal of wisdom", ACTION_HIGH), NULL)));
 
     triggers.push_back(new TriggerNode(
         "target critical health",

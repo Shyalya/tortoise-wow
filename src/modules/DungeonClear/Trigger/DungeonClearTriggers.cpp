@@ -31,10 +31,19 @@ bool DungeonClearPartyDiedTrigger::IsActive()
         return bot->IsDead();
     bool anyAlive = false;
     bool anyDead = false;
+    uint32 const mapId = bot->GetMapId();
+    uint32 const instanceId = bot->GetInstanceId();
     for (GroupReference* ref = g->GetFirstMember(); ref; ref = ref->next())
     {
         Player* m = ref->getSource();
-        if (!m || m->GetMapId() != bot->GetMapId())
+        // GroupReference exposes online members only; a disconnected member
+        // is deliberately absent from this census. A group can also contain
+        // an online member in another copy of this map. Only the run's
+        // current instance participates in full-wipe detection;
+        // PartyReadyToResume will still wait for an online member to return
+        // before resuming the route.
+        if (!m || !m->IsInWorld() || m->GetMapId() != mapId
+            || m->GetInstanceId() != instanceId)
             continue;
         if (m->IsAlive())
             anyAlive = true;
@@ -42,6 +51,47 @@ bool DungeonClearPartyDiedTrigger::IsActive()
             anyDead = true;
     }
     return anyDead && !anyAlive; // full wipe
+}
+
+bool DungeonClearRecoveryReadyTrigger::IsActive()
+{
+    if (!sDcSettings.moduleEnabled || !DcUtil::IsDungeonClearLeader(ai, bot))
+        return false;
+
+    DcRunState* state = DcUtil::LeaderRunState(bot);
+    if (!state || !state->enabled || !state->paused)
+        return false;
+
+    Map* map = bot->GetMap();
+    if (!map || (!map->IsDungeon() && !map->IsRaid()))
+        return false;
+    bool const partyWiped = state->pauseReason.find("party wiped") != std::string::npos;
+    bool const dynamicBlocked = state->pauseReason.find("dynamic pull blocked") != std::string::npos;
+    if (!partyWiped && !dynamicBlocked)
+        return false;
+    if (!DcUtil::PartyReadyToResume(bot))
+        return false;
+    if (partyWiped)
+        return true;
+
+    // A Dynamic pull is blocked based on the prospective target's local pack,
+    // not on the tank's current position.  Reuse that same geometry here or a
+    // distant pack would make the pause look safe and immediately clear.
+    Unit* target = DcUtil::FindHostileNear(bot, sDcSettings.trashEngageRange + 8.0f);
+    return !target || DcUtil::CountHostileNear(bot, target, 15.0f) <= DcUtil::EffectivePullMax(bot);
+}
+
+bool DungeonClearRestPartyTrigger::IsActive()
+{
+    if (!LeaderEnabledUnpaused() || bot->IsInCombat() || !bot->IsAlive())
+        return false;
+    return DcUtil::PartyNeedsRest(bot);
+}
+
+bool DungeonClearRegroupTrigger::IsActive()
+{
+    return LeaderEnabledUnpaused() && DcUtil::IsDungeonClearLeader(ai, bot)
+        && !bot->IsInCombat() && DcUtil::PartyNeedsRegroup(bot);
 }
 
 bool DungeonClearAllClearedTrigger::IsActive()

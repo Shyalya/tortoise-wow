@@ -49,6 +49,12 @@ bool DcOnAction::Execute(Event& event)
     PlayerbotAI* tai = tank->GetPlayerbotAI();
     DcUtil::ResetDungeonClearRun(tai, tank);
     DcRunState& st = tai->GetAiObjectContext()->GetValue<DcRunState&>(DcKey::RunState)->Get();
+    uint8& pullMode = tai->GetAiObjectContext()->GetValue<uint8&>(DcKey::PullMode)->Get();
+    if (!st.pullModeInitialized)
+    {
+        pullMode = sDcSettings.defaultPullMode % 3;
+        st.pullModeInitialized = true;
+    }
     st.enabled = true;
     // Pull mode is preserved across runs (addon / `.dc pull` can set it before On).
     DcUtil::TellGroup(tai, tank, "Dungeon clear ON — tank driving.");
@@ -128,14 +134,8 @@ bool DcSkipAction::Execute(Event& event)
     // A manual skip must invalidate an in-flight event as well.  Otherwise a
     // conditional event can remain "active" and be rediscovered after its
     // objective was skipped.
-    st.eventId = 0;
-    st.eventInstanceId = 0;
-    st.eventLastDriveAt = 0;
-    st.eventMaxStep = 0;
-    st.eventProgressAt = 0;
-    ctx->GetValue<uint32&>(DcKey::EventProgress)->Get() = 0;
-    ctx->GetValue<uint32&>(DcKey::EventStartedAt)->Get() = 0;
-    ctx->GetValue<uint32&>(DcKey::EventStepStartedAt)->Get() = 0;
+    DcUtil::CancelDungeonClearEvent(tank->GetPlayerbotAI());
+    ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Reset();
     DcUtil::TellGroup(tank->GetPlayerbotAI(), tank, std::string("Skipped: ") + next->name);
     DcAddonComm::PushStatus(tank->GetPlayerbotAI(), tank);
     DcAddonComm::PushBossList(tank->GetPlayerbotAI(), tank, true);
@@ -152,6 +152,8 @@ bool DcPullModeAction::Execute(Event& event)
         return false;
     uint8& mode = tank->GetPlayerbotAI()->GetAiObjectContext()->GetValue<uint8&>(DcKey::PullMode)->Get();
     mode = DcAddonComm::AddonPullKeywordToTortoise(event.getParam(), mode);
+    DcRunState& state = tank->GetPlayerbotAI()->GetAiObjectContext()->GetValue<DcRunState&>(DcKey::RunState)->Get();
+    state.pullModeInitialized = true;
     char const* names[] = {"Dynamic", "Leeroy", "Advanced"};
     DcUtil::TellGroup(tank->GetPlayerbotAI(), tank, std::string("Pull mode: ") + names[mode % 3]);
     DcAddonComm::PushStatus(tank->GetPlayerbotAI(), tank);
@@ -183,7 +185,10 @@ bool DcStatusAction::Execute(Event& event)
         uint8 mode = ctx->GetValue<uint8&>(DcKey::PullMode)->Get();
         char const* names[] = {"Dynamic", "Leeroy", "Advanced"};
         std::ostringstream out;
-        out << "DC: " << (st.enabled ? (st.paused ? "PAUSED" : "ON") : "OFF")
+        char const* runStatus = !st.enabled ? "OFF"
+            : st.paused ? "PAUSED"
+            : DcUtil::PartyNeedsRest(tank) ? "RESTING" : "ON";
+        out << "DC: " << runStatus
             << " pull=" << names[mode % 3];
         auto next = ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
         if (next)
@@ -296,16 +301,42 @@ bool DcGoAction::Execute(Event& event)
         if (!match)
             continue;
 
+        uint32 const stateKey = DungeonBossStateKey(b);
+        // The addon exposes Go for skipped rows so a commander can revisit
+        // one.  Selecting it therefore also removes the skip marker.
+        ctx->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get().erase(stateKey);
         DcRunState& st = ctx->GetValue<DcRunState&>(DcKey::RunState)->Get();
         if (!st.enabled)
         {
-            st.enabled = true;
+            // A manually selected route after a stopped run starts a clean
+            // run.  Otherwise stale skipped/cleared anchors can make the
+            // selected boss appear to vanish immediately.
+            DcUtil::ResetDungeonClearRun(tank->GetPlayerbotAI(), tank);
+            DcRunState& freshState = ctx->GetValue<DcRunState&>(DcKey::RunState)->Get();
+            uint8& pullMode = ctx->GetValue<uint8&>(DcKey::PullMode)->Get();
+            if (!freshState.pullModeInitialized)
+            {
+                pullMode = sDcSettings.defaultPullMode % 3;
+                freshState.pullModeInitialized = true;
+            }
+            freshState.enabled = true;
+            freshState.selectedBossEntry = b.entry;
+            freshState.selectedBossStateKey = stateKey;
             DcAddonComm::MarkActiveTank(tank->GetObjectGuid());
         }
-        st.selectedBossEntry = b.entry;
-        st.selectedBossStateKey = DungeonBossStateKey(b);
+        else
+        {
+            // Manual routing must always cancel an event in flight.  The
+            // event runner otherwise has priority over the newly selected
+            // encounter on its next tick.
+            DcUtil::CancelDungeonClearEvent(tank->GetPlayerbotAI());
+            st.selectedBossEntry = b.entry;
+            st.selectedBossStateKey = stateKey;
+        }
+        ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Reset();
         DcUtil::TellGroup(tank->GetPlayerbotAI(), tank, std::string("Routing to ") + b.name);
         DcAddonComm::PushStatus(tank->GetPlayerbotAI(), tank);
+        DcAddonComm::PushBossList(tank->GetPlayerbotAI(), tank, true);
         return true;
     }
     if (owner)

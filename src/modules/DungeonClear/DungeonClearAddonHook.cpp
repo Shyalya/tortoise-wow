@@ -2,7 +2,221 @@
 #include "Util/DungeonClearUtil.h"
 #include "Util/DcAddonComm.h"
 #include "DcValueKeys.h"
+#include "DcRunState.h"
+#include <cerrno>
+#include <cstdlib>
 #include <cctype>
+#include <cmath>
+#include <limits>
+
+namespace
+{
+    bool ParseUInt(std::string const& text, uint32& value)
+    {
+        if (text.empty())
+            return false;
+        for (char c : text)
+            if (c < '0' || c > '9')
+                return false;
+
+        char* end = nullptr;
+        errno = 0;
+        unsigned long parsed = std::strtoul(text.c_str(), &end, 10);
+        if (end == text.c_str() || *end != '\0' || errno == ERANGE ||
+            parsed > std::numeric_limits<uint32>::max())
+            return false;
+        value = static_cast<uint32>(parsed);
+        return true;
+    }
+
+    bool ParseFloat(std::string const& text, float& value)
+    {
+        if (text.empty())
+            return false;
+        char* end = nullptr;
+        errno = 0;
+        float parsed = std::strtof(text.c_str(), &end);
+        if (end == text.c_str() || *end != '\0' || errno == ERANGE ||
+            !std::isfinite(parsed))
+            return false;
+        value = parsed;
+        return true;
+    }
+
+    bool ApplySetting(DcRunState& state, std::string const& key,
+                      std::string const& value, std::string& error)
+    {
+        // Float controls (notably PartyMaxSpread) legitimately send half-yard
+        // values such as 25.5.  Parse by the setting's declared type before
+        // attempting the integer-only validation used by the other controls.
+        if (key == "PartyMaxSpread")
+        {
+            float spread = 0.0f;
+            if (!ParseFloat(value, spread) || spread < 10.0f || spread > 60.0f)
+            {
+                error = "PartyMaxSpread must be between 10 and 60 yards.";
+                return false;
+            }
+            state.hasPartyMaxSpreadOverride = true;
+            state.partyMaxSpreadOverride = spread;
+            return true;
+        }
+
+        uint32 parsed = 0;
+        if (!ParseUInt(value, parsed))
+        {
+            error = "Invalid value for " + key + ".";
+            return false;
+        }
+
+        if (key == "PreventBotRelease")
+        {
+            if (parsed > 1)
+            {
+                error = "PreventBotRelease must be 0 or 1.";
+                return false;
+            }
+            state.hasPreventBotReleaseOverride = true;
+            state.preventBotReleaseOverride = parsed != 0;
+        }
+        else if (key == "LootMinQuality")
+        {
+            if (parsed > 6)
+            {
+                error = "LootMinQuality must be between 0 and 6.";
+                return false;
+            }
+            state.hasLootQualityOverride = true;
+            state.lootQualityOverride = parsed;
+        }
+        else if (key == "IgnoreChests")
+        {
+            if (parsed > 1)
+            {
+                error = "IgnoreChests must be 0 or 1.";
+                return false;
+            }
+            state.hasIgnoreChestsOverride = true;
+            state.ignoreChestsOverride = parsed != 0;
+        }
+        else if (key == "RestHealthPct")
+        {
+            if (parsed > 100)
+            {
+                error = "RestHealthPct must be between 0 and 100.";
+                return false;
+            }
+            if (!parsed)
+            {
+                state.hasRestHealthOverride = false;
+                state.restHealthOverride = 0.0f;
+            }
+            else
+            {
+                state.hasRestHealthOverride = true;
+                state.restHealthOverride = static_cast<float>(parsed);
+            }
+        }
+        else if (key == "RestManaPct")
+        {
+            if (parsed > 100)
+            {
+                error = "RestManaPct must be between 0 and 100.";
+                return false;
+            }
+            if (!parsed)
+            {
+                state.hasRestManaOverride = false;
+                state.restManaOverride = 0.0f;
+            }
+            else
+            {
+                state.hasRestManaOverride = true;
+                state.restManaOverride = static_cast<float>(parsed);
+            }
+        }
+        else if (key == "PullDynamicMaxLeeroyMobs")
+        {
+            if (parsed < 1 || parsed > 20)
+            {
+                error = "PullDynamicMaxLeeroyMobs must be between 1 and 20.";
+                return false;
+            }
+            state.hasPullMaxOverride = true;
+            state.pullMaxOverride = parsed;
+        }
+        else
+        {
+            error = "Unknown or unsupported setting: " + key + ".";
+            return false;
+        }
+        return true;
+    }
+
+    bool ResetSetting(DcRunState& state, std::string const& key, std::string& error)
+    {
+        if (key.empty())
+        {
+            state.hasPreventBotReleaseOverride = false;
+            state.hasLootQualityOverride = false;
+            state.hasIgnoreChestsOverride = false;
+            state.hasRestHealthOverride = false;
+            state.hasRestManaOverride = false;
+            state.hasPartyMaxSpreadOverride = false;
+            state.hasPullMaxOverride = false;
+            state.preventBotReleaseOverride = true;
+            state.lootQualityOverride = 0;
+            state.ignoreChestsOverride = true;
+            state.partyMaxSpreadOverride = 25.0f;
+            state.restHealthOverride = 0.0f;
+            state.restManaOverride = 0.0f;
+            state.pullMaxOverride = 1;
+            return true;
+        }
+
+        if (key == "PreventBotRelease")
+        {
+            state.hasPreventBotReleaseOverride = false;
+            state.preventBotReleaseOverride = true;
+        }
+        else if (key == "LootMinQuality")
+        {
+            state.hasLootQualityOverride = false;
+            state.lootQualityOverride = 0;
+        }
+        else if (key == "IgnoreChests")
+        {
+            state.hasIgnoreChestsOverride = false;
+            state.ignoreChestsOverride = true;
+        }
+        else if (key == "RestHealthPct")
+        {
+            state.hasRestHealthOverride = false;
+            state.restHealthOverride = 0.0f;
+        }
+        else if (key == "RestManaPct")
+        {
+            state.hasRestManaOverride = false;
+            state.restManaOverride = 0.0f;
+        }
+        else if (key == "PartyMaxSpread")
+        {
+            state.hasPartyMaxSpreadOverride = false;
+            state.partyMaxSpreadOverride = 25.0f;
+        }
+        else if (key == "PullDynamicMaxLeeroyMobs")
+        {
+            state.hasPullMaxOverride = false;
+            state.pullMaxOverride = 1;
+        }
+        else
+        {
+            error = "Unknown or unsupported setting: " + key + ".";
+            return false;
+        }
+        return true;
+    }
+}
 
 // Called from HostHooks when LANG_ADDON / CHAT_MSG_ADDON arrives.
 // Accepts both the companion protocol ("DC\tCMD\t<sub>[\t<param>]") and the
@@ -53,17 +267,18 @@ bool DungeonClear_HandleAddonMessage(Player* player, std::string const& msg)
     if (subCmd.empty())
         return true;
 
-    // Settings / spectate are not implemented on Tortoise yet — acknowledge so
-    // the panel doesn't hang, and grey out spectate.
     if (subCmd == "sync")
     {
-        DcAddonComm::SendToPlayer(player, "SYNCSTART");
-        DcAddonComm::SendToPlayer(player, "SYNCEND");
-        return true;
-    }
-    if (subCmd == "set" || subCmd == "reset")
-    {
-        DcAddonComm::SendError(player, "Per-run settings overrides are not available on this server yet.");
+        Player* tank = DcUtil::FindGroupTankBot(player);
+        if (tank && tank->GetPlayerbotAI())
+            DcAddonComm::PushSettings(player, tank->GetPlayerbotAI(), tank);
+        else
+        {
+            // Keep the settings page usable outside a group.  Cached addon
+            // defaults remain visible until a tank becomes available.
+            DcAddonComm::SendToPlayer(player, "SYNCSTART");
+            DcAddonComm::SendToPlayer(player, "SYNCEND");
+        }
         return true;
     }
     if (subCmd == "spectate")
@@ -86,6 +301,40 @@ bool DungeonClear_HandleAddonMessage(Player* player, std::string const& msg)
 
     PlayerbotAI* tai = tank->GetPlayerbotAI();
 
+    if (subCmd == "set" || subCmd == "reset")
+    {
+        if (!DcUtil::IsRealCommander(player, tank))
+        {
+            DcAddonComm::SendError(player, "You are not allowed to change this run's settings.");
+            return true;
+        }
+
+        DcRunState& state = tai->GetAiObjectContext()->GetValue<DcRunState&>(DcKey::RunState)->Get();
+        std::string key;
+        std::string value;
+        auto tab = param.find('\t');
+        if (tab == std::string::npos)
+            key = param;
+        else
+        {
+            key = param.substr(0, tab);
+            value = param.substr(tab + 1);
+        }
+
+        std::string error;
+        bool ok = subCmd == "set"
+            ? ApplySetting(state, key, value, error)
+            : ResetSetting(state, key, error);
+        if (!ok)
+        {
+            DcAddonComm::SendError(player, error);
+            return true;
+        }
+        DcAddonComm::PushSettings(player, tai, tank);
+        DcAddonComm::PushStatus(tai, tank);
+        return true;
+    }
+
     std::string eventParam = param;
     if (subCmd == "status" || subCmd == "bosses" || subCmd == "boss")
         eventParam = "addon";
@@ -95,6 +344,8 @@ bool DungeonClear_HandleAddonMessage(Player* player, std::string const& msg)
     auto run = [&](char const* actionName) {
         if (Action* act = tai->GetAiObjectContext()->GetAction(actionName))
             act->Execute(ev);
+        else
+            DcAddonComm::SendError(player, std::string("Unsupported DungeonClear action: ") + actionName);
     };
 
     if (subCmd == "on")

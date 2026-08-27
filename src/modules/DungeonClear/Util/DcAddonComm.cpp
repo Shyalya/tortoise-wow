@@ -3,6 +3,7 @@
 #include "Util/DungeonClearUtil.h"
 #include "DcValueKeys.h"
 #include "DcRunState.h"
+#include "Settings/DcSettings.h"
 #include "Data/DungeonBossInfo.h"
 #include "Data/DungeonWingRegistry.h"
 #include "Maps/GridSearchers.h"
@@ -19,6 +20,7 @@
 #include <optional>
 #include <sstream>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace
@@ -26,7 +28,22 @@ namespace
     struct PushState
     {
         std::string lastStatus;
+        std::string lastBoss;
         bool primed = false;
+        bool bossPrimed = false;
+        bool bossPushInFlight = false;
+    };
+
+    // Build the fingerprint and the rows from one view of the AI context.  A
+    // periodic tick should not scan every boss once to decide whether to push
+    // and then scan them all again while constructing the push itself.  Keeping
+    // the statuses alongside the fingerprint also makes the decision and the
+    // packet internally consistent when a creature dies between ticks.
+    struct BossListSnapshot
+    {
+        std::vector<DungeonBossInfo> bosses;
+        std::vector<std::string> statuses;
+        std::string fingerprint;
     };
 
     std::map<ObjectGuid, PushState> g_activeTanks;
@@ -57,7 +74,8 @@ namespace
     std::string BossStatus(Player* bot,
                            DungeonBossInfo const& info,
                            std::unordered_set<uint32> const& skipped,
-                           std::unordered_set<uint32> const& cleared)
+                           std::unordered_set<uint32> const& cleared,
+                           DcRunState const& runState)
     {
         uint32 const stateKey = DungeonBossStateKey(info);
         uint32 const skipKey = stateKey;
@@ -75,7 +93,11 @@ namespace
                 // Grid loaded and no living boss — treat as dead when close enough
                 // that we would have seen it; otherwise still "alive" (not yet reached).
                 if (bot->GetDistance(info.x, info.y, info.z) <= info.arriveRadius * 4.0f)
-                    return info.spawnOnApproach ? "waiting" : "dead";
+                {
+                    if (info.spawnOnApproach && !runState.observedBosses.count(stateKey))
+                        return "waiting";
+                    return "dead";
+                }
             }
         }
         return "alive";
@@ -86,6 +108,37 @@ namespace
         if (s.size() <= maxLen)
             return s;
         return s.substr(0, maxLen);
+    }
+
+    BossListSnapshot BuildBossListSnapshot(PlayerbotAI* ai, Player* bot)
+    {
+        BossListSnapshot snapshot;
+        if (!ai || !bot || !ai->GetAiObjectContext())
+            return snapshot;
+
+        AiObjectContext* ctx = ai->GetAiObjectContext();
+        // Resolve NextDungeonBoss first.  Its calculation can update the
+        // cleared/selected state that is reflected by both the rows and the
+        // fingerprint below.
+        auto next = ctx->GetValue<std::optional<DungeonBossInfo>>(DcKey::NextDungeonBoss)->Get();
+        snapshot.bosses = ctx->GetValue<std::vector<DungeonBossInfo>>(DcKey::DungeonBosses)->Get();
+        auto const& skipped = ctx->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
+        auto const& cleared = ctx->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
+        DcRunState const& state = ctx->GetValue<DcRunState&>(DcKey::RunState)->Get();
+
+        std::ostringstream out;
+        out << state.selectedBossEntry << ':' << state.selectedBossStateKey << '|'
+            << (next ? DungeonBossStateKey(*next) : 0) << '|';
+        snapshot.statuses.reserve(snapshot.bosses.size());
+        for (DungeonBossInfo const& info : snapshot.bosses)
+        {
+            uint32 const key = DungeonBossStateKey(info);
+            std::string status = BossStatus(bot, info, skipped, cleared, state);
+            out << key << ':' << status << ';';
+            snapshot.statuses.push_back(std::move(status));
+        }
+        snapshot.fingerprint = out.str();
+        return snapshot;
     }
 }
 
@@ -173,6 +226,127 @@ namespace DcAddonComm
         SendToPlayer(player, "ERROR\t" + msg);
     }
 
+    void SendBossListSnapshot(PlayerbotAI* ai, Player* bot, bool silent,
+                              BossListSnapshot const& snapshot)
+    {
+        SendToGroup(ai, bot, "BOSS_START");
+        if (snapshot.bosses.empty())
+        {
+            if (!silent)
+                SendToGroup(ai, bot, "CHAT\tNo bosses found for this map.");
+            SendToGroup(ai, bot, "BOSS_END");
+            return;
+        }
+
+        for (size_t i = 0; i < snapshot.bosses.size(); ++i)
+        {
+            DungeonBossInfo const& info = snapshot.bosses[i];
+            std::string name = info.name;
+            if (info.kind == DungeonAnchorKind::Objective)
+                name = "Objective: " + info.name;
+            std::string const& status = snapshot.statuses[i];
+            std::string wing = DungeonWingRegistry::WingName(bot->GetMapId(), info.entry);
+
+            std::ostringstream line;
+            line << "BOSS\t" << info.entry << "\t" << BossOrderKey(info) << "\t"
+                 << name << "\t" << status << "\t"
+                 << int(info.x) << "\t" << int(info.y) << "\t" << int(info.z) << "\t"
+                 << wing << "\t\t" << info.encounterIndex;
+            SendToGroup(ai, bot, line.str());
+        }
+        SendToGroup(ai, bot, "BOSS_END");
+    }
+
+    bool ClaimBossPush(ObjectGuid tank, std::string const& fingerprint,
+                       bool explicitRequest)
+    {
+        std::lock_guard<std::mutex> lock(g_activeMutex);
+        auto& pushState = g_activeTanks[tank];
+        // A command/request arriving while the periodic path is already
+        // sending this exact snapshot needs no second packet.  Explicit
+        // requests otherwise always send, even when the fingerprint is
+        // unchanged, because the client may have just opened the panel.
+        if (explicitRequest && pushState.bossPushInFlight
+            && pushState.bossPrimed && pushState.lastBoss == fingerprint)
+            return false;
+
+        pushState.lastBoss = fingerprint;
+        pushState.bossPrimed = true;
+        pushState.bossPushInFlight = true;
+        return true;
+    }
+
+    void FinishBossPush(ObjectGuid tank, std::string const& fingerprint)
+    {
+        std::lock_guard<std::mutex> lock(g_activeMutex);
+        auto it = g_activeTanks.find(tank);
+        if (it != g_activeTanks.end() && it->second.bossPrimed
+            && it->second.lastBoss == fingerprint)
+            it->second.bossPushInFlight = false;
+    }
+
+    void PushSettings(Player* recipient, PlayerbotAI* /*ai*/, Player* bot)
+    {
+        if (!recipient)
+            return;
+
+        DcRunState* state = DcUtil::LeaderRunState(bot);
+        SendToPlayer(recipient, "SYNCSTART");
+
+        auto send = [&](char const* key, uint32 value, uint32 minValue,
+                        uint32 maxValue, uint32 type, bool overridden)
+        {
+            std::ostringstream line;
+            line << "SETTINGS\t" << key << "\t" << value << "\t"
+                 << minValue << "\t" << maxValue << "\t" << type << "\t"
+                 << (overridden ? 1 : 0);
+            SendToPlayer(recipient, line.str());
+        };
+        auto sendFloat = [&](char const* key, float value, float minValue,
+                             float maxValue, uint32 type, bool overridden)
+        {
+            std::ostringstream line;
+            line << "SETTINGS\t" << key << "\t" << value << "\t"
+                 << minValue << "\t" << maxValue << "\t" << type << "\t"
+                 << (overridden ? 1 : 0);
+            SendToPlayer(recipient, line.str());
+        };
+
+        // Only advertise settings with real server-side behavior.  This keeps
+        // the addon from presenting controls that merely acknowledge a command.
+        bool const preventRelease = state && state->hasPreventBotReleaseOverride
+            ? state->preventBotReleaseOverride : DcUtil::EffectivePreventBotRelease(bot);
+        uint32 const lootQuality = state && state->hasLootQualityOverride
+            ? state->lootQualityOverride : DcUtil::EffectiveLootQualityMin(bot);
+        bool const ignoreChests = state && state->hasIgnoreChestsOverride
+            ? state->ignoreChestsOverride : DcUtil::EffectiveIgnoreChests(bot);
+        float const restHealth = state && state->hasRestHealthOverride
+            ? state->restHealthOverride : DcUtil::EffectiveRestHealth(bot);
+        float const restMana = state && state->hasRestManaOverride
+            ? state->restManaOverride : DcUtil::EffectiveRestMana(bot);
+        float const partyMaxSpread = state && state->hasPartyMaxSpreadOverride
+            ? state->partyMaxSpreadOverride : DcUtil::EffectivePartyMaxSpread(bot);
+        uint32 const pullMax = state && state->hasPullMaxOverride
+            ? state->pullMaxOverride : DcUtil::EffectivePullMax(bot);
+
+        send("PreventBotRelease", preventRelease ? 1u : 0u, 0, 1, 0,
+            state && state->hasPreventBotReleaseOverride);
+        send("LootMinQuality", lootQuality, 0, 6, 1,
+            state && state->hasLootQualityOverride);
+        send("IgnoreChests", ignoreChests ? 1u : 0u, 0, 1, 0,
+            state && state->hasIgnoreChestsOverride);
+        send("RestHealthPct", static_cast<uint32>(restHealth + 0.5f), 0, 100, 1,
+            state && state->hasRestHealthOverride);
+        send("RestManaPct", static_cast<uint32>(restMana + 0.5f), 0, 100, 1,
+            state && state->hasRestManaOverride);
+        sendFloat("PartyMaxSpread", partyMaxSpread, 10.0f, 60.0f, 3,
+            state && state->hasPartyMaxSpreadOverride);
+        send("PullDynamicMaxLeeroyMobs", pullMax, 1, 20, 1,
+            state && state->hasPullMaxOverride);
+
+        SendToPlayer(recipient, "SYNCEND");
+    }
+
     std::string BuildStatusPayload(PlayerbotAI* ai, Player* bot)
     {
         if (!ai || !bot || !ai->GetAiObjectContext())
@@ -209,6 +383,16 @@ namespace DcAddonComm
             stateStr = bossFight ? "fighting_boss" : "fighting_trash";
             detail = bossFight && next ? ("Fighting " + next->name + ".") : "In combat.";
         }
+        else if (st.enabled && DcUtil::PartyNeedsRest(bot))
+        {
+            stateStr = "resting";
+            detail = "Waiting for the party to recover.";
+        }
+        else if (st.enabled && DcUtil::PartyNeedsRegroup(bot))
+        {
+            stateStr = "regrouping";
+            detail = "Waiting for the party to catch up.";
+        }
         else if (st.enabled && next)
         {
             if (!bot->IsStopped())
@@ -229,6 +413,13 @@ namespace DcAddonComm
         }
 
         std::ostringstream out;
+        Unit* sizingTarget = DcUtil::FindHostileNear(bot, sDcSettings.trashEngageRange + 8.0f);
+        uint32 const nearbyHostiles = sizingTarget
+            ? DcUtil::CountHostileNear(bot, sizingTarget, 15.0f) : 0;
+        uint32 const liveDynamicVerdict = pull == static_cast<uint8>(DcPullMode::Dynamic)
+            ? (nearbyHostiles <= DcUtil::EffectivePullMax(bot) ? 1u : 3u)
+            : 0u;
+
         out << "STATUS\t"
             << (st.enabled ? "1" : "0") << "\t"
             << (next ? next->entry : 0) << "\t"
@@ -238,7 +429,7 @@ namespace DcAddonComm
             << stateStr << "\t"
             << detail << "\t"
             << uint32(TortoisePullToAddon(pull)) << "\t"
-            << "0"; // live Dynamic verdict — Tortoise has no per-pack governor yet
+            << liveDynamicVerdict;
         return out.str();
     }
 
@@ -261,42 +452,22 @@ namespace DcAddonComm
         if (!ai || !bot || !ai->GetAiObjectContext())
             return;
 
-        AiObjectContext* ctx = ai->GetAiObjectContext();
-        auto bosses = ctx->GetValue<std::vector<DungeonBossInfo>>(DcKey::DungeonBosses)->Get();
-        auto const& skipped = ctx->GetValue<std::unordered_set<uint32>&>(DcKey::Skipped)->Get();
-        auto const& cleared = ctx->GetValue<std::unordered_set<uint32>&>(DcKey::ClearedAnchors)->Get();
-
-        SendToGroup(ai, bot, "BOSS_START");
-        if (bosses.empty())
-        {
-            if (!silent)
-                SendToGroup(ai, bot, "CHAT\tNo bosses found for this map.");
-            SendToGroup(ai, bot, "BOSS_END");
+        BossListSnapshot const snapshot = BuildBossListSnapshot(ai, bot);
+        // Explicit requests and command-driven changes prime the same cache
+        // used by the periodic pusher, preventing a duplicate burst on the
+        // next world tick.  Prime before the network calls so a re-entrant
+        // command (or a concurrent tick) cannot overwrite a newer reset with
+        // this already-built snapshot.
+        if (!ClaimBossPush(bot->GetObjectGuid(), snapshot.fingerprint, true))
             return;
-        }
-
-        for (DungeonBossInfo const& info : bosses)
-        {
-            std::string name = info.name;
-            if (info.kind == DungeonAnchorKind::Objective)
-                name = "Objective: " + info.name;
-            std::string status = BossStatus(bot, info, skipped, cleared);
-            std::string wing = DungeonWingRegistry::WingName(bot->GetMapId(), info.entry);
-
-            std::ostringstream line;
-            line << "BOSS\t" << info.entry << "\t" << BossOrderKey(info) << "\t"
-                 << name << "\t" << status << "\t"
-                 << int(info.x) << "\t" << int(info.y) << "\t" << int(info.z) << "\t"
-                 << wing << "\t\t" << info.encounterIndex;
-            SendToGroup(ai, bot, line.str());
-        }
-        SendToGroup(ai, bot, "BOSS_END");
+        SendBossListSnapshot(ai, bot, silent, snapshot);
+        FinishBossPush(bot->GetObjectGuid(), snapshot.fingerprint);
     }
 
     void MarkActiveTank(ObjectGuid tank)
     {
         std::lock_guard<std::mutex> lock(g_activeMutex);
-        g_activeTanks[tank]; // primed=false → force emit on next tick
+        g_activeTanks[tank] = PushState{}; // force status + boss emit on next tick
     }
 
     void UnmarkActiveTank(ObjectGuid tank)
@@ -343,7 +514,9 @@ namespace DcAddonComm
             }
 
             std::string payload = BuildStatusPayload(ai, bot);
+            BossListSnapshot const bossSnapshot = BuildBossListSnapshot(ai, bot);
             bool send = false;
+            bool sendBoss = false;
             {
                 std::lock_guard<std::mutex> lock(g_activeMutex);
                 auto it = g_activeTanks.find(guid);
@@ -355,9 +528,24 @@ namespace DcAddonComm
                     it->second.primed = true;
                     send = true;
                 }
+                if (!it->second.bossPrimed || it->second.lastBoss != bossSnapshot.fingerprint)
+                {
+                    // Claim the fingerprint while no lock is held during the
+                    // actual network send.  This avoids both packet spam and
+                    // re-entrant lock acquisition from SendAddonMessage.
+                    it->second.lastBoss = bossSnapshot.fingerprint;
+                    it->second.bossPrimed = true;
+                    it->second.bossPushInFlight = true;
+                    sendBoss = true;
+                }
             }
             if (send)
                 SendToGroup(ai, bot, payload);
+            if (sendBoss)
+            {
+                SendBossListSnapshot(ai, bot, true, bossSnapshot);
+                FinishBossPush(guid, bossSnapshot.fingerprint);
+            }
         }
     }
 }

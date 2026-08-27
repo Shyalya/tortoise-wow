@@ -665,6 +665,8 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
         {
             combatEngine->addStrategy("heal interrupt");
             combatEngine->addStrategy("conserve mana");
+            if (sPlayerbotAIConfig.autoSaveMana)
+                combatEngine->addStrategy("save mana");
             combatEngine->addStrategy("preheal");
         }
         else if (facade->ContainsStrategy(STRATEGY_TYPE_TANK))
@@ -675,6 +677,8 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
         {
             combatEngine->addStrategy("threat");
             combatEngine->addStrategy("cast time");
+            // Let the tank grab initial threat before DPS opens.
+            combatEngine->addStrategy("wait for attack");
             if (player->GetPower(POWER_MANA) > 0 || player->GetMaxPower(POWER_MANA) > 0)
                 combatEngine->addStrategy("conserve mana");
         }
@@ -743,6 +747,7 @@ void AiFactory::AddDefaultCombatStrategies(Player* player, PlayerbotAI* const fa
         combatEngine->removeStrategy("cast time");
         combatEngine->removeStrategy("avoid aoe");
         combatEngine->removeStrategy("preheal");
+        combatEngine->removeStrategy("wait for attack");
 
         if (player->getClass() == CLASS_SHAMAN && tab == 2)
         {
@@ -998,6 +1003,12 @@ void AiFactory::AddDefaultNonCombatStrategies(Player* player, PlayerbotAI* const
     nonCombatEngine->addStrategies("wbuff", NULL);
     nonCombatEngine->addStrategy("avoid mobs");
     nonCombatEngine->addStrategy("dungeon");
+
+    if (!player->InBattleGround())
+        nonCombatEngine->addStrategy("force rebuff");
+
+    if (sPlayerbotAIConfig.autoSaveMana && PlayerbotAI::IsHeal(player))
+        nonCombatEngine->addStrategy("save mana");
 
     if(sPlayerbotAIConfig.llmEnabled == 2)
         nonCombatEngine->addStrategy("ai chat");

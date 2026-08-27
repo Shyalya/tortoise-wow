@@ -18,6 +18,9 @@ namespace ai
             creators["dungeon clear follow tank"] = [](PlayerbotAI* ai) { return new DungeonClearFollowTankAction(ai); };
             creators["dungeon clear assist tank"] = [](PlayerbotAI* ai) { return new DungeonClearAssistTankAction(ai); };
             creators["dungeon clear disable on death"] = [](PlayerbotAI* ai) { return new DungeonClearDisableOnDeathAction(ai); };
+            creators["dungeon clear recover"] = [](PlayerbotAI* ai) { return new DungeonClearRecoverAction(ai); };
+            creators["dungeon clear rest party"] = [](PlayerbotAI* ai) { return new DungeonClearRestPartyAction(ai); };
+            creators["dungeon clear regroup"] = [](PlayerbotAI* ai) { return new DungeonClearRegroupAction(ai); };
             creators["dungeon clear disable on cleared"] = [](PlayerbotAI* ai) { return new DungeonClearDisableOnClearedAction(ai); };
             creators["dungeon clear rez party"] = [](PlayerbotAI* ai) { return new DungeonClearRezPartyAction(ai); };
             creators["dungeon clear filter loot"] = [](PlayerbotAI* ai) { return new DungeonClearFilterLootAction(ai); };

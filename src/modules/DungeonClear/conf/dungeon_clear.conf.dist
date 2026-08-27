@@ -18,3 +18,5 @@ DungeonClear.PostCombatRez = 1
 DungeonClear.StrategyGateSweepMs = 3000
 DungeonClear.PreventBotRelease = 1
 DungeonClear.ObjectiveArriveRadius = 10
+# Hold the tank when a living party member falls farther behind than this.
+DungeonClear.PartyMaxSpread = 25

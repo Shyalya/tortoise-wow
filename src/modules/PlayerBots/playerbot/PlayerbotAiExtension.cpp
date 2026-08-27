@@ -74,6 +74,11 @@ void PlayerbotAiExtension::RunStrategyGates(PlayerbotAI* ai, Player* bot) const
         gate(ai, bot);
 }
 
+bool PlayerbotAiExtension::ShouldPreventAutoRelease(Player* bot) const
+{
+    return autoReleaseGuard && autoReleaseGuard(bot);
+}
+
 bool PlayerbotAiExtension::HandleDcCommand(ChatHandler* handler, char* args) const
 {
     if (dcCommand)

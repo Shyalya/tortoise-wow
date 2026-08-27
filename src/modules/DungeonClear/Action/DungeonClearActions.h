@@ -32,10 +32,10 @@ namespace ai
         bool Execute(Event& event) override;
     };
 
-    class DungeonClearRunEventAction : public MovementAction
+    class DungeonClearRunEventAction : public AttackAction
     {
     public:
-        DungeonClearRunEventAction(PlayerbotAI* ai) : MovementAction(ai, "dungeon clear run event") {}
+        DungeonClearRunEventAction(PlayerbotAI* ai) : AttackAction(ai, "dungeon clear run event") {}
         bool Execute(Event& event) override;
     };
 
@@ -57,6 +57,27 @@ namespace ai
     {
     public:
         DungeonClearDisableOnDeathAction(PlayerbotAI* ai) : Action(ai, "dungeon clear disable on death") {}
+        bool Execute(Event& event) override;
+    };
+
+    class DungeonClearRecoverAction : public Action
+    {
+    public:
+        DungeonClearRecoverAction(PlayerbotAI* ai) : Action(ai, "dungeon clear recover") {}
+        bool Execute(Event& event) override;
+    };
+
+    class DungeonClearRestPartyAction : public Action
+    {
+    public:
+        DungeonClearRestPartyAction(PlayerbotAI* ai) : Action(ai, "dungeon clear rest party") {}
+        bool Execute(Event& event) override;
+    };
+
+    class DungeonClearRegroupAction : public MovementAction
+    {
+    public:
+        DungeonClearRegroupAction(PlayerbotAI* ai) : MovementAction(ai, "dungeon clear regroup") {}
         bool Execute(Event& event) override;
     };
 

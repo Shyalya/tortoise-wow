@@ -188,12 +188,33 @@ bool OutNumberedTrigger::IsActive()
 bool BuffTrigger::IsActive()
 {
     Unit* target = GetTarget();
-	return target && !ai->HasAura(spell, target, false, checkIsOwner) && target->IsAlive();
+    if (!target || !target->IsAlive())
+        return false;
+
+    if (ai->IsForceRebuffPending() && !ai->IsForceRebuffExpired() && !bot->IsInCombat())
+    {
+        if (ai->IsForceRebuffBuffCompleted(spell, target))
+            return false;
+
+        ai->NoteForceRebuffBuffProposed();
+        return true;
+    }
+
+    return !ai->HasAura(spell, target, false, checkIsOwner);
 }
 
 bool MyBuffTrigger::IsActive()
 {
     Unit* target = GetTarget();
+    if (target && target->IsAlive() && ai->IsForceRebuffPending() && !ai->IsForceRebuffExpired() && !bot->IsInCombat())
+    {
+        if (ai->IsForceRebuffBuffCompleted(spell, target))
+            return false;
+
+        ai->NoteForceRebuffBuffProposed();
+        return true;
+    }
+
     return target && !ai->HasMyAura(spell, target);
 }
 
@@ -654,7 +675,16 @@ bool HasCcTargetTrigger::IsActive()
     uint32 spellid = AI_VALUE2(uint32, "spell id", getName());
     if (spellid && sServerFacade.IsSpellReady(bot, spellid))
     {
-        return AI_VALUE2(Unit*, "cc target", getName()) && !AI_VALUE2(Unit*, "current cc target", getName());
+        Unit* ccTarget = AI_VALUE2(Unit*, "cc target", getName());
+        if (!ccTarget || AI_VALUE2(Unit*, "current cc target", getName()))
+            return false;
+
+        // In dungeons the group raid marker is the shared CC assignment. This
+        // prevents every controller from independently selecting the same add.
+        if (bot->GetMap() && bot->GetMap()->IsDungeon() && !bot->GetMap()->IsRaid())
+            return AI_VALUE(Unit*, "rti cc target") == ccTarget;
+
+        return true;
     }
 
     return false;
@@ -860,6 +890,9 @@ bool InRaidFightTrigger::IsActive()
 bool GreaterBuffOnPartyTrigger::IsActive()
 {
     Unit* target = GetTarget();
+    if (target && bot->IsInGroup(target) && ai->IsForceRebuffPending() && !ai->IsForceRebuffExpired() && !bot->IsInCombat())
+        return BuffOnPartyTrigger::IsActive();
+
     return target && bot->IsInGroup(target) && BuffOnPartyTrigger::IsActive() && !ai->HasAura(lowerSpell, target, false, checkIsOwner);
 }
 

@@ -17,6 +17,10 @@ namespace ai
         // Used when this action is executed as a reaction
         bool ShouldReactionInterruptCast() const override { return true; }
 
+        // Read-only view for multipliers that need to decide whether this
+        // particular heal is worth spending mana on.
+        Unit* GetActionTarget() { return GetTarget(); }
+
         bool HasReachAction() { return !GetReachActionName().empty(); }
         
     protected:
@@ -152,6 +156,8 @@ namespace ai
 	public:
 		CastBuffSpellAction(PlayerbotAI* ai, std::string spell) : CastAuraSpellAction(ai, spell) { }
         virtual std::string GetTargetName() override { return "self target"; }
+        virtual bool isUseful() override;
+        virtual bool Execute(Event& event) override;
 	};
 
     class CastSpellTargetAction : public CastSpellAction
@@ -197,24 +203,38 @@ namespace ai
 
     //---------------------------------------------------------------------------------------------------------------------
 
+    // Higher = more mana-efficient. Used by HealerAutoSaveManaMultiplier.
+    enum class HealingManaEfficiency : uint8
+    {
+        VERY_LOW = 1,
+        LOW = 2,
+        MEDIUM = 3,
+        HIGH = 4,
+        VERY_HIGH = 5
+    };
+
     class CastHealingSpellAction : public CastAuraSpellAction
     {
     public:
-        CastHealingSpellAction(PlayerbotAI* ai, std::string spell, uint8 estAmount = 15.0f) : CastAuraSpellAction(ai, spell, true), estAmount(estAmount) {}
-        
+        CastHealingSpellAction(PlayerbotAI* ai, std::string spell, uint8 estAmount = 15,
+                               HealingManaEfficiency manaEfficiency = HealingManaEfficiency::MEDIUM)
+            : CastAuraSpellAction(ai, spell, true), estAmount(estAmount), manaEfficiency(manaEfficiency) {}
+
+        uint8 estAmount;
+        HealingManaEfficiency manaEfficiency;
+
     protected:
         virtual ActionThreatType getThreatType() override { return ActionThreatType::ACTION_THREAT_AOE; }
         virtual std::string GetTargetName() override { return "self target"; }
         virtual std::string GetReachActionName() override { return "reach party member to heal"; }
-
-    protected:
-        uint8 estAmount;
     };
 
     class CastAoeHealSpellAction : public CastHealingSpellAction
     {
     public:
-    	CastAoeHealSpellAction(PlayerbotAI* ai, std::string spell, uint8 estAmount = 15.0f) : CastHealingSpellAction(ai, spell, estAmount) {}
+        CastAoeHealSpellAction(PlayerbotAI* ai, std::string spell, uint8 estAmount = 15,
+                               HealingManaEfficiency manaEfficiency = HealingManaEfficiency::MEDIUM)
+            : CastHealingSpellAction(ai, spell, estAmount, manaEfficiency) {}
 		virtual std::string GetTargetName() override { return "party member to heal"; }
         virtual bool isUseful() override;
     };
@@ -239,7 +259,9 @@ namespace ai
     class HealPartyMemberAction : public CastHealingSpellAction, public PartyMemberActionNameSupport
     {
     public:
-        HealPartyMemberAction(PlayerbotAI* ai, std::string spell, uint8 estAmount = 15.0f) : CastHealingSpellAction(ai, spell, estAmount), PartyMemberActionNameSupport(spell) {}
+        HealPartyMemberAction(PlayerbotAI* ai, std::string spell, uint8 estAmount = 15,
+                              HealingManaEfficiency manaEfficiency = HealingManaEfficiency::MEDIUM)
+            : CastHealingSpellAction(ai, spell, estAmount, manaEfficiency), PartyMemberActionNameSupport(spell) {}
         virtual std::string getName() override { return PartyMemberActionNameSupport::getName(); }
 		virtual std::string GetTargetName() override { return "party member to heal"; }
     };
@@ -247,7 +269,8 @@ namespace ai
     class HealHotPartyMemberAction : public HealPartyMemberAction
     {
     public:
-        HealHotPartyMemberAction(PlayerbotAI* ai, std::string spell) : HealPartyMemberAction(ai, spell) {}
+        HealHotPartyMemberAction(PlayerbotAI* ai, std::string spell)
+            : HealPartyMemberAction(ai, spell, 15, HealingManaEfficiency::VERY_HIGH) {}
         virtual bool isUseful() override;
     };
 

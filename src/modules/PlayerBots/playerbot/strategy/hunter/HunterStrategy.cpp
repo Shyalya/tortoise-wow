@@ -444,9 +444,11 @@ void HunterStingStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
             NextAction::array(0, new NextAction("viper sting on attacker", ACTION_HIGH + 1), NULL)));
     }
 
+    // Prefer Serpent for PvE; Viper as fallback (mana-drain targets / missing Serpent).
     triggers.push_back(new TriggerNode(
         "no stings",
-        NextAction::array(0, new NextAction("viper sting", ACTION_NORMAL + 5), NULL)));
+        NextAction::array(0, new NextAction("serpent sting", ACTION_NORMAL + 5),
+                             new NextAction("viper sting", ACTION_NORMAL + 4), NULL)));
 }
 
 void HunterStingPvpStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -906,9 +908,11 @@ void HunterStingStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
             NextAction::array(0, new NextAction("viper sting on attacker", ACTION_HIGH + 1), NULL)));
     }
 
+    // Prefer Serpent for PvE; Viper as fallback (mana-drain targets / missing Serpent).
     triggers.push_back(new TriggerNode(
         "no stings",
-        NextAction::array(0, new NextAction("viper sting", ACTION_NORMAL + 5), NULL)));
+        NextAction::array(0, new NextAction("serpent sting", ACTION_NORMAL + 5),
+                             new NextAction("viper sting", ACTION_NORMAL + 4), NULL)));
 }
 
 void HunterStingPvpStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
@@ -1368,9 +1372,11 @@ void HunterStingStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
             NextAction::array(0, new NextAction("viper sting on attacker", ACTION_HIGH + 1), NULL)));
     }
 
+    // Prefer Serpent for PvE; Viper as fallback (mana-drain targets / missing Serpent).
     triggers.push_back(new TriggerNode(
         "no stings",
-        NextAction::array(0, new NextAction("viper sting", ACTION_NORMAL + 5), NULL)));
+        NextAction::array(0, new NextAction("serpent sting", ACTION_NORMAL + 5),
+                             new NextAction("viper sting", ACTION_NORMAL + 4), NULL)));
 }
 
 void HunterStingPvpStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)

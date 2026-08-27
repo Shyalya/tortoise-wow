@@ -22,6 +22,7 @@ float ConserveManaMultiplier::GetValue(Action* action)
         return 1.0f;
 
     // Never throttle heals or emergency utility through mana conservation.
+    // (HealerAutoSaveManaMultiplier handles inefficient heals separately.)
     if (dynamic_cast<CastHealingSpellAction*>(action))
         return 1.0f;
 
@@ -104,8 +105,67 @@ float SaveManaMultiplier::GetValue(Action* action)
     return 1.0f;
 }
 
+float HealerAutoSaveManaMultiplier::GetValue(Action* action)
+{
+    if (!action || !ai->ContainsStrategy(STRATEGY_TYPE_HEAL))
+        return 1.0f;
+
+    if (!AI_VALUE2(bool, "has mana", "self target"))
+        return 1.0f;
+
+    uint8 mana = AI_VALUE2(uint8, "mana", "self target");
+    if (mana > sPlayerbotAIConfig.saveManaThreshold)
+        return 1.0f;
+
+    CastHealingSpellAction* healingAction = dynamic_cast<CastHealingSpellAction*>(action);
+    if (!healingAction)
+        return 1.0f;
+
+    Unit* target = healingAction->GetActionTarget();
+    if (!target)
+        return 1.0f;
+
+    bool isTank = target->IsPlayer() && ai->IsTank((Player*)target);
+    uint8 health = target->GetHealthPercent();
+    HealingManaEfficiency manaEfficiency = healingAction->manaEfficiency;
+    uint8 estAmount = healingAction->estAmount;
+    uint8 lossAmount = health >= 100 ? 0 : (100 - health);
+
+    if (isTank)
+    {
+        // Tanks have larger health pools; treat estimated heal as smaller relative hit.
+        estAmount = uint8(float(estAmount) / 1.5f);
+        if (health >= sPlayerbotAIConfig.mediumHealth &&
+            (lossAmount < estAmount || manaEfficiency <= HealingManaEfficiency::MEDIUM))
+            return 0.0f;
+        if (health >= sPlayerbotAIConfig.lowHealth &&
+            (lossAmount < estAmount || manaEfficiency <= HealingManaEfficiency::LOW))
+            return 0.0f;
+    }
+    else
+    {
+        if (health >= sPlayerbotAIConfig.mediumHealth &&
+            (lossAmount < estAmount || manaEfficiency <= HealingManaEfficiency::MEDIUM))
+            return 0.0f;
+        if (lossAmount < estAmount || manaEfficiency <= HealingManaEfficiency::LOW)
+            return 0.0f;
+    }
+
+    return 1.0f;
+}
+
 void ConserveManaStrategy::InitCombatMultipliers(std::list<Multiplier*> &multipliers)
 {
     multipliers.push_back(new ConserveManaMultiplier(ai));
     multipliers.push_back(new SaveManaMultiplier(ai));
+}
+
+void HealerAutoSaveManaStrategy::InitCombatMultipliers(std::list<Multiplier*>& multipliers)
+{
+    multipliers.push_back(new HealerAutoSaveManaMultiplier(ai));
+}
+
+void HealerAutoSaveManaStrategy::InitNonCombatMultipliers(std::list<Multiplier*>& multipliers)
+{
+    multipliers.push_back(new HealerAutoSaveManaMultiplier(ai));
 }

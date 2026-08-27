@@ -6,10 +6,9 @@
 #include "Util/DungeonClearUtil.h"
 #include "DcValueKeys.h"
 #include "Maps/MapManager.h"
+#include "Group/Group.h"
 #include <algorithm>
 #include <cctype>
-#include <cstdlib>
-#include <ctime>
 #include <sstream>
 
 namespace
@@ -94,21 +93,6 @@ bool DcTestDriver::Handle(ChatHandler* handler, std::string const& args)
         return true;
 
     std::string dungeon = Trim(args.empty() ? "deadmines" : args);
-    uint32 seed = static_cast<uint32>(time(nullptr));
-    size_t const tokenEnd = dungeon.find_last_not_of(" \t\r\n");
-    size_t const tokenStart = tokenEnd == std::string::npos
-        ? std::string::npos : dungeon.find_last_of(" \t\r\n", tokenEnd);
-    if (tokenStart != std::string::npos)
-    {
-        std::string const seedText = dungeon.substr(tokenStart + 1, tokenEnd - tokenStart);
-        char* end = nullptr;
-        unsigned long parsed = std::strtoul(seedText.c_str(), &end, 10);
-        if (end && end != seedText.c_str() && *end == '\0')
-        {
-            seed = static_cast<uint32>(parsed);
-            dungeon = Trim(dungeon.substr(0, tokenStart));
-        }
-    }
 
     Entrance const* ent = FindEntrance(dungeon);
     if (!ent)
@@ -116,24 +100,38 @@ bool DcTestDriver::Handle(ChatHandler* handler, std::string const& args)
         handler->PSendSysMessage("DC test: unknown dungeon '%s'.", dungeon.c_str());
         return true;
     }
-    handler->PSendSysMessage("DC test: dungeon=%s seed=%u — teleporting you to entrance. Invite tank/healer/dps bots and `.dc on`.",
-        ent->name, seed);
+    handler->PSendSysMessage("DC test: dungeon=%s — teleporting the GM and grouped bots to the entrance.", ent->name);
 
     gm->TeleportTo(ent->mapId, ent->x, ent->y, ent->z, 0.0f);
 
-    // Optional: if GM has bots in group, enable DC on the tank.
+    // This command is GM-only and is intended as a self-contained smoke test:
+    // bring grouped playerbots to the same entrance before enabling the run.
     if (Player* tank = DcUtil::FindGroupTankBot(gm))
     {
+        if (Group* group = gm->GetGroup())
+        {
+            for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+            {
+                Player* member = ref->getSource();
+                if (member && member != gm && member->GetPlayerbotAI())
+                    member->TeleportTo(ent->mapId, ent->x, ent->y, ent->z, 0.0f);
+            }
+        }
+
         if (PlayerbotAI* tai = tank->GetPlayerbotAI())
         {
             Event ev("dc on", "", gm);
             if (Action* a = tai->GetAiObjectContext()->GetAction("dc on"))
-                a->Execute(ev);
-            handler->PSendSysMessage("DC test: auto-enabled on tank %s", tank->GetName());
+            {
+                if (a->Execute(ev))
+                    handler->PSendSysMessage("DC test: enabled on tank %s.", tank->GetName());
+                else
+                    handler->PSendSysMessage("DC test: could not enable on tank %s; use `.dc status` for details.", tank->GetName());
+            }
         }
     }
     else
-        handler->SendSysMessage("DC test: no tank bot in group yet — invite bots then `.dc on`.");
+        handler->SendSysMessage("DC test: no tank bot in group — invite a tank bot and run `.dc on`.");
 
     return true;
 }

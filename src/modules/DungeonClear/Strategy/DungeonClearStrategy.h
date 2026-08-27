@@ -11,6 +11,7 @@ namespace ai
         int GetType() override { return STRATEGY_TYPE_NONCOMBAT; }
     protected:
         void InitNonCombatTriggers(std::list<TriggerNode*>& triggers) override;
+        void InitDeadTriggers(std::list<TriggerNode*>& triggers) override;
         void InitNonCombatMultipliers(std::list<Multiplier*>& multipliers) override;
     };
 

@@ -1661,18 +1661,11 @@ local SettingMeta = {
 local VisibleSettings = {
     PreventBotRelease        = true,
     IgnoreChests             = true,
-    CombatRegroup            = true,
     LootMinQuality           = true,
     RestHealthPct            = true,
     RestManaPct              = true,
-    SmartRest                = true,
-    SmartRestHealthPct       = true,
-    SmartRestDpsManaPct      = true,
-    SmartRestHealerManaPct   = true,
-    WaitAtBoss               = true,
     PartyMaxSpread           = true,
     PullDynamicMaxLeeroyMobs = true,
-    PullDynamicPartyLag      = true,
 }
 
 
@@ -1719,11 +1712,10 @@ local DefaultSchema = {
     PullDynamicPartyLag      = { type = DCT_FLOAT, min = 6,  max = 40, default = 15 },
 }
 local DefaultSchemaOrder = {
-    "PreventBotRelease", "IgnoreChests", "CombatRegroup",
+    "PreventBotRelease", "IgnoreChests",
     "LootMinQuality", "RestHealthPct", "RestManaPct",
-    "SmartRest", "SmartRestHealthPct", "SmartRestDpsManaPct", "SmartRestHealerManaPct",
-    "WaitAtBoss",
-    "PartyMaxSpread", "PullDynamicMaxLeeroyMobs", "PullDynamicPartyLag",
+    "PartyMaxSpread",
+    "PullDynamicMaxLeeroyMobs",
 }
 
 local settingRows = {}     -- key -> row frame
@@ -1743,6 +1735,14 @@ local function FmtVal(stype, v)
     if stype == DCT_BOOL then return (v ~= 0) and "On" or "Off" end
     if stype == DCT_FLOAT then return string.format("%.1f", v) end
     return tostring(math.floor(v + 0.5))
+end
+
+-- Rest values use zero as an explicit "use the server default" sentinel.
+-- Keep that sentinel out of the saved overrides, so it behaves like clicking
+-- the row's Default button while the other controls can still save a value of
+-- zero (for example LootMinQuality=0 or PreventBotRelease=0).
+local function IsSavedDefault(key, value)
+    return (key == "RestHealthPct" or key == "RestManaPct") and value == 0
 end
 
 local settingsPanel = CreateFrame("Frame", "DungeonClearSettingsPanel", UIParent)
@@ -1909,8 +1909,13 @@ local function CreateSettingRow(key, stype)
             value = RoundVal(stype, value)
             row.valText:SetText(FmtVal(stype, value))
             if row.updating then return end
-            DungeonClearDB.settings[key] = value
-            row.defBtn:Show()
+            if IsSavedDefault(key, value) then
+                DungeonClearDB.settings[key] = nil
+                row.defBtn:Hide()
+            else
+                DungeonClearDB.settings[key] = value
+                row.defBtn:Show()
+            end
             SendDcCommand("set", key .. "\t" .. value, true)
         end)
         row.control = s
@@ -1932,6 +1937,21 @@ local function UpsertSetting(key, value, minV, maxV, stype, overridden)
     end
     local sc = DungeonClearDB.schema[key]
     sc.min, sc.max, sc.type = minV, maxV, stype
+
+    -- A sync reports the effective value for the current tank/run.  It is not
+    -- safe to delete the local value when overridden=false: a fresh run clears
+    -- the tank's in-memory flags before the addon re-pushes this character's
+    -- saved settings, and a settings sync while DC is off has no run override
+    -- to report.  Explicit Default / Reset controls clear DungeonClearDB.settings
+    -- before sending their command, so normal syncs must leave it untouched.
+    local saved = DungeonClearDB.settings[key]
+    if not overridden and saved ~= nil then
+        -- Keep the pending per-character value visible until the next explicit
+        -- set is accepted by the server. This also avoids a settings panel
+        -- briefly showing defaults while a fresh run is being initialized.
+        value = saved
+        overridden = true
+    end
 
     local row = settingRows[key]
     if not row then
@@ -1986,7 +2006,9 @@ end
 PushSettings = function()
     if not DungeonClearDB.settings then return end
     for k, v in pairs(DungeonClearDB.settings) do
-        SendDcCommand("set", k .. "\t" .. v, true)
+        if not IsSavedDefault(k, v) then
+            SendDcCommand("set", k .. "\t" .. v, true)
+        end
     end
 end
 
@@ -1994,6 +2016,10 @@ BuildSettingsFromCache = function()
     local seen = {}
     local function render(key, stype, minV, maxV, defaultV)
         local v = DungeonClearDB.settings[key]
+        if IsSavedDefault(key, v) then
+            DungeonClearDB.settings[key] = nil
+            v = nil
+        end
         local overridden = (v ~= nil)
         if v == nil then v = (defaultV ~= nil) and defaultV or minV end
         UpsertSetting(key, v, minV, maxV, stype, overridden)
@@ -2138,7 +2164,22 @@ SlashCmdList["DUNGEONCLEAR"] = function(msg)
         -- Parse "/dc <sub> [param]" and send via addon message
         local subCmd, param = msg:match("^(%S+)%s*(.*)$")
         if subCmd then
+            if subCmd == "reset" and DungeonClearDB.settings then
+                -- Keep slash-command reset consistent with the panel's Default
+                -- buttons instead of replaying a value on the next run.
+                local key = param:match("^(%S+)")
+                if key and key ~= "" then
+                    DungeonClearDB.settings[key] = nil
+                else
+                    DungeonClearDB.settings = {}
+                end
+            end
             SendDcCommand(subCmd, param)
+            if (subCmd == "on" or subCmd == "go") and PushSettings then
+                -- Both commands can start a fresh run; restore this character's
+                -- saved settings after the server resets the tank state.
+                PushSettings()
+            end
         end
     end
 end
