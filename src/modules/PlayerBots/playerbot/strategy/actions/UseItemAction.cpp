@@ -11,6 +11,7 @@
 #include "TellLosAction.h"
 #include "playerbot/strategy/values/ItemUsageValue.h"
 #include "playerbot/strategy/values/ItemCountValue.h"
+#include "playerbot/strategy/values/QuestValues.h"
 #include "playerbot/TravelMgr.h"
 
 using namespace ai;
@@ -229,6 +230,453 @@ bool RequiresItemToUse(const ItemPrototype* itemProto, PlayerbotAI* ai, Player* 
 #endif
 
     return false;
+}
+
+namespace
+{
+    struct QuestItemUseCandidate
+    {
+        Item* item = nullptr;
+        Unit* unitTarget = nullptr;
+        GameObject* goTarget = nullptr;
+    };
+
+    bool HasTargetedOnUseSpell(const ItemPrototype* proto)
+    {
+        if (!proto)
+            return false;
+
+        for (uint8 i = 0; i < MAX_ITEM_PROTO_SPELLS; ++i)
+        {
+            const _Spell& spellData = proto->Spells[i];
+            if (!spellData.SpellId)
+                continue;
+
+#ifdef MANGOSBOT_ZERO
+            if (spellData.SpellTrigger != ITEM_SPELLTRIGGER_ON_USE && spellData.SpellTrigger != ITEM_SPELLTRIGGER_ON_NO_DELAY_USE)
+#else
+            if (spellData.SpellTrigger != ITEM_SPELLTRIGGER_ON_USE)
+#endif
+                continue;
+
+            SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spellData.SpellId);
+            if (!spellInfo)
+                continue;
+
+            uint32 spellTargets = spellInfo->Targets;
+            if (spellTargets == 0)
+            {
+                if ((spellInfo->EffectImplicitTargetA[0] == TARGET_UNIT || spellInfo->EffectImplicitTargetA[0] == TARGET_UNIT_ENEMY) ||
+                    (proto->Class == ITEM_CLASS_CONSUMABLE && proto->SubClass == ITEM_SUBCLASS_SCROLL) ||
+                    (proto->Class == ITEM_CLASS_TRADE_GOODS && proto->SubClass == ITEM_SUBCLASS_EXPLOSIVES) ||
+                    spellData.SpellCategory == 150 ||
+                    spellData.SpellCategory == 831)
+                {
+                    spellTargets |= TARGET_FLAG_UNIT;
+                }
+
+                if (spellInfo->EffectImplicitTargetA[0] == TARGET_ENUM_UNITS_ENEMY_AOE_AT_DEST_LOC ||
+                    (proto->Class == ITEM_CLASS_TRADE_GOODS && proto->SubClass == ITEM_SUBCLASS_EXPLOSIVES))
+                {
+                    spellTargets |= TARGET_FLAG_DEST_LOCATION;
+                }
+            }
+
+            if (spellTargets & (TARGET_FLAG_UNIT | TARGET_FLAG_GAMEOBJECT | TARGET_FLAG_LOCKED | TARGET_FLAG_DEST_LOCATION))
+                return true;
+        }
+
+        return false;
+    }
+
+    bool IsQuestItemOwnedAndUsable(Player* bot, Item* item)
+    {
+        if (!bot || !item)
+            return false;
+
+        const ItemPrototype* proto = item->GetProto();
+        if (!proto)
+            return false;
+
+        if (item->GetOwnerGuid() != bot->GetObjectGuid())
+            return false;
+
+        if (item->IsInTrade())
+            return false;
+
+        if (proto->InventoryType != INVTYPE_NON_EQUIP && !item->IsEquipped())
+            return false;
+
+        return bot->CanUseItem(proto) == EQUIP_ERR_OK;
+    }
+
+    bool HasQuestItemCooldown(Player* bot, const ItemPrototype* proto)
+    {
+        if (!bot || !proto)
+            return false;
+
+        for (uint8 i = 0; i < MAX_ITEM_PROTO_SPELLS; ++i)
+        {
+            if (proto->Spells[i].SpellTrigger != ITEM_SPELLTRIGGER_ON_USE)
+                continue;
+
+            if (proto->Spells[i].SpellId > 0)
+            {
+                if (!sServerFacade.IsSpellReady(bot, proto->Spells[i].SpellId))
+                    return true;
+
+                if (!sServerFacade.IsSpellReady(bot, proto->Spells[i].SpellId, proto->ItemId))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool HasRequiredUnitTargetForItem(uint32 itemId, Unit* target)
+    {
+        if (!target)
+            return false;
+
+        ItemRequiredTargetMapBounds bounds = sObjectMgr.GetItemRequiredTargetMapBounds(itemId);
+        if (bounds.first == bounds.second)
+            return false;
+
+        for (ItemRequiredTargetMap::const_iterator itr = bounds.first; itr != bounds.second; ++itr)
+        {
+            if (itr->second.IsFitToRequirements(target))
+                return true;
+        }
+
+        return false;
+    }
+
+    bool IsQuestObjectiveStillNeeded(const Quest* quest, const QuestStatusData* questStatus, uint32 objective)
+    {
+        if (!quest || !questStatus || objective >= QUEST_OBJECTIVES_COUNT || questStatus->m_status != QUEST_STATUS_INCOMPLETE)
+            return false;
+
+        return quest->ReqCreatureOrGOCount[objective] &&
+               questStatus->m_creatureOrGOcount[objective] < quest->ReqCreatureOrGOCount[objective];
+    }
+
+    bool RelationNeedsIncompleteObjective(const Quest* quest, const QuestStatusData* questStatus, uint32 relationFlags)
+    {
+        for (uint32 objective = 0; objective < QUEST_OBJECTIVES_COUNT; ++objective)
+        {
+            const uint32 objectiveFlag = 1u << (objective + 1u);
+            if (!(relationFlags & objectiveFlag))
+                continue;
+
+            if (IsQuestObjectiveStillNeeded(quest, questStatus, objective))
+                return true;
+        }
+
+        return false;
+    }
+
+    bool IsValidQuestUseTarget(Unit* target)
+    {
+        return target && target->GetTypeId() == TYPEID_UNIT;
+    }
+
+    bool IsValidQuestUseTarget(GameObject* target)
+    {
+        return target && sServerFacade.isSpawned(target) && !target->IsInUse() && target->GetGoState() == GO_STATE_READY;
+    }
+
+    bool CanCheckQuestItemCast(Player* bot, Item* item, SpellEntry const* spellInfo, SpellCastTargets const& targets)
+    {
+        if (!bot || !item || !spellInfo || spellInfo != sSpellTemplate.LookupEntry<SpellEntry>(spellInfo->Id))
+            return false;
+
+        Spell* spell = new Spell(bot, spellInfo, false);
+        spell->m_targets = targets;
+        spell->SetCastItem(item);
+        spell->m_targets.setItemTarget(item);
+
+        SpellCastResult result = spell->CheckCast(true);
+        delete spell;
+
+        switch (result)
+        {
+            case SPELL_FAILED_NOT_INFRONT:
+            case SPELL_FAILED_NOT_STANDING:
+            case SPELL_FAILED_UNIT_NOT_INFRONT:
+            case SPELL_FAILED_MOVING:
+            case SPELL_FAILED_TRY_AGAIN:
+            case SPELL_CAST_OK:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    bool CanQuestItemSpellTarget(PlayerbotAI* ai, Player* bot, Item* item, Unit* unitTarget, GameObject* goTarget)
+    {
+        if (!ai || !bot || !item || (!unitTarget && !goTarget))
+            return false;
+
+        const ItemPrototype* proto = item->GetProto();
+        if (!proto)
+            return false;
+
+        for (uint8 i = 0; i < MAX_ITEM_PROTO_SPELLS; ++i)
+        {
+            const _Spell& spellData = proto->Spells[i];
+            if (!spellData.SpellId)
+                continue;
+
+#ifdef MANGOSBOT_ZERO
+            if (spellData.SpellTrigger != ITEM_SPELLTRIGGER_ON_USE && spellData.SpellTrigger != ITEM_SPELLTRIGGER_ON_NO_DELAY_USE)
+#else
+            if (spellData.SpellTrigger != ITEM_SPELLTRIGGER_ON_USE)
+#endif
+                continue;
+
+            SpellEntry const* spellInfo = sSpellTemplate.LookupEntry<SpellEntry>(spellData.SpellId);
+            if (!spellInfo)
+                continue;
+
+            if (IsNonCombatSpell(spellInfo) && bot->IsInCombat())
+                continue;
+
+            uint32 spellTargets = spellInfo->Targets;
+            if (spellTargets == 0)
+            {
+                if ((spellInfo->EffectImplicitTargetA[0] == TARGET_UNIT || spellInfo->EffectImplicitTargetA[0] == TARGET_UNIT_ENEMY) ||
+                    (proto->Class == ITEM_CLASS_CONSUMABLE && proto->SubClass == ITEM_SUBCLASS_SCROLL) ||
+                    (proto->Class == ITEM_CLASS_TRADE_GOODS && proto->SubClass == ITEM_SUBCLASS_EXPLOSIVES) ||
+                    spellData.SpellCategory == 150 ||
+                    spellData.SpellCategory == 831)
+                {
+                    spellTargets |= TARGET_FLAG_UNIT;
+                }
+
+                if (spellInfo->EffectImplicitTargetA[0] == TARGET_ENUM_UNITS_ENEMY_AOE_AT_DEST_LOC ||
+                    (proto->Class == ITEM_CLASS_TRADE_GOODS && proto->SubClass == ITEM_SUBCLASS_EXPLOSIVES))
+                {
+                    spellTargets |= TARGET_FLAG_DEST_LOCATION;
+                }
+            }
+
+            if (unitTarget && IsValidQuestUseTarget(unitTarget))
+            {
+                if ((spellTargets & TARGET_FLAG_UNIT) && IsTargetValidForItemUse(proto->ItemId, unitTarget))
+                {
+                    SpellCastTargets targets;
+                    targets.setUnitTarget(unitTarget);
+                    if (CanCheckQuestItemCast(bot, item, spellInfo, targets) &&
+                        ai->CanCastSpell(spellData.SpellId, unitTarget, 0, false, item))
+                    {
+                        return true;
+                    }
+                }
+
+                if (spellTargets & TARGET_FLAG_DEST_LOCATION)
+                {
+                    SpellCastTargets targets;
+                    targets.setDestination(unitTarget->GetPositionX(), unitTarget->GetPositionY(), unitTarget->GetPositionZ());
+                    if (CanCheckQuestItemCast(bot, item, spellInfo, targets) &&
+                        ai->CanCastSpell(spellData.SpellId, unitTarget->GetPositionX(), unitTarget->GetPositionY(), unitTarget->GetPositionZ(), 0, false, item))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if (goTarget && IsValidQuestUseTarget(goTarget))
+            {
+                if (spellTargets & (TARGET_FLAG_GAMEOBJECT | TARGET_FLAG_LOCKED))
+                {
+                    SpellCastTargets targets;
+                    targets.setGOTarget(goTarget);
+                    targets.m_targetMask = TARGET_FLAG_GAMEOBJECT;
+                    if (CanCheckQuestItemCast(bot, item, spellInfo, targets) &&
+                        ai->CanCastSpell(spellData.SpellId, goTarget, 0, false))
+                    {
+                        return true;
+                    }
+                }
+
+                if (spellTargets & TARGET_FLAG_DEST_LOCATION)
+                {
+                    SpellCastTargets targets;
+                    targets.setDestination(goTarget->GetPositionX(), goTarget->GetPositionY(), goTarget->GetPositionZ());
+                    if (CanCheckQuestItemCast(bot, item, spellInfo, targets) &&
+                        ai->CanCastSpell(spellData.SpellId, goTarget->GetPositionX(), goTarget->GetPositionY(), goTarget->GetPositionZ(), 0, false, item))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool HasQuestItemUseForUnitTarget(PlayerbotAI* ai, Player* bot, Item* item, Unit* target, int32 relationEntry, const EntryQuestRelationMap& relationMap)
+    {
+        if (!ai || !bot || !item || !target)
+            return false;
+
+        auto relationItr = relationMap.find(relationEntry);
+        if (relationItr == relationMap.end())
+            return false;
+
+        const ItemPrototype* proto = item->GetProto();
+        if (!proto)
+            return false;
+
+        for (uint16 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
+        {
+            uint32 questId = bot->GetQuestSlotQuestId(slot);
+            if (!questId)
+                continue;
+
+            const Quest* quest = sObjectMgr.GetQuestTemplate(questId);
+            const QuestStatusData* questStatus = bot->GetQuestStatusData(questId);
+            if (!quest || !questStatus || questStatus->m_status != QUEST_STATUS_INCOMPLETE)
+                continue;
+
+            auto questRelationItr = relationItr->second.find(questId);
+            if (questRelationItr == relationItr->second.end())
+                continue;
+
+            if (!RelationNeedsIncompleteObjective(quest, questStatus, questRelationItr->second))
+                continue;
+
+            const bool isSourceItem = quest->GetSrcItemId() == proto->ItemId;
+            const bool hasRequiredUnitTarget = HasRequiredUnitTargetForItem(proto->ItemId, target);
+            if (!isSourceItem && !hasRequiredUnitTarget)
+                continue;
+
+            if (CanQuestItemSpellTarget(ai, bot, item, target, nullptr))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool HasQuestItemUseForGameObjectTarget(PlayerbotAI* ai, Player* bot, Item* item, GameObject* target, int32 relationEntry, const EntryQuestRelationMap& relationMap)
+    {
+        if (!ai || !bot || !item || !target)
+            return false;
+
+        auto relationItr = relationMap.find(relationEntry);
+        if (relationItr == relationMap.end())
+            return false;
+
+        const ItemPrototype* proto = item->GetProto();
+        if (!proto)
+            return false;
+
+        for (uint16 slot = 0; slot < MAX_QUEST_LOG_SIZE; ++slot)
+        {
+            uint32 questId = bot->GetQuestSlotQuestId(slot);
+            if (!questId)
+                continue;
+
+            const Quest* quest = sObjectMgr.GetQuestTemplate(questId);
+            const QuestStatusData* questStatus = bot->GetQuestStatusData(questId);
+            if (!quest || !questStatus || questStatus->m_status != QUEST_STATUS_INCOMPLETE)
+                continue;
+
+            auto questRelationItr = relationItr->second.find(questId);
+            if (questRelationItr == relationItr->second.end())
+                continue;
+
+            if (!RelationNeedsIncompleteObjective(quest, questStatus, questRelationItr->second))
+                continue;
+
+            if (quest->GetSrcItemId() != proto->ItemId)
+                continue;
+
+            if (CanQuestItemSpellTarget(ai, bot, item, nullptr, target))
+                return true;
+        }
+
+        return false;
+    }
+
+    std::vector<QuestItemUseCandidate> CollectQuestItemUseCandidates(PlayerbotAI* ai, Player* bot)
+    {
+        std::vector<QuestItemUseCandidate> candidates;
+        if (!ai || !bot)
+            return candidates;
+
+        AiObjectContext* context = ai->GetAiObjectContext();
+        if (!context)
+            return candidates;
+
+        EntryQuestRelationMap relationMap = GAI_VALUE(EntryQuestRelationMap, "entry quest relation");
+        std::list<Item*> questItems = AI_VALUE2(std::list<Item*>, "inventory items", "quest");
+        if (questItems.empty())
+            return candidates;
+
+        std::list<ObjectGuid> friendlyOrNeutralUnits = AI_VALUE(std::list<ObjectGuid>, "nearest npcs no los");
+        std::list<ObjectGuid> hostileOrNeutralUnits = AI_VALUE(std::list<ObjectGuid>, "possible targets no los");
+        std::list<ObjectGuid> deadUnits = AI_VALUE(std::list<ObjectGuid>, "nearest corpses");
+        std::list<ObjectGuid> gameObjects = bot->GetMap()->IsDungeon() ? AI_VALUE(std::list<ObjectGuid>, "nearest game objects")
+                                                                       : AI_VALUE(std::list<ObjectGuid>, "nearest game objects no los");
+
+        for (Item* item : questItems)
+        {
+            const ItemPrototype* proto = item ? item->GetProto() : nullptr;
+            if (!proto || !IsQuestItemOwnedAndUsable(bot, item))
+                continue;
+
+            if (HasQuestItemCooldown(bot, proto))
+                continue;
+
+            if (!HasTargetedOnUseSpell(proto))
+                continue;
+
+            for (const ObjectGuid& guid : friendlyOrNeutralUnits)
+            {
+                Unit* target = ai->GetUnit(guid);
+                if (!IsValidQuestUseTarget(target))
+                    continue;
+
+                if (HasQuestItemUseForUnitTarget(ai, bot, item, target, int32(target->GetEntry()), relationMap))
+                    candidates.push_back({ item, target, nullptr });
+            }
+
+            for (const ObjectGuid& guid : hostileOrNeutralUnits)
+            {
+                Unit* target = ai->GetUnit(guid);
+                if (!IsValidQuestUseTarget(target))
+                    continue;
+
+                if (HasQuestItemUseForUnitTarget(ai, bot, item, target, int32(target->GetEntry()), relationMap))
+                    candidates.push_back({ item, target, nullptr });
+            }
+
+            for (const ObjectGuid& guid : deadUnits)
+            {
+                Unit* target = ai->GetUnit(guid);
+                if (!IsValidQuestUseTarget(target))
+                    continue;
+
+                if (HasQuestItemUseForUnitTarget(ai, bot, item, target, int32(target->GetEntry()), relationMap))
+                    candidates.push_back({ item, target, nullptr });
+            }
+
+            for (const ObjectGuid& guid : gameObjects)
+            {
+                GameObject* target = ai->GetGameObject(guid);
+                if (!IsValidQuestUseTarget(target))
+                    continue;
+
+                if (HasQuestItemUseForGameObjectTarget(ai, bot, item, target, -int32(target->GetEntry()), relationMap))
+                    candidates.push_back({ item, nullptr, target });
+            }
+        }
+
+        return candidates;
+    }
 }
 
 bool UseAction::Execute(Event& event)
@@ -1399,94 +1847,57 @@ bool OpenRandomItemAction::Execute(Event& event)
 
 bool UseRandomQuestItemAction::isUseful()
 {
-    return !ai->HasActivePlayerMaster() && !bot->InBattleGround() && !bot->IsTaxiFlying();
+    if (ai->HasActivePlayerMaster() || bot->InBattleGround() || bot->IsTaxiFlying())
+        return false;
+
+    if (!CollectQuestItemUseCandidates(ai, bot).empty())
+        return true;
+
+    std::list<Item*> questItems = AI_VALUE2(std::list<Item*>, "inventory items", "quest");
+    for (Item* item : questItems)
+    {
+        const ItemPrototype* proto = item ? item->GetProto() : nullptr;
+        if (!proto || !proto->StartQuest)
+            continue;
+
+        Quest const* qInfo = sObjectMgr.GetQuestTemplate(proto->StartQuest);
+        if (qInfo && bot->CanTakeQuest(qInfo, false))
+            return true;
+    }
+
+    return false;
 }
 
 bool UseRandomQuestItemAction::Execute(Event& event)
 {
     Player* requester = event.getOwner() ? event.getOwner() : GetMaster();
-    Unit* unitTarget = nullptr;
-    GameObject* goTarget = nullptr;
-
-    std::list<Item*> questItems = AI_VALUE2(std::list<Item*>, "inventory items", "quest");
-    if (questItems.empty())
-        return false;
-
-    Item* item = nullptr;
-    for (uint8 i = 0; i< 5;i++)
-    {
-        auto itr = questItems.begin();
-        std::advance(itr, urand(0, questItems.size()- 1));
-        Item* questItem = *itr;
-
-        const ItemPrototype* proto = questItem->GetProto();
-        if (proto->StartQuest)
-        {
-            Quest const* qInfo = sObjectMgr.GetQuestTemplate(proto->StartQuest);
-            if (bot->CanTakeQuest(qInfo, false))
-            {
-                item = questItem;
-                break;
-            }
-        }
-        /*
-        uint32 spellId = proto->Spells[0].SpellId;
-        if (spellId)
-        {
-            SpellEntry const* spellInfo = sServerFacade.LookupSpellInfo(spellId);
-
-            std::list<ObjectGuid> npcs = AI_VALUE(std::list<ObjectGuid>, ("nearest npcs"));
-            for (auto& npc : npcs)
-            {
-                Unit* unit = ai->GetUnit(npc);
-                if (ai->CanCastSpell(spellId, unit, 0, false))
-                {
-                    item = questItem;
-                    unitTarget = unit;
-                    break;
-                }
-            }
-
-            std::list<ObjectGuid> gos = AI_VALUE(std::list<ObjectGuid>, ("nearest game objects no los"));
-            for (auto& go : gos)
-            {
-                GameObject* gameObject = ai->GetGameObject(go);
-                GameObjectInfo const* goInfo = gameObject->GetGOInfo();
-                if (!goInfo->GetLockId())
-                    continue;
-
-                LockEntry const* lock = sLockStore.LookupEntry(goInfo->GetLockId());
-
-                for (uint8 i = 0; i < MAX_LOCK_CASE; ++i)
-                {
-                    if (!lock->Type[i])
-                        continue;
-                    if (lock->Type[i] != LOCK_KEY_ITEM)
-                        continue;
-
-                    if (lock->Index[i] == proto->ItemId)
-                    {
-                        item = questItem;
-                        goTarget = go;
-                        unitTarget = nullptr;
-                        break;
-                    }
-                }               
-            }
-        }
-        */
-    }
+    std::vector<QuestItemUseCandidate> candidates = CollectQuestItemUseCandidates(ai, bot);
 
     bool success = false;
-    if (item)
+    if (!candidates.empty())
     {
-        if (goTarget)
-        {
-            success = UseItem(requester, item->GetEntry(), goTarget);
-        }
+        QuestItemUseCandidate& candidate = candidates[urand(0, candidates.size() - 1)];
+        if (candidate.goTarget)
+            success = UseItem(requester, candidate.item->GetEntry(), candidate.goTarget);
         else
+            success = UseItem(requester, candidate.item->GetEntry(), candidate.unitTarget);
+    }
+    else
+    {
+        std::list<Item*> questItems = AI_VALUE2(std::list<Item*>, "inventory items", "quest");
+        for (Item* questItem : questItems)
         {
-            success = UseItem(requester, item->GetEntry(), unitTarget);
+            const ItemPrototype* proto = questItem ? questItem->GetProto() : nullptr;
+            if (!proto || !proto->StartQuest)
+                continue;
+
+            Quest const* qInfo = sObjectMgr.GetQuestTemplate(proto->StartQuest);
+            if (qInfo && bot->CanTakeQuest(qInfo, false))
+            {
+                success = UseItem(requester, questItem->GetEntry());
+                if (success)
+                    break;
+            }
         }
     }
 
