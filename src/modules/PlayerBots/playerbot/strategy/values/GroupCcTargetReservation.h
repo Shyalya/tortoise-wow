@@ -19,7 +19,10 @@ namespace ai
         static bool IsOwnedBy(Player* bot, ObjectGuid targetGuid);
         static bool IsInFlight(Player* bot, ObjectGuid targetGuid);
         static ObjectGuid GetOwnedTarget(Player* bot);
-        static void Claim(Player* bot, ObjectGuid targetGuid);
+        // Selection claims are a hard 3s lease and are not refreshed. Pass
+        // reacquireAfterExpiry at cast time so a delayed caster may take the
+        // add again only if it is still free.
+        static void Claim(Player* bot, ObjectGuid targetGuid, bool reacquireAfterExpiry = false);
         // Grouped unmarked fallback must own a live claim before the real cast.
         // Explicit RTI CC and ungrouped bots bypass fallback claims.
         static bool PrepareFallbackCast(PlayerbotAI* ai, Unit* target);

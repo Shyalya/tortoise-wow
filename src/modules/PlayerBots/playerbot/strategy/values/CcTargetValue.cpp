@@ -224,6 +224,8 @@ Unit* CcTargetValue::Calculate()
         return selected == rtiCcTarget ? selected : nullptr;
     }
 
+    // Selection uses a hard 3s lease. Do not refresh or reacquire here;
+    // PrepareFallbackCast reacquires at real cast time if the add is free.
     if (selected)
         GroupCcTargetReservation::Claim(bot, selected->GetObjectGuid());
     else if (!ownedGuid.IsEmpty() && !GroupCcTargetReservation::IsInFlight(bot, ownedGuid))

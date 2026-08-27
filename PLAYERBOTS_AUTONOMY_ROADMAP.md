@@ -32,7 +32,7 @@ in-game here.
 | Real summoning-ritual assistance | Implemented | Controlled bots join a nearby eligible ritual GO via `CMSG_GAMEOBJ_USE` (not the meeting-stone teleport). The ritual GUID is cached across same-tick Trigger/`isUseful`/`Execute` scans and revalidated before reuse. Still needs in-game smoke (two eligible bots, owner channeling, summon target present). |
 | Quest-item target use | Implemented (random bots) | `UseRandomQuestItemAction` again uses `ItemRequiredTargetMap` / incomplete quest status on nearby creatures and game objects, keeping StartQuest item behavior. Failed uses are bounded with a 15s per-item/target retry. Gated to bots **without** an active player master; mastered companions still need a separate path. Needs live quest coverage (creature, corpse, GO). |
 | Party-stop maintenance | Implemented (partial) | When a real master opens gossip on a vendor/repair NPC, grouped bots sell **strict** `ITEM_USAGE_VENDOR` trash and repair at that **exact** NPC (`AutoMaintenanceOnMasterVendor`, default on). No automatic buying of food/drink/ammo/reagents. Needs in-game checks for range, combat gates, and sell/repair only. |
-| Unmarked crowd control | Implemented | Explicit RTI CC remains authoritative and is never reserved. In non-raid dungeons, when no CC icon is set, CC-enabled bots pick a safer fallback add (excludes bosses, kill/RTI kill target, tank-held, low-health, DoT’d except fear/banish, already controlled) and **claim it with a short-lived group reservation**. Selection claims last 3s and refresh while the bot still selects that add; a grouped unmarked cast must own or reacquire a live claim before the real spell starts (other-owner and skip/exhaustion still block). A successful start extends 5s in-flight. Each owner gets 3 attempts per add; 8s skip on in-flight expiry or attempt exhaustion, not on selection timeout. The 3rd successful start skips later retries by that owner but keeps the in-flight claim until the aura lands or the window expires; later empty/different fallback selection or a failed recast does not drop that live in-flight claim, and the owner does not start another real cast while it is open. Polymorph-style CC, sap, turn undead, and freezing-trap-on-cc share this path; vanilla trap-on-cc records the attempt at the feign-death commit (in-flight covers the trap drop). Needs in-game smoke on an unmarked three-mob pull with two CC-capable bots. Interrupts, resurrection, loot and cooperative GOs still have no shared reservation. |
+| Unmarked crowd control | Implemented | Explicit RTI CC remains authoritative and is never reserved. In non-raid dungeons, when no CC icon is set, CC-enabled bots pick a safer fallback add (excludes bosses, kill/RTI kill target, tank-held, low-health, DoT’d except fear/banish, already controlled) and **claim it with a short-lived group reservation**. Selection claims are a hard 3s lease and are not refreshed while the bot still selects that add. After expiry, that owner cannot take a new *selection* claim on the same add for 8s (owner/target lease memory); a delayed grouped unmarked Execute may reacquire only if the add is still free, and must not cast if another bot owns it. A successful start extends 5s in-flight; Execute does not recast while that window is open, and later empty/different fallback selection or a failed recast does not drop it. Failed starts (the spell did not begin) are counted per owner+target, persist across lease expiry/reacquire for 8s, and cap at 3 then 8s skip; a successful start does not consume that cap. In-flight expiry without aura verification also skips 8s. Skip/count reset when that 8s window elapses. Polymorph-style CC, sap, turn undead, and freezing-trap-on-cc share this path; vanilla trap-on-cc records the attempt at the feign-death commit (in-flight covers the trap drop). Needs in-game smoke on an unmarked three-mob pull with two CC-capable bots. Interrupts, resurrection, loot and cooperative GOs still have no shared reservation. |
 | Per-spell immunity checks | Implemented | Damaging casts are rejected when the target is immune to the spell or school (Classic spell/school/damage checks), without blocking neutral/non-damaging utility. Needs in-game confirmation on mixed-school packs and multi-effect spells. |
 
 Still open relative to the P0 list: mastered-bot quest-item assist, and vendor buying driven by existing need calculations. Shared CC reservations are in; interrupt, resurrect, loot and cooperative-GO reservations remain future P1 work. The evaluation harness remains future work.
@@ -86,11 +86,12 @@ joining the ritual).
    controlled enemies. Fallback selection and a short-lived group reservation
    are in so two bots do not start CC on the same unmarked add. Grouped
    unmarked execution reacquires/verifies a live claim before the real cast;
-   sap, turn undead and freezing-trap-on-cc share the same attempt/in-flight
-   accounting. Selection does not drop a live in-flight claim, and the owner
-   does not recast while that window is open. Confirm in-game on a three-mob
-   pull with two CC-capable bots. Interrupt/resurrect/loot/GO reservations are
-   still open.
+   sap, turn undead and freezing-trap-on-cc share the same failed-start and
+   in-flight accounting (hard 3s selection lease; 3 failed starts per
+   owner+target per 8s memory window, then 8s skip). Selection does not drop
+   a live in-flight claim, and the owner does not recast while that window is
+   open. Confirm in-game on a three-mob pull with two CC-capable bots.
+   Interrupt/resurrect/loot/GO reservations are still open.
 
 5. **Per-spell immunity checks.** Target selection already avoids broad
    invulnerability; spell validation should also reject damage spells when the
@@ -120,11 +121,12 @@ joining the ritual).
 
 3. **Shared group intent/reservations.** Maintain short-lived reservations for
    CC targets, loot/game objects, interrupts, resurrect targets and maintenance
-   NPCs. Unmarked CC now claims a per-group GUID with expiry, attempt limits and
-   outcome release when the aura lands. Grouped execution must hold a live claim
-   at cast time; sap, turn undead and freezing-trap-on-cc record the same
-   attempts. A live in-flight claim is kept until the aura lands or the window
-   expires. Interrupts, resurrection, loot and cooperative GOs still race
+   NPCs. Unmarked CC now claims a per-group GUID with a hard 3s selection lease,
+   a 3 failed-start cap persisted 8s per owner+target, 5s in-flight, and outcome
+   release when the aura lands. Grouped execution must hold a live claim at cast
+   time; sap, turn undead and freezing-trap-on-cc record the same failed starts.
+   A live in-flight claim is kept until the aura lands or the 5s window expires
+   (then 8s skip). Interrupts, resurrection, loot and cooperative GOs still race
    independently.
 
 4. **Autonomous dungeon lifecycle.** Compose existing LFG, travel/summon and

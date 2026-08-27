@@ -13,7 +13,14 @@ namespace
     constexpr uint32 kSelectDurationMs = 3000;
     constexpr uint32 kCastDurationMs = 5000;
     constexpr uint32 kSkipDurationMs = 8000;
-    constexpr uint8 kMaxAttempts = 3;
+    constexpr uint32 kLeaseMemoryDurationMs = kSkipDurationMs;
+    constexpr uint8 kMaxFailedStarts = 3;
+    // Bound: same owner+target may fail to start CC at most 3 times per 8s
+    // lease-memory window, then is skipped 8s. Selection is a hard 3s lease
+    // (not refreshed; this owner cannot re-claim it at selection for 8s).
+    // A delayed Execute may reacquire if the add is still free. A real start
+    // opens 5s in-flight and does not consume a failed-start slot; unverified
+    // in-flight expiry skips 8s. Counts reset when that 8s memory/skip elapses.
 
     struct CcClaim
     {
@@ -21,7 +28,7 @@ namespace
         ObjectGuid ownerGuid;
         uint32 startMs = 0;
         uint32 durationMs = 0;
-        uint8 attempts = 0;
+        uint8 failedStarts = 0;
         bool inFlight = false;
     };
 
@@ -33,8 +40,22 @@ namespace
         uint32 durationMs = 0;
     };
 
+    // Owner+target memory for the 8s recovery window: blocks a new *selection*
+    // claim after a hard lease expires, and carries failed-start counts into a
+    // cast-time reacquire. This is not IsSkipped; other bots may claim, and the
+    // delayed owner may reacquire only at Execute if the add is still free.
+    struct CcLeaseMemory
+    {
+        ObjectGuid targetGuid;
+        ObjectGuid ownerGuid;
+        uint8 failedStarts = 0;
+        uint32 startMs = 0;
+        uint32 durationMs = 0;
+    };
+
     std::unordered_map<uint32, std::vector<CcClaim>> claimsByGroup;
     std::unordered_map<uint32, std::vector<CcSkip>> skipsByGroup;
+    std::unordered_map<uint32, std::vector<CcLeaseMemory>> memoryByGroup;
 
     bool IsTimedOut(uint32 startMs, uint32 durationMs)
     {
@@ -71,6 +92,60 @@ namespace
         skips.push_back(skip);
     }
 
+    CcLeaseMemory* FindMemory(uint32 groupId, ObjectGuid ownerGuid, ObjectGuid targetGuid)
+    {
+        std::unordered_map<uint32, std::vector<CcLeaseMemory>>::iterator groupIt = memoryByGroup.find(groupId);
+        if (groupIt == memoryByGroup.end())
+            return nullptr;
+
+        for (CcLeaseMemory& memory : groupIt->second)
+        {
+            if (memory.ownerGuid == ownerGuid && memory.targetGuid == targetGuid)
+                return &memory;
+        }
+
+        return nullptr;
+    }
+
+    void ClearMemory(uint32 groupId, ObjectGuid ownerGuid, ObjectGuid targetGuid)
+    {
+        std::unordered_map<uint32, std::vector<CcLeaseMemory>>::iterator groupIt = memoryByGroup.find(groupId);
+        if (groupIt == memoryByGroup.end())
+            return;
+
+        std::vector<CcLeaseMemory>& memories = groupIt->second;
+        for (std::vector<CcLeaseMemory>::iterator it = memories.begin(); it != memories.end(); ++it)
+        {
+            if (it->ownerGuid == ownerGuid && it->targetGuid == targetGuid)
+            {
+                memories.erase(it);
+                break;
+            }
+        }
+
+        if (memories.empty())
+            memoryByGroup.erase(groupIt);
+    }
+
+    void RememberLease(uint32 groupId, ObjectGuid ownerGuid, ObjectGuid targetGuid, uint8 failedStarts)
+    {
+        if (CcLeaseMemory* existing = FindMemory(groupId, ownerGuid, targetGuid))
+        {
+            existing->failedStarts = failedStarts;
+            existing->startMs = WorldTimer::getMSTime();
+            existing->durationMs = kLeaseMemoryDurationMs;
+            return;
+        }
+
+        CcLeaseMemory memory;
+        memory.targetGuid = targetGuid;
+        memory.ownerGuid = ownerGuid;
+        memory.failedStarts = failedStarts;
+        memory.startMs = WorldTimer::getMSTime();
+        memory.durationMs = kLeaseMemoryDurationMs;
+        memoryByGroup[groupId].push_back(memory);
+    }
+
     void Prune(uint32 groupId)
     {
         std::vector<CcClaim>& claims = claimsByGroup[groupId];
@@ -78,11 +153,18 @@ namespace
         {
             if (IsTimedOut(it->startMs, it->durationMs))
             {
-                // Selection timeout frees the add so another bot (or this one)
-                // can reacquire. Skip only in-flight expiry: the owner already
-                // started a real cast that never verified.
                 if (it->inFlight)
+                {
+                    // Outcome never verified: 8s skip before this owner retries.
                     AddSkip(groupId, it->ownerGuid, it->targetGuid);
+                    ClearMemory(groupId, it->ownerGuid, it->targetGuid);
+                }
+                else
+                {
+                    // Selection timeout frees the add. Remember failed starts
+                    // and block only this owner's selection re-claim for 8s.
+                    RememberLease(groupId, it->ownerGuid, it->targetGuid, it->failedStarts);
+                }
                 it = claims.erase(it);
             }
             else
@@ -103,6 +185,22 @@ namespace
 
         if (skips.empty())
             skipsByGroup.erase(groupId);
+
+        std::unordered_map<uint32, std::vector<CcLeaseMemory>>::iterator memoryGroup = memoryByGroup.find(groupId);
+        if (memoryGroup != memoryByGroup.end())
+        {
+            std::vector<CcLeaseMemory>& memories = memoryGroup->second;
+            for (std::vector<CcLeaseMemory>::iterator it = memories.begin(); it != memories.end();)
+            {
+                if (IsTimedOut(it->startMs, it->durationMs))
+                    it = memories.erase(it);
+                else
+                    ++it;
+            }
+
+            if (memories.empty())
+                memoryByGroup.erase(memoryGroup);
+        }
     }
 
     CcClaim* FindClaim(uint32 groupId, ObjectGuid targetGuid)
@@ -201,7 +299,7 @@ ObjectGuid GroupCcTargetReservation::GetOwnedTarget(Player* bot)
     return claim ? claim->targetGuid : ObjectGuid();
 }
 
-void GroupCcTargetReservation::Claim(Player* bot, ObjectGuid targetGuid)
+void GroupCcTargetReservation::Claim(Player* bot, ObjectGuid targetGuid, bool reacquireAfterExpiry)
 {
     uint32 groupId = GetGroupId(bot);
     if (!groupId || !bot || targetGuid.IsEmpty())
@@ -212,24 +310,17 @@ void GroupCcTargetReservation::Claim(Player* bot, ObjectGuid targetGuid)
         return;
 
     ObjectGuid botGuid = bot->GetObjectGuid();
-    if (CcClaim* existing = FindClaim(groupId, targetGuid))
+    if (FindClaim(groupId, targetGuid))
     {
-        if (existing->ownerGuid == botGuid)
-        {
-            // Keep the selection heartbeat alive while the bot still intends
-            // this add. Do not shorten an in-flight cast window.
-            if (!existing->inFlight)
-            {
-                existing->startMs = WorldTimer::getMSTime();
-                existing->durationMs = kSelectDurationMs;
-            }
-            return;
-        }
-
+        // Hard 3s selection lease: do not refresh, even for the owner.
+        // In-flight windows are extended only by RecordCast on a real start.
         return;
     }
 
     if (IsSkipped(bot, targetGuid))
+        return;
+
+    if (!reacquireAfterExpiry && FindMemory(groupId, botGuid, targetGuid))
         return;
 
     if (CcClaim* owned = FindOwnedClaim(groupId, botGuid))
@@ -245,12 +336,23 @@ void GroupCcTargetReservation::Claim(Player* bot, ObjectGuid targetGuid)
         Prune(groupId);
     }
 
+    uint8 failedStarts = 0;
+    if (CcLeaseMemory* memory = FindMemory(groupId, botGuid, targetGuid))
+        failedStarts = memory->failedStarts;
+
+    if (failedStarts >= kMaxFailedStarts)
+    {
+        AddSkip(groupId, botGuid, targetGuid);
+        ClearMemory(groupId, botGuid, targetGuid);
+        return;
+    }
+
     CcClaim claim;
     claim.targetGuid = targetGuid;
     claim.ownerGuid = botGuid;
     claim.startMs = WorldTimer::getMSTime();
     claim.durationMs = kSelectDurationMs;
-    claim.attempts = 0;
+    claim.failedStarts = failedStarts;
     claim.inFlight = false;
     claimsByGroup[groupId].push_back(claim);
 }
@@ -280,7 +382,7 @@ bool GroupCcTargetReservation::PrepareFallbackCast(PlayerbotAI* ai, Unit* target
         return false;
 
     if (!IsOwnedBy(bot, targetGuid))
-        Claim(bot, targetGuid);
+        Claim(bot, targetGuid, true);
 
     return IsOwnedBy(bot, targetGuid);
 }
@@ -299,26 +401,31 @@ void GroupCcTargetReservation::RecordCast(Player* bot, Unit* target, bool castSt
     if (!claim || claim->ownerGuid != bot->GetObjectGuid())
         return;
 
-    // A failed recast must not drop a live in-flight claim (including after the
-    // 3rd successful start, which already added a skip).
+    // A failed recast must not drop a live in-flight claim.
     if (!castStarted && claim->inFlight)
         return;
 
-    claim->attempts++;
     if (castStarted)
     {
         claim->startMs = WorldTimer::getMSTime();
         claim->durationMs = kCastDurationMs;
         claim->inFlight = true;
+        // Successful start: wait for the aura (or 5s in-flight expiry). Do not
+        // spend a failed-start slot and do not skip later retries until this
+        // window ends without verification.
+        ClearMemory(groupId, claim->ownerGuid, claim->targetGuid);
+        return;
     }
 
-    if (claim->attempts >= kMaxAttempts)
+    claim->failedStarts++;
+    RememberLease(groupId, claim->ownerGuid, claim->targetGuid, claim->failedStarts);
+    if (claim->failedStarts >= kMaxFailedStarts)
     {
         ObjectGuid targetGuid = claim->targetGuid;
         ObjectGuid botGuid = bot->GetObjectGuid();
         AddSkip(groupId, botGuid, targetGuid);
-        if (!castStarted)
-            Release(bot, targetGuid);
+        ClearMemory(groupId, botGuid, targetGuid);
+        Release(bot, targetGuid);
     }
 }
 
@@ -328,11 +435,13 @@ void GroupCcTargetReservation::Release(Player* bot, ObjectGuid targetGuid)
     if (!groupId || !bot || targetGuid.IsEmpty())
         return;
 
+    ObjectGuid botGuid = bot->GetObjectGuid();
+    ClearMemory(groupId, botGuid, targetGuid);
+
     std::unordered_map<uint32, std::vector<CcClaim>>::iterator groupIt = claimsByGroup.find(groupId);
     if (groupIt == claimsByGroup.end())
         return;
 
-    ObjectGuid botGuid = bot->GetObjectGuid();
     std::vector<CcClaim>& claims = groupIt->second;
     for (std::vector<CcClaim>::iterator it = claims.begin(); it != claims.end(); ++it)
     {
