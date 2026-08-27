@@ -2,6 +2,7 @@
 #include "playerbot/playerbot.h"
 #include "playerbot/strategy/actions/GenericActions.h"
 #include "HunterActions.h"
+#include "playerbot/strategy/values/GroupCcTargetReservation.h"
 
 using namespace ai;
 
@@ -121,4 +122,21 @@ bool CastSteadyShotAction::Execute(Event& event)
     }
 
     return false;
+}
+
+bool TrapOnCcTargetAction::Execute(Event& event)
+{
+    Unit* ccTarget = AI_VALUE2(Unit*, "cc target", GetTrapSpellName());
+    if (!GroupCcTargetReservation::PrepareFallbackCast(ai, ccTarget))
+        return false;
+
+    if (GroupCcTargetReservation::IsInFlight(bot, ccTarget->GetObjectGuid()))
+        return true;
+
+    // Vanilla: this is the feign-death commit of the CC trap sequence; the
+    // trap drop continuer is a self-cast and does not re-enter this hook.
+    // In-flight covers that drop. Other expansions cast the trap here.
+    bool executed = CastSpellAction::Execute(event);
+    GroupCcTargetReservation::RecordCast(bot, ccTarget, executed);
+    return executed;
 }

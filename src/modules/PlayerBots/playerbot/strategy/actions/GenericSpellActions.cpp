@@ -150,8 +150,11 @@ bool CastSpellAction::isPossible()
 bool CastCrowdControlSpellAction::Execute(Event& event)
 {
     Unit* target = GetTarget();
-    if (target && GroupCcTargetReservation::IsClaimedByOther(bot, target->GetObjectGuid()))
+    if (!GroupCcTargetReservation::PrepareFallbackCast(ai, target))
         return false;
+
+    if (GroupCcTargetReservation::IsInFlight(bot, target->GetObjectGuid()))
+        return true;
 
     bool executed = CastSpellAction::Execute(event);
     GroupCcTargetReservation::RecordCast(bot, target, executed);

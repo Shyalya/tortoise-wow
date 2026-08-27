@@ -701,8 +701,19 @@ bool HasCcTargetTrigger::IsActive()
                 return rtiCcTarget == ccTarget;
         }
 
-        if (!rtiCcTarget && GroupCcTargetReservation::IsClaimedByOther(bot, ccTarget->GetObjectGuid()))
-            return false;
+        // RTI assignment bypasses fallback claims. Any other cc-target (no
+        // icon, or a fallback while an icon points elsewhere) must still
+        // respect other-owner claims and this bot's skip/exhaustion, except
+        // when this bot still owns a live in-flight claim.
+        if (rtiCcTarget != ccTarget)
+        {
+            ObjectGuid ccGuid = ccTarget->GetObjectGuid();
+            if (GroupCcTargetReservation::IsClaimedByOther(bot, ccGuid))
+                return false;
+            if (GroupCcTargetReservation::IsSkipped(bot, ccGuid) &&
+                !GroupCcTargetReservation::IsOwnedBy(bot, ccGuid))
+                return false;
+        }
 
         return true;
     }

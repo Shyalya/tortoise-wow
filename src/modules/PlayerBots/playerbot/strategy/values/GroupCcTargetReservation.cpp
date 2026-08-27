@@ -22,6 +22,7 @@ namespace
         uint32 startMs = 0;
         uint32 durationMs = 0;
         uint8 attempts = 0;
+        bool inFlight = false;
     };
 
     struct CcSkip
@@ -77,7 +78,11 @@ namespace
         {
             if (IsTimedOut(it->startMs, it->durationMs))
             {
-                AddSkip(groupId, it->ownerGuid, it->targetGuid);
+                // Selection timeout frees the add so another bot (or this one)
+                // can reacquire. Skip only in-flight expiry: the owner already
+                // started a real cast that never verified.
+                if (it->inFlight)
+                    AddSkip(groupId, it->ownerGuid, it->targetGuid);
                 it = claims.erase(it);
             }
             else
@@ -174,6 +179,17 @@ bool GroupCcTargetReservation::IsOwnedBy(Player* bot, ObjectGuid targetGuid)
     return claim && claim->ownerGuid == bot->GetObjectGuid();
 }
 
+bool GroupCcTargetReservation::IsInFlight(Player* bot, ObjectGuid targetGuid)
+{
+    uint32 groupId = GetGroupId(bot);
+    if (!groupId || targetGuid.IsEmpty())
+        return false;
+
+    Prune(groupId);
+    CcClaim* claim = FindClaim(groupId, targetGuid);
+    return claim && claim->ownerGuid == bot->GetObjectGuid() && claim->inFlight;
+}
+
 ObjectGuid GroupCcTargetReservation::GetOwnedTarget(Player* bot)
 {
     uint32 groupId = GetGroupId(bot);
@@ -192,19 +208,37 @@ void GroupCcTargetReservation::Claim(Player* bot, ObjectGuid targetGuid)
         return;
 
     Prune(groupId);
-    if (IsSkipped(bot, targetGuid) || IsClaimedByOther(bot, targetGuid))
+    if (IsClaimedByOther(bot, targetGuid))
         return;
 
     ObjectGuid botGuid = bot->GetObjectGuid();
     if (CcClaim* existing = FindClaim(groupId, targetGuid))
     {
         if (existing->ownerGuid == botGuid)
+        {
+            // Keep the selection heartbeat alive while the bot still intends
+            // this add. Do not shorten an in-flight cast window.
+            if (!existing->inFlight)
+            {
+                existing->startMs = WorldTimer::getMSTime();
+                existing->durationMs = kSelectDurationMs;
+            }
             return;
+        }
+
+        return;
     }
+
+    if (IsSkipped(bot, targetGuid))
+        return;
 
     if (CcClaim* owned = FindOwnedClaim(groupId, botGuid))
     {
         if (owned->targetGuid == targetGuid)
+            return;
+
+        // In-flight protection outranks a later selection of a different add.
+        if (owned->inFlight)
             return;
 
         Release(bot, owned->targetGuid);
@@ -217,7 +251,38 @@ void GroupCcTargetReservation::Claim(Player* bot, ObjectGuid targetGuid)
     claim.startMs = WorldTimer::getMSTime();
     claim.durationMs = kSelectDurationMs;
     claim.attempts = 0;
+    claim.inFlight = false;
     claimsByGroup[groupId].push_back(claim);
+}
+
+bool GroupCcTargetReservation::PrepareFallbackCast(PlayerbotAI* ai, Unit* target)
+{
+    if (!ai || !target)
+        return false;
+
+    Player* bot = ai->GetBot();
+    if (!bot)
+        return false;
+
+    // Ungrouped bots never participate in the fallback claim table.
+    if (!GetGroupId(bot))
+        return true;
+
+    Unit* rtiCcTarget = ai->GetAiObjectContext()->GetValue<Unit*>("rti cc target")->Get();
+    if (rtiCcTarget == target)
+        return true;
+
+    ObjectGuid targetGuid = target->GetObjectGuid();
+    if (IsClaimedByOther(bot, targetGuid))
+        return false;
+
+    if (IsSkipped(bot, targetGuid) && !IsOwnedBy(bot, targetGuid))
+        return false;
+
+    if (!IsOwnedBy(bot, targetGuid))
+        Claim(bot, targetGuid);
+
+    return IsOwnedBy(bot, targetGuid);
 }
 
 void GroupCcTargetReservation::RecordCast(Player* bot, Unit* target, bool castStarted)
@@ -234,11 +299,17 @@ void GroupCcTargetReservation::RecordCast(Player* bot, Unit* target, bool castSt
     if (!claim || claim->ownerGuid != bot->GetObjectGuid())
         return;
 
+    // A failed recast must not drop a live in-flight claim (including after the
+    // 3rd successful start, which already added a skip).
+    if (!castStarted && claim->inFlight)
+        return;
+
     claim->attempts++;
     if (castStarted)
     {
         claim->startMs = WorldTimer::getMSTime();
         claim->durationMs = kCastDurationMs;
+        claim->inFlight = true;
     }
 
     if (claim->attempts >= kMaxAttempts)

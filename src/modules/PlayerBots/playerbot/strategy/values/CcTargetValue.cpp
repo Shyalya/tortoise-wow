@@ -74,6 +74,16 @@ public:
         if (reservationLocked)
             return;
 
+        ObjectGuid creatureGuid = creature->GetObjectGuid();
+        // Keep a live in-flight claim even if a fresh cast is no longer legal,
+        // so later selection cannot drop it while the aura is still pending.
+        if (GroupCcTargetReservation::IsInFlight(bot, creatureGuid))
+        {
+            result = creature;
+            reservationLocked = true;
+            return;
+        }
+
         if (!ai->CanCastSpell(spell, creature, true, nullptr, false, true))
             return;
 
@@ -86,8 +96,11 @@ public:
         if (IsBossCcTarget(creature) || IsCurrentTankTarget(ai, creature) || IsAlreadyControlled(creature))
             return;
 
-        if (GroupCcTargetReservation::IsSkipped(bot, creature->GetObjectGuid()) ||
-            GroupCcTargetReservation::IsClaimedByOther(bot, creature->GetObjectGuid()))
+        // Ownership outranks skip for a still-valid selection claim. Safety
+        // gates above still apply so a stale non-in-flight claim can be freed.
+        if (!GroupCcTargetReservation::IsOwnedBy(bot, creatureGuid) &&
+            (GroupCcTargetReservation::IsSkipped(bot, creatureGuid) ||
+             GroupCcTargetReservation::IsClaimedByOther(bot, creatureGuid)))
             return;
 
         uint8 health = creature->GetHealthPercent();
@@ -109,7 +122,7 @@ public:
         if (creature->HasAuraType(SPELL_AURA_PERIODIC_DAMAGE) && !(spell == "fear" || spell == "banish"))
             return;
 
-        if (GroupCcTargetReservation::IsOwnedBy(bot, creature->GetObjectGuid()))
+        if (GroupCcTargetReservation::IsOwnedBy(bot, creatureGuid))
         {
             result = creature;
             reservationLocked = true;
@@ -213,8 +226,16 @@ Unit* CcTargetValue::Calculate()
 
     if (selected)
         GroupCcTargetReservation::Claim(bot, selected->GetObjectGuid());
-    else if (!ownedGuid.IsEmpty())
+    else if (!ownedGuid.IsEmpty() && !GroupCcTargetReservation::IsInFlight(bot, ownedGuid))
         GroupCcTargetReservation::Release(bot, ownedGuid);
+
+    ObjectGuid liveOwned = GroupCcTargetReservation::GetOwnedTarget(bot);
+    if (!liveOwned.IsEmpty() && (!selected || selected->GetObjectGuid() != liveOwned))
+    {
+        Unit* owned = ai->GetUnit(liveOwned);
+        if (owned)
+            return owned;
+    }
 
     return selected;
 }

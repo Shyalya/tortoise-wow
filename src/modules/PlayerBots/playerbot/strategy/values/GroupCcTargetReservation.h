@@ -3,6 +3,7 @@
 #include "ObjectGuid.h"
 
 class Player;
+class PlayerbotAI;
 class Unit;
 
 namespace ai
@@ -16,8 +17,12 @@ namespace ai
         static bool IsClaimedByOther(Player* bot, ObjectGuid targetGuid);
         static bool IsSkipped(Player* bot, ObjectGuid targetGuid);
         static bool IsOwnedBy(Player* bot, ObjectGuid targetGuid);
+        static bool IsInFlight(Player* bot, ObjectGuid targetGuid);
         static ObjectGuid GetOwnedTarget(Player* bot);
         static void Claim(Player* bot, ObjectGuid targetGuid);
+        // Grouped unmarked fallback must own a live claim before the real cast.
+        // Explicit RTI CC and ungrouped bots bypass fallback claims.
+        static bool PrepareFallbackCast(PlayerbotAI* ai, Unit* target);
         static void RecordCast(Player* bot, Unit* target, bool castStarted);
         static void Release(Player* bot, ObjectGuid targetGuid);
     };

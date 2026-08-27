@@ -230,6 +230,11 @@ namespace ai
         }
 
         virtual bool isUseful() override { return true; }
+        bool Execute(Event& event) override;
+
+    protected:
+        std::string GetTargetName() override { return "cc target"; }
+        std::string GetTargetQualifier() override { return getName(); }
     };
 
     class CastGarroteAction : public CastMeleeSpellAction

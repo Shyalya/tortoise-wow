@@ -356,6 +356,7 @@ private:
     public:
         TrapOnCcTargetAction(PlayerbotAI* ai, std::string spell) : TrapOnTargetAction(ai, spell) {}
         std::string GetTrapTargetName() override { return "cc target"; }
+        bool Execute(Event& event) override;
     };
 
     class TrapInPlace : public TrapOnTargetAction
