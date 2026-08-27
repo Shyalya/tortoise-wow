@@ -5,6 +5,7 @@
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/strategy/values/PositionValue.h"
 #include "playerbot/strategy/values/AoeValues.h"
+#include "playerbot/strategy/values/GroupCcTargetReservation.h"
 
 #include <regex>
 
@@ -691,12 +692,17 @@ bool HasCcTargetTrigger::IsActive()
         // In dungeons the group raid marker is the shared CC assignment. This
         // prevents every controller from independently selecting the same add.
         // If no CC icon is currently assigned, allow the value-layer fallback to
-        // pick one safe target instead of suppressing CC entirely.
+        // pick one safe target instead of suppressing CC entirely. Fallback
+        // targets are claimed with a short-lived group reservation.
+        Unit* rtiCcTarget = AI_VALUE(Unit*, "rti cc target");
         if (bot->GetMap() && bot->GetMap()->IsDungeon() && !bot->GetMap()->IsRaid())
         {
-            Unit* rtiCcTarget = AI_VALUE(Unit*, "rti cc target");
-            return !rtiCcTarget || rtiCcTarget == ccTarget;
+            if (rtiCcTarget)
+                return rtiCcTarget == ccTarget;
         }
+
+        if (!rtiCcTarget && GroupCcTargetReservation::IsClaimedByOther(bot, ccTarget->GetObjectGuid()))
+            return false;
 
         return true;
     }

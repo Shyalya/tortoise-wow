@@ -2,6 +2,7 @@
 #include "playerbot/playerbot.h"
 #include "GenericActions.h"
 #include "UseItemAction.h"
+#include "playerbot/strategy/values/GroupCcTargetReservation.h"
 
 using namespace ai;
 
@@ -144,6 +145,17 @@ bool CastSpellAction::isPossible()
     
     // Check if the spell can be casted
 	return ai->CanCastSpell(spellName, spellTarget, 0, nullptr, true);
+}
+
+bool CastCrowdControlSpellAction::Execute(Event& event)
+{
+    Unit* target = GetTarget();
+    if (target && GroupCcTargetReservation::IsClaimedByOther(bot, target->GetObjectGuid()))
+        return false;
+
+    bool executed = CastSpellAction::Execute(event);
+    GroupCcTargetReservation::RecordCast(bot, target, executed);
+    return executed;
 }
 
 bool CastSpellAction::isUseful()

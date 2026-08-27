@@ -32,10 +32,10 @@ in-game here.
 | Real summoning-ritual assistance | Implemented | Controlled bots join a nearby eligible ritual GO via `CMSG_GAMEOBJ_USE` (not the meeting-stone teleport). The ritual GUID is cached across same-tick Trigger/`isUseful`/`Execute` scans and revalidated before reuse. Still needs in-game smoke (two eligible bots, owner channeling, summon target present). |
 | Quest-item target use | Implemented (random bots) | `UseRandomQuestItemAction` again uses `ItemRequiredTargetMap` / incomplete quest status on nearby creatures and game objects, keeping StartQuest item behavior. Failed uses are bounded with a 15s per-item/target retry. Gated to bots **without** an active player master; mastered companions still need a separate path. Needs live quest coverage (creature, corpse, GO). |
 | Party-stop maintenance | Implemented (partial) | When a real master opens gossip on a vendor/repair NPC, grouped bots sell **strict** `ITEM_USAGE_VENDOR` trash and repair at that **exact** NPC (`AutoMaintenanceOnMasterVendor`, default on). No automatic buying of food/drink/ammo/reagents. Needs in-game checks for range, combat gates, and sell/repair only. |
-| Unmarked crowd control | Implemented (partial) | Explicit RTI CC remains authoritative; in non-raid dungeons, when no CC icon is set, CC-enabled bots may pick a safer fallback add (excludes bosses, kill/RTI kill target, tank-held, low-health, DoT’d except fear/banish, already controlled). **No shared reservation yet**, so two bots can still race the same add. |
+| Unmarked crowd control | Implemented | Explicit RTI CC remains authoritative and is never reserved. In non-raid dungeons, when no CC icon is set, CC-enabled bots pick a safer fallback add (excludes bosses, kill/RTI kill target, tank-held, low-health, DoT’d except fear/banish, already controlled) and **claim it with a short-lived group reservation** (3s select / 5s in-flight, 3 attempts, 8s skip on expiry or exhaustion). Needs in-game smoke on an unmarked three-mob pull with two CC-capable bots. Interrupts, resurrection, loot and cooperative GOs still have no shared reservation. |
 | Per-spell immunity checks | Implemented | Damaging casts are rejected when the target is immune to the spell or school (Classic spell/school/damage checks), without blocking neutral/non-damaging utility. Needs in-game confirmation on mixed-school packs and multi-effect spells. |
 
-Still open relative to the P0 list: shared CC (and broader group) reservations, mastered-bot quest-item assist, and vendor buying driven by existing need calculations. P1/P2 and the evaluation harness remain future work.
+Still open relative to the P0 list: mastered-bot quest-item assist, and vendor buying driven by existing need calculations. Shared CC reservations are in; interrupt, resurrect, loot and cooperative-GO reservations remain future P1 work. The evaluation harness remains future work.
 
 ## What is already strong
 
@@ -83,8 +83,10 @@ joining the ritual).
 4. **Unmarked crowd control.** Explicit raid icons must remain authoritative,
    but a CC-enabled bot should select a safe add when no CC icon exists. Exclude
    bosses, the kill target, tank-held targets, damaged/DoT targets and already
-   controlled enemies. Fallback selection is in; a shared reservation is still
-   needed to prevent two bots from choosing the same add on the same tick.
+   controlled enemies. Fallback selection and a short-lived group reservation
+   are in so two bots do not start CC on the same unmarked add. Confirm in-game
+   on a three-mob pull with two CC-capable bots. Interrupt/resurrect/loot/GO
+   reservations are still open.
 
 5. **Per-spell immunity checks.** Target selection already avoids broad
    invulnerability; spell validation should also reject damage spells when the
@@ -114,8 +116,9 @@ joining the ritual).
 
 3. **Shared group intent/reservations.** Maintain short-lived reservations for
    CC targets, loot/game objects, interrupts, resurrect targets and maintenance
-   NPCs. The group leader or a lightweight shared value should assign work;
-   individual bot ticks should not race independently.
+   NPCs. Unmarked CC now claims a per-group GUID with expiry, attempt limits and
+   outcome release when the aura lands. Interrupts, resurrection, loot and
+   cooperative GOs still race independently.
 
 4. **Autonomous dungeon lifecycle.** Compose existing LFG, travel/summon and
    `DungeonClear` capabilities into an optional flow: form a role-valid party,

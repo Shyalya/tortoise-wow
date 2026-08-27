@@ -454,7 +454,8 @@ namespace ai
     {
     public:
         CastCrowdControlSpellAction(PlayerbotAI* ai, std::string spell) : CastRangedDebuffSpellAction(ai, spell) {}
-        
+        bool Execute(Event& event) override;
+
     private:
         virtual std::string GetReachActionName() override { return "reach spell"; }
         virtual std::string GetTargetName() override { return "cc target"; }
