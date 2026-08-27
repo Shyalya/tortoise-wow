@@ -58,7 +58,8 @@ bool MasterGossipMaintenanceAction::IsEligibleBot(Player* master) const
     if (!sPlayerbotAIConfig.autoMaintenanceOnMasterVendor || !master || !ai->HasRealPlayerMaster())
         return false;
 
-    if (!bot->GetGroup() || !bot->GetGroup()->IsMember(master->GetObjectGuid()))
+    if (!bot->IsInWorld() || !master->IsInWorld() || !bot->IsInMap(master) ||
+        !bot->GetGroup() || !bot->GetGroup()->IsMember(master->GetObjectGuid()))
         return false;
 
     if (!ai->IsSafe(master) || !bot->IsAlive() || bot->IsInCombat() || bot->IsTaxiFlying() || bot->IsBeingTeleported())

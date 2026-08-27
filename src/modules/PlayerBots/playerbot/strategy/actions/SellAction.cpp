@@ -36,7 +36,9 @@ bool SellAction::Execute(Event& event)
     std::string text = event.getParam();
 
     if (text == "*" || text.empty())
-        text = (event.getSource() == "master gossip maintenance") ? "vendor" : "gray";
+        text = (event.getSource() == "master gossip maintenance")
+            ? "usage " + std::to_string((uint8)ItemUsage::ITEM_USAGE_VENDOR)
+            : "gray";
 
     std::list<Item*> items = ai->InventoryParseItems(text, IterateItemsMask::ITERATE_ITEMS_IN_BAGS);
     ObjectGuid vendorGuid = event.getObject();
