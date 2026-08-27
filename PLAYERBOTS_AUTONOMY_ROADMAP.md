@@ -21,6 +21,22 @@ Upstream snapshots examined on 2026-08-27 were CMaNGOS PlayerBots
 `076045efa835da9aab7caa943bca752aebe1baad` and mod-playerbots
 `2f7d9f774987d0157c6a0d0cc08c40bec3db3945`.
 
+## Current branch implementation status (`cc6e2d7`…`ee6031c`)
+
+The following P0 items are implemented in code on this branch. This is a source
+review only: none of the evaluation scenarios below have been runtime-validated
+in-game here.
+
+| P0 item | Status | Notes / remaining caveats |
+| --- | --- | --- |
+| Real summoning-ritual assistance | Implemented | Controlled bots join a nearby eligible ritual GO via `CMSG_GAMEOBJ_USE` (not the meeting-stone teleport). The ritual GUID is cached across same-tick Trigger/`isUseful`/`Execute` scans and revalidated before reuse. Still needs in-game smoke (two eligible bots, owner channeling, summon target present). |
+| Quest-item target use | Implemented (random bots) | `UseRandomQuestItemAction` again uses `ItemRequiredTargetMap` / incomplete quest status on nearby creatures and game objects, keeping StartQuest item behavior. Failed uses are bounded with a 15s per-item/target retry. Gated to bots **without** an active player master; mastered companions still need a separate path. Needs live quest coverage (creature, corpse, GO). |
+| Party-stop maintenance | Implemented (partial) | When a real master opens gossip on a vendor/repair NPC, grouped bots sell **strict** `ITEM_USAGE_VENDOR` trash and repair at that **exact** NPC (`AutoMaintenanceOnMasterVendor`, default on). No automatic buying of food/drink/ammo/reagents. Needs in-game checks for range, combat gates, and sell/repair only. |
+| Unmarked crowd control | Implemented (partial) | Explicit RTI CC remains authoritative; in non-raid dungeons, when no CC icon is set, CC-enabled bots may pick a safer fallback add (excludes bosses, kill/RTI kill target, tank-held, low-health, DoT’d except fear/banish, already controlled). **No shared reservation yet**, so two bots can still race the same add. |
+| Per-spell immunity checks | Implemented | Damaging casts are rejected when the target is immune to the spell or school (Classic spell/school/damage checks), without blocking neutral/non-damaging utility. Needs in-game confirmation on mixed-school packs and multi-effect spells. |
+
+Still open relative to the P0 list: shared CC (and broader group) reservations, mastered-bot quest-item assist, and vendor buying driven by existing need calculations. P1/P2 and the evaluation harness remain future work.
+
 ## What is already strong
 
 The repository already contains most of the low-level capabilities needed for
@@ -51,29 +67,29 @@ joining the ritual).
 1. **Real summoning-ritual assistance.** Detect a nearby active ritual owned by
    an eligible group member, move into interaction range and use the actual game
    object once. Do not use the existing meeting-stone teleport shortcut.
+   Controlled-bot assist with cached GO validation is in; confirm in-game.
 
-2. **Quest-item target use.** Restore the data-driven path for quests requiring
-   an item to be used on a creature or game object. `UseRandomQuestItemAction`
-   currently only handles items that start a quest; the target-use code is
-   commented out. Use `ItemRequiredTargetMap`, the active quest status and spell
-   validation, with per-target retry cooldowns.
+2. **Quest-item target use.** Data-driven use of quest items on creatures or
+   game objects via `ItemRequiredTargetMap`, incomplete quest status and spell
+   validation, with per-target retry cooldowns. Random-bot path is in; mastered
+   companions still need an equivalent assist path.
 
 3. **Party-stop maintenance.** When the player opens a nearby vendor or repair
    NPC, controlled bots should safely run their existing repair and junk-selling
-   policies at that NPC. Buying should only be added where the existing need
-   calculation can determine food, drink, ammunition and reagents without a new
-   economy policy.
+   policies at that NPC. Exact-NPC repair and strict vendor-trash selling are in;
+   buying should only be added where the existing need calculation can determine
+   food, drink, ammunition and reagents without a new economy policy.
 
 4. **Unmarked crowd control.** Explicit raid icons must remain authoritative,
    but a CC-enabled bot should select a safe add when no CC icon exists. Exclude
    bosses, the kill target, tank-held targets, damaged/DoT targets and already
-   controlled enemies. A shared reservation is needed to prevent two bots from
-   choosing the same add on the same tick.
+   controlled enemies. Fallback selection is in; a shared reservation is still
+   needed to prevent two bots from choosing the same add on the same tick.
 
 5. **Per-spell immunity checks.** Target selection already avoids broad
-   invulnerability, but spell validation should also reject damage spells when
-   the target is immune to that spell or school. This prevents repeated `IMMUNE`
-   casts while preserving other schools and utility spells.
+   invulnerability; spell validation should also reject damage spells when the
+   target is immune to that spell or school. Damage spell/school rejection is
+   in; confirm in-game on mixed-school and multi-effect cases.
 
 ### P1: make the party self-managing
 
