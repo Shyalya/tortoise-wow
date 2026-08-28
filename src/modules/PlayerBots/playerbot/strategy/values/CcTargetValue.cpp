@@ -1,11 +1,41 @@
 
 #include "playerbot/playerbot.h"
 #include "CcTargetValue.h"
+#include "GroupCcTargetReservation.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/ServerFacade.h"
 #include "playerbot/strategy/Action.h"
 
 using namespace ai;
+
+namespace
+{
+    bool IsBossCcTarget(Unit* creature)
+    {
+        if (Creature* boss = creature->ToCreature())
+            return boss->IsWorldBoss() || boss->HasExtraFlag(CREATURE_FLAG_EXTRA_INSTANCE_BIND);
+
+        return false;
+    }
+
+    bool IsAlreadyControlled(Unit* creature)
+    {
+        return creature->HasBreakableByDamageCrowdControlAura() ||
+               creature->HasAuraType(SPELL_AURA_MOD_FEAR) ||
+               creature->HasAuraType(SPELL_AURA_MOD_ROOT) ||
+               creature->HasAuraType(SPELL_AURA_MOD_STUN) ||
+               creature->HasAuraType(SPELL_AURA_MOD_CHARM) ||
+               creature->HasAuraType(SPELL_AURA_MOD_POSSESS) ||
+               creature->HasAuraType(SPELL_AURA_MOD_PACIFY) ||
+               creature->HasAuraType(SPELL_AURA_MOD_PACIFY_SILENCE);
+    }
+
+    bool IsCurrentTankTarget(PlayerbotAI* ai, Unit* creature)
+    {
+        Player* victim = dynamic_cast<Player*>(creature->GetVictim());
+        return victim && ai->IsTank(victim);
+    }
+}
 
 class FindTargetForCcStrategy : public FindTargetStrategy
 {
@@ -14,28 +44,63 @@ public:
     {
         this->spell = spell;
         maxDistance = 0;
-    }
-
-public:
-    virtual void CheckAttacker(Unit* creature, ThreatManager* threatManager)
-    {
-        Player* bot = ai->GetBot();
+        rtiLocked = false;
+        reservationLocked = false;
 
         AiObjectContext* context = ai->GetAiObjectContext();
+        rtiCcTarget = AI_VALUE(Unit*, "rti cc target");
+        rtiTarget = AI_VALUE(Unit*, "rti target");
+        currentTarget = AI_VALUE(Unit*, "current target");
+    }
+
+    Unit* GetRtiCcTarget() const { return rtiCcTarget; }
+
+public:
+    virtual void CheckAttacker(Unit* creature, ThreatManager* /*threatManager*/)
+    {
+        Player* bot = ai->GetBot();
+        AiObjectContext* context = ai->GetAiObjectContext();
+
+        if (rtiLocked)
+            return;
+
+        if (rtiCcTarget == creature)
+        {
+            result = ai->CanCastSpell(spell, creature, true, nullptr, false, true) ? creature : nullptr;
+            rtiLocked = true;
+            return;
+        }
+
+        if (reservationLocked)
+            return;
+
+        ObjectGuid creatureGuid = creature->GetObjectGuid();
+        // Keep a live in-flight claim even if a fresh cast is no longer legal,
+        // so later selection cannot drop it while the aura is still pending.
+        if (GroupCcTargetReservation::IsInFlight(bot, creatureGuid))
+        {
+            result = creature;
+            reservationLocked = true;
+            return;
+        }
 
         if (!ai->CanCastSpell(spell, creature, true, nullptr, false, true))
             return;
 
-        if (AI_VALUE(Unit*,"rti cc target") == creature)
-        {
-            result = creature;
-            return;
-        }
-
-        if (AI_VALUE(Unit*,"current target") == creature)
+        if (currentTarget == creature)
             return;
 
-        if (AI_VALUE(Unit*,"rti target") == creature)
+        if (rtiTarget == creature)
+            return;
+
+        if (IsBossCcTarget(creature) || IsCurrentTankTarget(ai, creature) || IsAlreadyControlled(creature))
+            return;
+
+        // Ownership outranks skip for a still-valid selection claim. Safety
+        // gates above still apply so a stale non-in-flight claim can be freed.
+        if (!GroupCcTargetReservation::IsOwnedBy(bot, creatureGuid) &&
+            (GroupCcTargetReservation::IsSkipped(bot, creatureGuid) ||
+             GroupCcTargetReservation::IsClaimedByOther(bot, creatureGuid)))
             return;
 
         uint8 health = creature->GetHealthPercent();
@@ -57,14 +122,27 @@ public:
         if (creature->HasAuraType(SPELL_AURA_PERIODIC_DAMAGE) && !(spell == "fear" || spell == "banish"))
             return;
 
+        if (GroupCcTargetReservation::IsOwnedBy(bot, creatureGuid))
+        {
+            result = creature;
+            reservationLocked = true;
+            return;
+        }
+
         if (!creature->IsPlayer())
         {
             int tankCount, dpsCount;
             GetPlayerCount(creature, &tankCount, &dpsCount);
-            if (!tankCount || !dpsCount)
+
+            // Prefer free adds, but don't repeatedly CC something the current tank
+            // is already holding by themselves.
+            if (tankCount && !dpsCount)
+                return;
+
+            if (!tankCount && !dpsCount && !result)
             {
                 result = creature;
-                return;
+                maxDistance = minDistance;
             }
         }
 
@@ -93,6 +171,11 @@ public:
 private:
     std::string spell;
     float maxDistance;
+    bool rtiLocked;
+    bool reservationLocked;
+    Unit* rtiCcTarget;
+    Unit* rtiTarget;
+    Unit* currentTarget;
 };
 
 Unit* CcTargetValue::Calculate()
@@ -109,18 +192,52 @@ Unit* CcTargetValue::Calculate()
         if (!ai->IsSafe(add))
             continue;
 
-        if (ai->HasMyAura(qualifier, add))
-            return NULL;
-
-        if (qualifier == "polymorph")
+        if (ai->HasMyAura(qualifier, add) ||
+            (qualifier == "polymorph" && (ai->HasMyAura("polymorph: pig", add) || ai->HasMyAura("polymorph: turtle", add))))
         {
-            if (ai->HasMyAura("polymorph: pig", add))
-                return NULL;
-            if (ai->HasMyAura("polymorph: turtle", add))
-                return NULL;
+            Player* bot = ai->GetBot();
+            ObjectGuid ownedGuid = GroupCcTargetReservation::GetOwnedTarget(bot);
+            if (!ownedGuid.IsEmpty())
+                GroupCcTargetReservation::Release(bot, ownedGuid);
+            return NULL;
         }
     }
 
+    Player* bot = ai->GetBot();
+    ObjectGuid ownedGuid = GroupCcTargetReservation::GetOwnedTarget(bot);
+    if (!ownedGuid.IsEmpty())
+    {
+        Unit* owned = ai->GetUnit(ownedGuid);
+        if (!owned || !sServerFacade.IsAlive(owned) || !ai->IsSafe(owned) || IsAlreadyControlled(owned))
+            GroupCcTargetReservation::Release(bot, ownedGuid);
+    }
+
     FindTargetForCcStrategy strategy(ai, qualifier);
-    return FindTarget(&strategy);
+    Unit* selected = FindTarget(&strategy);
+    Unit* rtiCcTarget = strategy.GetRtiCcTarget();
+    ownedGuid = GroupCcTargetReservation::GetOwnedTarget(bot);
+
+    if (rtiCcTarget)
+    {
+        if (!ownedGuid.IsEmpty())
+            GroupCcTargetReservation::Release(bot, ownedGuid);
+        return selected == rtiCcTarget ? selected : nullptr;
+    }
+
+    // Selection uses a hard 3s lease. Do not refresh or reacquire here;
+    // PrepareFallbackCast reacquires at real cast time if the add is free.
+    if (selected)
+        GroupCcTargetReservation::Claim(bot, selected->GetObjectGuid());
+    else if (!ownedGuid.IsEmpty() && !GroupCcTargetReservation::IsInFlight(bot, ownedGuid))
+        GroupCcTargetReservation::Release(bot, ownedGuid);
+
+    ObjectGuid liveOwned = GroupCcTargetReservation::GetOwnedTarget(bot);
+    if (!liveOwned.IsEmpty() && (!selected || selected->GetObjectGuid() != liveOwned))
+    {
+        Unit* owned = ai->GetUnit(liveOwned);
+        if (owned)
+            return owned;
+    }
+
+    return selected;
 }

@@ -23,6 +23,10 @@ void NonCombatStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
         "at dark portal outland",
         NextAction::array(0, new NextAction("move from dark portal", 1.0f), NULL)));
 
+    triggers.push_back(new TriggerNode(
+        "assist summoning ritual",
+        NextAction::array(0, new NextAction("assist summoning ritual", 82.0f), NULL)));
+
     /*
     triggers.push_back(new TriggerNode(
         "vehicle near",

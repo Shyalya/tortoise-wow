@@ -4516,31 +4516,59 @@ bool PlayerbotAI::CanCastSpell(uint32 spellid, Unit* target, uint8 effectMask, b
             }
         }
 
-        bool damage = false;
-        for (int32 i = EFFECT_INDEX_0; i <= EFFECT_INDEX_2; i++)
+        uint8 selectedEffectMask = effectMask;
+        if (!selectedEffectMask)
         {
-            // direct damage
-            if (spellInfo->Effect[(SpellEffectIndex)i] == SPELL_EFFECT_SCHOOL_DAMAGE)
+            for (uint8 i = 0; i < MAX_EFFECT_INDEX; ++i)
+            {
+                if (spellInfo->Effect[i] != SPELL_EFFECT_NONE)
+                    selectedEffectMask |= (1 << i);
+            }
+        }
+
+        bool damage = false;
+        for (uint8 i = 0; i < MAX_EFFECT_INDEX; ++i)
+        {
+            if (!(selectedEffectMask & (1 << i)))
+                continue;
+
+            switch (spellInfo->Effect[i])
+            {
+                case SPELL_EFFECT_INSTAKILL:
+                case SPELL_EFFECT_SCHOOL_DAMAGE:
+                case SPELL_EFFECT_ENVIRONMENTAL_DAMAGE:
+                case SPELL_EFFECT_HEALTH_LEECH:
+                case SPELL_EFFECT_WEAPON_DAMAGE_NOSCHOOL:
+                case SPELL_EFFECT_WEAPON_PERCENT_DAMAGE:
+                case SPELL_EFFECT_WEAPON_DAMAGE:
+                case SPELL_EFFECT_NORMALIZED_WEAPON_DMG:
+                    damage = true;
+                    break;
+                default:
+                    break;
+            }
+
+            if (damage)
+                break;
+
+            if (spellInfo->Effect[i] == SPELL_EFFECT_APPLY_AURA &&
+                spellInfo->EffectBasePoints[i] >= 0 &&
+                spellInfo->EffectApplyAuraName[i] != SPELL_AURA_PERIODIC_HEALTH_FUNNEL &&
+                Spells::IsDamagingAuraEffect(spellInfo->EffectApplyAuraName[i]))
             {
                 damage = true;
                 break;
-            }
-            // periodic damage
-            if (spellInfo->Effect[(SpellEffectIndex)i] == SPELL_EFFECT_APPLY_AURA && spellInfo->EffectBasePoints[i] >= 0)
-            {
-                if (spellInfo->EffectApplyAuraName[i] == SPELL_AURA_PERIODIC_DAMAGE)
-                {
-                    damage = true;
-                    break;
-                }
             }
         }
 
         if (!damage)
         {
-            for (int32 i = EFFECT_INDEX_0; i <= EFFECT_INDEX_2; i++)
+            for (uint8 i = 0; i < MAX_EFFECT_INDEX; ++i)
             {
-                bool immune = target->IsImmuneToSpellEffect(spellInfo, (SpellEffectIndex)i, false);
+                if (!(selectedEffectMask & (1 << i)))
+                    continue;
+
+                bool immune = target->IsImmuneToSpellEffect(spellInfo, SpellEffectIndex(i), false);
                 if (immune)
                 {
                     if (checkResult)
@@ -4550,6 +4578,24 @@ bool PlayerbotAI::CanCastSpell(uint32 spellid, Unit* target, uint8 effectMask, b
 
                     return false;
                 }
+            }
+        }
+        else if (!neutralSpell && !spellInfo->IsPositiveEffectMask(selectedEffectMask, bot, target))
+        {
+            bool immune = target->IsImmuneToSpell(spellInfo, false);
+            if (!immune)
+                immune = target->IsImmuneToSchool(spellInfo, selectedEffectMask);
+            if (!immune)
+                immune = target->IsImmuneToDamage(GetSpellSchoolMask(spellInfo), spellInfo);
+
+            if (immune)
+            {
+                if (checkResult)
+                {
+                    *checkResult = SPELL_FAILED_IMMUNE;
+                }
+
+                return false;
             }
         }
 

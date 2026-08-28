@@ -36,9 +36,12 @@ bool SellAction::Execute(Event& event)
     std::string text = event.getParam();
 
     if (text == "*" || text.empty())
-        text = "gray";
+        text = (event.getSource() == "master gossip maintenance")
+            ? "usage " + std::to_string((uint8)ItemUsage::ITEM_USAGE_VENDOR)
+            : "gray";
 
     std::list<Item*> items = ai->InventoryParseItems(text, IterateItemsMask::ITERATE_ITEMS_IN_BAGS);
+    ObjectGuid vendorGuid = event.getObject();
 
     if (event.getSource() == "rpg action")
     {
@@ -49,7 +52,7 @@ bool SellAction::Execute(Event& event)
     uint32 shouldSell = std::max(minAutoSellItems, uint32(items.size() * urand(minAutoSellPercentageOfBag, maxAutoSellPercentageOfBag) / 100));
     for (std::list<Item*>::iterator i = items.begin(); i != items.end(); ++i)
     {
-        if (Sell(requester, *i))
+        if (Sell(requester, *i, vendorGuid))
             soldItems++;
 
         if (event.getSource() == "rpg action" && soldItems >= shouldSell)
@@ -59,25 +62,29 @@ bool SellAction::Execute(Event& event)
     return soldItems;
 }
 
-bool SellAction::Sell(Player* requester, FindItemVisitor* visitor)
+bool SellAction::Sell(Player* requester, FindItemVisitor* visitor, ObjectGuid vendorGuid)
 {
     bool didSell = false;
     ai->InventoryIterateItems(visitor, IterateItemsMask::ITERATE_ITEMS_IN_BAGS);
     std::list<Item*> items = visitor->GetResult();
     for (std::list<Item*>::iterator i = items.begin(); i != items.end(); ++i)
     {
-        didSell |= Sell(requester, *i);
+        didSell |= Sell(requester, *i, vendorGuid);
     }
 
     return didSell;
 }
 
-bool SellAction::Sell(Player* requester, Item* item)
+bool SellAction::Sell(Player* requester, Item* item, ObjectGuid vendorGuid)
 {
     bool didSell = false;
 
     std::ostringstream out;
-    std::list<ObjectGuid> vendors = ai->GetAiObjectContext()->GetValue<std::list<ObjectGuid> >("nearest npcs")->Get();
+    std::list<ObjectGuid> vendors;
+    if (vendorGuid)
+        vendors.push_back(vendorGuid);
+    else
+        vendors = ai->GetAiObjectContext()->GetValue<std::list<ObjectGuid> >("nearest npcs")->Get();
 
     for (std::list<ObjectGuid>::iterator i = vendors.begin(); i != vendors.end(); ++i)
     {

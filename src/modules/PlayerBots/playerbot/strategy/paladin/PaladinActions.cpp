@@ -1,6 +1,7 @@
 
 #include "playerbot/playerbot.h"
 #include "PaladinActions.h"
+#include "playerbot/strategy/values/GroupCcTargetReservation.h"
 
 using namespace ai;
 
@@ -451,4 +452,18 @@ std::vector<std::string> CastRaidBlessingOnPartyAction::GetPossibleBlessingsForT
     }
 
     return blessings;
+}
+
+bool CastTurnUndeadAction::Execute(Event& event)
+{
+    Unit* target = GetTarget();
+    if (!GroupCcTargetReservation::PrepareFallbackCast(ai, target))
+        return false;
+
+    if (GroupCcTargetReservation::IsInFlight(bot, target->GetObjectGuid()))
+        return true;
+
+    bool executed = CastBuffSpellAction::Execute(event);
+    GroupCcTargetReservation::RecordCast(bot, target, executed);
+    return executed;
 }

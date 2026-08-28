@@ -95,6 +95,11 @@ namespace ai
 
         virtual T Get() override
         {
+            return GetReference();
+        }
+
+        const T& GetReference()
+        {
             time_t now = time(0);
             if (!this->lastCheckTime)
             {

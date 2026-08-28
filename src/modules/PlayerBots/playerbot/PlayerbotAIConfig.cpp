@@ -687,6 +687,7 @@ bool PlayerbotAIConfig::Initialize()
     syncQuestWithPlayer = config.GetBoolDefault("AiPlayerbot.SyncQuestWithPlayer", false);
     syncQuestForPlayer = config.GetBoolDefault("AiPlayerbot.SyncQuestForPlayer", false);
     autoTrainSpells = config.GetStringDefault("AiPlayerbot.AutoTrainSpells", "no");
+    autoMaintenanceOnMasterVendor = config.GetBoolDefault("AiPlayerbot.AutoMaintenanceOnMasterVendor", true);
     autoPickTalents = config.GetStringDefault("AiPlayerbot.AutoPickTalents", "no");
     autoLearnTrainerSpells = config.GetBoolDefault("AiPlayerbot.AutoLearnTrainerSpells", false);
     autoLearnQuestSpells = config.GetBoolDefault("AiPlayerbot.AutoLearnQuestSpells", false);

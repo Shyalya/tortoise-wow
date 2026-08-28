@@ -94,6 +94,154 @@ namespace ai
         ObjectGuid lightwellGameObject;
     };
 
+    class AssistSummoningRitualAction : public MovementAction
+    {
+    public:
+        AssistSummoningRitualAction(PlayerbotAI* ai) : MovementAction(ai, "assist summoning ritual") {}
+        ActionThreatType getThreatType() override { return ActionThreatType::ACTION_THREAT_NONE; }
+
+        bool isUseful() override
+        {
+            return FindNearbySummoningRitual();
+        }
+
+        bool Execute(Event& event) override
+        {
+            GameObject* go = FindNearbySummoningRitual();
+            if (!go)
+                return false;
+
+            if (!bot->IsWithinDistInMap(go, INTERACTION_DISTANCE, false))
+                return MoveNear(go, INTERACTION_DISTANCE - 1.0f);
+
+            if (!bot->CanInteract(go))
+                return false;
+
+            WorldPacket data(CMSG_GAMEOBJ_USE);
+            data << go->GetObjectGuid();
+            bot->GetSession()->HandleGameObjectUseOpcode(data);
+            SetDuration(sPlayerbotAIConfig.globalCoolDown);
+            return true;
+        }
+
+    private:
+        ObjectGuid ritualGameObject;
+
+        static float GetMaxAssistRange() { return INTERACTION_DISTANCE * 3.0f; }
+
+        // Trigger IsActive, Engine isUseful, and Execute can all ask in one tick.
+        // Reuse a still-valid cached ritual before scanning nearest game objects again.
+        GameObject* FindNearbySummoningRitual()
+        {
+            Player* bot = ai ? ai->GetBot() : nullptr;
+            if (!bot || !bot->IsInWorld() || !bot->IsAlive())
+            {
+                ritualGameObject.Clear();
+                return nullptr;
+            }
+
+            AiObjectContext* context = ai->GetAiObjectContext();
+            if (!context)
+            {
+                ritualGameObject.Clear();
+                return nullptr;
+            }
+
+            if (!ai->HasActivePlayerMaster() ||
+                !bot->GetGroup() ||
+                bot->IsBeingTeleported() ||
+                bot->IsTaxiFlying() ||
+                bot->hasUnitState(UNIT_STAT_CAN_NOT_REACT_OR_LOST_CONTROL) ||
+                bot->IsNonMeleeSpellCasted(false, false, true) ||
+                sServerFacade.IsInCombat(bot))
+            {
+                ritualGameObject.Clear();
+                return nullptr;
+            }
+
+            if (!ritualGameObject.IsEmpty())
+            {
+                GameObject* cachedGo = ai->GetGameObject(ritualGameObject);
+                if (IsValidSummoningRitual(ai, cachedGo))
+                    return cachedGo;
+
+                ritualGameObject.Clear();
+            }
+
+            GameObject* bestGo = nullptr;
+            float bestDistance = GetMaxAssistRange() + 1.0f;
+            for (const ObjectGuid& guid : context->GetValue<std::list<ObjectGuid> >("nearest game objects no los")->Get())
+            {
+                GameObject* go = ai->GetGameObject(guid);
+                if (!IsValidSummoningRitual(ai, go))
+                    continue;
+
+                float distance = bot->GetDistance(go);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    bestGo = go;
+                }
+            }
+
+            ritualGameObject = bestGo ? bestGo->GetObjectGuid() : ObjectGuid();
+            return bestGo;
+        }
+
+        static bool IsValidSummoningRitual(PlayerbotAI* ai, GameObject* go)
+        {
+            Player* bot = ai ? ai->GetBot() : nullptr;
+            if (!bot || !go || !sServerFacade.isSpawned(go))
+                return false;
+
+            GameObjectInfo const* info = go->GetGOInfo();
+            if (!info || info->type != GAMEOBJECT_TYPE_SUMMONING_RITUAL)
+                return false;
+
+            if (bot->GetMapId() != go->GetMapId() ||
+                bot->GetInstanceId() != go->GetInstanceId() ||
+                bot->GetDistance(go) > GetMaxAssistRange() ||
+                go->IsInUse() ||
+                go->GetGoState() != GO_STATE_READY ||
+                go->HasUniqueUser(bot))
+                return false;
+
+            Unit* owner = go->GetOwner();
+            if (!owner || owner->GetTypeId() != TYPEID_PLAYER)
+                return false;
+
+            Player* ownerPlayer = static_cast<Player*>(owner);
+            if (!ownerPlayer ||
+                ownerPlayer == bot ||
+                !ownerPlayer->IsAlive() ||
+                ownerPlayer->IsBeingTeleported() ||
+                ownerPlayer->IsTaxiFlying() ||
+                sServerFacade.IsInCombat(ownerPlayer) ||
+                !ownerPlayer->IsInSameRaidWith(bot))
+                return false;
+
+            Spell* ownerSpell = ownerPlayer->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+            if (!ownerSpell || ownerSpell->GetGOTarget() != go)
+                return false;
+
+            if (go->GetEntry() == 36727)
+            {
+                ObjectGuid summonTargetGuid = go->getSummonTarget();
+                if (!summonTargetGuid || !summonTargetGuid.IsPlayer())
+                    return false;
+
+                Player* summonTarget = sObjectMgr.GetPlayer(summonTargetGuid);
+                if (!summonTarget ||
+                    summonTarget == bot ||
+                    summonTarget == ownerPlayer ||
+                    !summonTarget->IsInSameRaidWith(ownerPlayer))
+                    return false;
+            }
+
+            return true;
+        }
+    };
+
     class ChatCommandAction : public Action
     {
     public:

@@ -69,7 +69,8 @@ void WorldPacketHandlerStrategy::InitNonCombatTriggers(std::list<TriggerNode*> &
     triggers.push_back(new TriggerNode(
         "gossip hello",
         NextAction::array(0,
-            new NextAction("trainer", relevance), NULL)));
+            new NextAction("trainer", relevance),
+            new NextAction("master gossip maintenance", relevance - 0.1f), NULL)));
 
     triggers.push_back(new TriggerNode(
         "activate taxi",
