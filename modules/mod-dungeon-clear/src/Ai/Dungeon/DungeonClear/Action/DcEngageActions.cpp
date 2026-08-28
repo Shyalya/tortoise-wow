@@ -3,6 +3,7 @@
  * and/or modify it under version 3 of the License, or (at your option), any later version.
  */
 
+#include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "DungeonClearActions.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEncounterMask.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
@@ -1428,7 +1429,37 @@ bool DungeonClearEngageActionBase::DriveDropInHole(EventStep const& step)
     // Already down on the deep floor -> hand back. The caller drops through to
     // Drive, whose RunStep gate pulls the stranded followers and latches Done.
     if (DungeonEventExecutor::IsOnDropLanding(bot, step))
+    {
+        // ...but put the bot ON THE MESH first. MoveFall finds the floor
+        // through GetHeight(vmap), i.e. the collision data, and at the bottom
+        // of this shaft that floor sits about three yards ABOVE the navmesh.
+        // The party then stands somewhere physically correct and yet beside
+        // the map its routes are built on: live, four members parked on the
+        // landing point for minutes while the log showed splines being issued
+        // and accepted ("15 pts, issued=1, moving=1", no refusals) and the bot
+        // covering less than half a yard per five ticks.
+        //
+        // Same x/y, a few yards down: nobody advances, no ground is skipped -
+        // the bot is simply moved to where the pathfinder already thinks it
+        // is. The altitude rescue in the run supervisor does the same thing
+        // for the same reason.
+        if (Map* landMap = bot->FindMap())
+        {
+            NavmeshSnap::Result const onMesh = NavmeshSnap::SnapColumn(
+                landMap, bot->GetPositionX(), bot->GetPositionY(),
+                bot->GetPositionZ(), /*halfHeight*/ 25.0f, /*radius*/ 6.0f);
+            if (onMesh.ok && std::fabs(onMesh.z - bot->GetPositionZ()) > 1.0f)
+            {
+                LOG_INFO("playerbots.dungeonclear",
+                         "[dungeon-clear] {} landed {}y off the navmesh -> snapped onto it",
+                         bot->GetName(), int(bot->GetPositionZ() - onMesh.z));
+                bot->GetMotionMaster()->Clear();
+                bot->NearTeleportTo(onMesh.x, onMesh.y, onMesh.z, bot->GetOrientation(),
+                                    /*casting*/ false, /*vehicle*/ false, /*withPet*/ true);
+            }
+        }
         return false;
+    }
 
     MotionMaster* mm = bot->GetMotionMaster();
 

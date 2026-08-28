@@ -5,6 +5,10 @@
 #include <cctype>
 #include <locale>
 
+#if defined(_MSC_VER) || defined(_WIN32)
+#define strtok_r strtok_s
+#endif
+
 void split(std::vector<std::string>& dest, const std::string& str, const char* delim)
 {
     // strtok_r for the same reason as ChatHandler::ExtractLiteralArg: strtok's

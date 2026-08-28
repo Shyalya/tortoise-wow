@@ -17,6 +17,21 @@ Unit* PartyMemberValue::FindPartyMember(std::list<Player*>* party, FindPlayerPre
         if (!player)
             continue;
 
+        // SAME MAP ONLY, and check it first. Everything below reads the other
+        // bot's AI - IsTank and the predicates go through
+        // Engine::ContainsStrategy - which is only safe while that bot is
+        // updated on the map thread we are running on. A member that has left
+        // the instance (strays end up out in Elwynn) is updated by a different
+        // thread, and the read then races its own ChangeStrategy, tearing the
+        // strategy map apart: SIGABRT in NextAction::clone, and in
+        // _Rb_tree_rebalance_for_erase.
+        //
+        // It is the right answer on its own terms too - there is no healing or
+        // assisting across map boundaries, so such a member cannot be the
+        // answer to any party question anyway.
+        if (!player->FindMap() || player->FindMap() != bot->FindMap())
+            continue;
+
         if (ignoreTanks && ai->IsTank(player))
             continue;
 

@@ -1476,6 +1476,7 @@ void World::LoadConfigSettingsFromFile(bool reload)
 
     setConfig(CONFIG_BOOL_ITEM_LOG_RESTORE_QUEST_ITEMS, "ItemRestoreLog.QuestItems", false);
     setConfig(CONFIG_BOOL_LOAD_LOCALES, "LoadLocales", true);
+    setConfig(CONFIG_BOOL_LOAD_SPELLS_FROM_SQL, "LoadSpellsFromSql", false);
 
     setConfig(CONFIG_BOOL_ENABLE_FACTION_BALANCE, "FactionBalance.Enable", false);
     setConfig(CONFIG_BOOL_BLOCK_ALL_HANZI, "Hanzi.BlockAll", false);
@@ -1959,6 +1960,19 @@ void LoadPlayerEggLoot();
 
     CheckEggExploit();
 
+    if (getConfig(CONFIG_BOOL_LOAD_SPELLS_FROM_SQL))
+    {
+        sLog.outString("Loading spells from `spell_template`...");
+        sSpellMgr.LoadSpellsFromSpellTemplate();
+    }
+    else
+    {
+        sLog.outString("Loading Spell.dbc...");
+        LoadSpellDBCStore(m_dataPath);
+        sLog.outString("Loading spells...");
+        sSpellMgr.LoadSpells();
+    }
+
     ///- Loads existing IDs in the database.
     sLog.outString("Loading existing IDs in the database...");
     sObjectMgr.LoadAllIdentifiers();
@@ -1984,8 +1998,17 @@ void LoadPlayerEggLoot();
     sObjectMgr.LoadChatChannels();
     sLog.outString("Loading script names...");
     sScriptMgr.LoadScriptNames();
-    sLog.outString("Loading spells...");
-    sSpellMgr.LoadSpells();
+    // No LoadSpells() here any more: spell loading moved into the
+    // LoadSpellsFromSql switch further up (CONFIG_BOOL_LOAD_SPELLS_FROM_SQL).
+    // Calling it here as well would load them a second time.
+    //
+    // CAUTION before flipping that switch: its DBC branch calls
+    // LoadSpellDBCStore() from up there, which in OUR tree runs BEFORE
+    // LoadDBCStores() below - upstream has those two the other way round,
+    // because this startup order was reworked here (see the notes further
+    // down about what has to run after LoadDBCStores). With
+    // LoadSpellsFromSql = 1 the DBC branch never runs and the difference is
+    // dormant; it has to be settled before switching to DBC loading.
     sLog.outString("Loading factions...");
     sObjectMgr.LoadFactions();
     sLog.outString("Loading sounds...");

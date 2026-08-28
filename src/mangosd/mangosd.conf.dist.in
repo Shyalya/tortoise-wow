@@ -654,6 +654,12 @@ DBC.Locale = 255
 
 LoadLocales = 1
 
+# LoadSpellsFromSql
+#    Load spell data from the world database `spell_template` table instead of Spell.dbc. Mostly here for future developers iterating on this project
+#    Default: 0 - False
+
+LoadSpellsFromSql = 0
+
 # StrictPlayerNames. Limit player name to language specific symbols set, not allow create characters, 
 # and set rename request and disconnect at not allowed symbols name.
 

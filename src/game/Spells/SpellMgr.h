@@ -720,6 +720,8 @@ class SpellMgr
 
         // SpellEntry
         void LoadSpells();
+        void LoadSpellExtra();
+        void LoadSpellsFromSpellTemplate();
         void AssignInternalSpellFlags();
         SpellEntry const* GetSpellEntry(uint32 spellId) const { return spellId < GetMaxSpellId() ? mSpellEntryMap[spellId].get() : nullptr; }
         uint32 GetMaxSpellId() const { return mSpellEntryMap.size(); }

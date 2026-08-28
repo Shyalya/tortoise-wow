@@ -76,6 +76,7 @@ DBCStorage <SkillTiersEntry> sSkillTiersStore(SkillTiersfmt);
 SkillRaceClassInfoMap SkillRaceClassInfoBySkill;
 
 DBCStorage <SpellItemEnchantmentEntry> sSpellItemEnchantmentStore(SpellItemEnchantmentfmt);
+DBCStorage <SpellDbcEntry> sSpellStore(Spellfmt);
 DBCStorage <SpellCategoryEntry> sSpellCategoryStore(SpellCategoryfmt);
 
 SpellCategoriesStore sSpellCategoriesStore;
@@ -178,6 +179,25 @@ inline void LoadDBC(uint32& availableDbcLocales, StoreProblemList& errlist, DBCS
         else
             errlist.push_back(dbc_filename);
     }
+}
+
+void LoadSpellDBCStore(std::string const& dataPath)
+{
+    // SpellMgr must be populated before ObjectMgr loads identifiers.
+    std::string const dbcPath = dataPath + "dbc/";
+    StoreProblemList badDbcFiles;
+    uint32 availableDbcLocales = 0xFFFFFFFF;
+
+    LoadDBC(availableDbcLocales, badDbcFiles, sSpellStore, dbcPath, "Spell.dbc");
+    if (badDbcFiles.empty())
+        return;
+
+    sLog.outError(
+        "\nSpell.dbc is required when LoadSpellsFromSql is disabled. "
+        "The file is missing or incompatible:\n%s",
+        badDbcFiles.front().c_str());
+    Log::WaitBeforeContinueIfNeed();
+    exit(1);
 }
 
 void LoadDBCStores(std::string const& dataPath)

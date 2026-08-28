@@ -3065,18 +3065,9 @@ void SpellMgr::LoadExistingSpellIds()
 {
     mExistingSpellsSet.clear();
 
-    Field* fields;
-    std::unique_ptr<QueryResult> result(WorldDatabase.Query("SELECT DISTINCT `entry` FROM `spell_template`"));
-
-    if (result)
-    {
-        do
-        {
-            fields = result->Fetch();
-            uint32 id = fields[0].GetUInt32();
+    for (uint32 id = 0; id < GetMaxSpellId(); ++id)
+        if (GetSpellEntry(id))
             mExistingSpellsSet.insert(id);
-        } while (result->NextRow());
-    }
 }
 
 namespace SpellInternal
@@ -3374,7 +3365,149 @@ void ParseTooltip(SpellEntry* entry)
 
 void SpellMgr::LoadSpells()
 {
-    uint32 oldMSTime = WorldTimer::getMSTime();
+    mSpellEntryMap.clear();
+    mSpellEntryMap.resize(sSpellStore.GetNumRows());
+
+    for (uint32 spellId = 0; spellId < sSpellStore.GetNumRows(); ++spellId)
+    {
+        SpellDbcEntry const* dbcSpell = sSpellStore.LookupEntry(spellId);
+        if (!dbcSpell)
+            continue;
+
+        std::unique_ptr<SpellEntry> spell = std::make_unique<SpellEntry>();
+        spell->Id = dbcSpell->ID;
+        spell->School = dbcSpell->School;
+        spell->Category = dbcSpell->Category;
+        spell->Dispel = dbcSpell->Dispel;
+        spell->Mechanic = dbcSpell->Mechanic;
+        spell->Attributes = dbcSpell->Attributes;
+        spell->AttributesEx = dbcSpell->AttributesEx;
+        spell->AttributesEx2 = dbcSpell->AttributesEx2;
+        spell->AttributesEx3 = dbcSpell->AttributesEx3;
+        spell->AttributesEx4 = dbcSpell->AttributesEx4;
+        spell->Stances = dbcSpell->Stances;
+        spell->StancesNot = dbcSpell->StancesNot;
+        spell->Targets = dbcSpell->Targets;
+        spell->TargetCreatureType = dbcSpell->TargetCreatureType;
+        spell->RequiresSpellFocus = dbcSpell->RequiresSpellFocus;
+        spell->CasterAuraState = dbcSpell->CasterAuraState;
+        spell->TargetAuraState = dbcSpell->TargetAuraState;
+        spell->CastingTimeIndex = dbcSpell->CastingTimeIndex;
+        spell->RecoveryTime = dbcSpell->RecoveryTime;
+        spell->CategoryRecoveryTime = dbcSpell->CategoryRecoveryTime;
+        spell->InterruptFlags = dbcSpell->InterruptFlags;
+        spell->AuraInterruptFlags = dbcSpell->AuraInterruptFlags;
+        spell->ChannelInterruptFlags = dbcSpell->ChannelInterruptFlags;
+        spell->procFlags = dbcSpell->ProcFlags;
+        spell->procChance = dbcSpell->ProcChance;
+        spell->procCharges = dbcSpell->ProcCharges;
+        spell->maxLevel = dbcSpell->MaxLevel;
+        spell->baseLevel = dbcSpell->BaseLevel;
+        spell->spellLevel = dbcSpell->SpellLevel;
+        spell->DurationIndex = dbcSpell->DurationIndex;
+        spell->powerType = dbcSpell->PowerType;
+        spell->manaCost = dbcSpell->ManaCost;
+        spell->manaCostPerlevel = dbcSpell->ManaCostPerLevel;
+        spell->manaPerSecond = dbcSpell->ManaPerSecond;
+        spell->manaPerSecondPerLevel = dbcSpell->ManaPerSecondPerLevel;
+        spell->rangeIndex = dbcSpell->RangeIndex;
+        spell->speed = dbcSpell->Speed;
+        spell->StackAmount = dbcSpell->StackAmount;
+        spell->EquippedItemClass = dbcSpell->EquippedItemClass;
+        spell->EquippedItemSubClassMask = dbcSpell->EquippedItemSubclass;
+        spell->EquippedItemInventoryTypeMask = dbcSpell->EquippedItemInvType;
+        spell->SpellVisual = dbcSpell->SpellVisualID[0];
+        spell->SpellIconID = dbcSpell->SpellIconID;
+        spell->activeIconID = dbcSpell->ActiveIconID;
+        spell->spellPriority = dbcSpell->SpellPriority;
+        spell->ManaCostPercentage = dbcSpell->ManaCostPercentage;
+        spell->StartRecoveryCategory = dbcSpell->StartRecoveryCategory;
+        spell->StartRecoveryTime = dbcSpell->StartRecoveryTime;
+        spell->MaxTargetLevel = dbcSpell->MaxTargetLevel;
+        spell->SpellFamilyName = dbcSpell->SpellFamilyName;
+        spell->SpellFamilyFlags = uint64(dbcSpell->SpellFamilyFlags[0]) |
+            (uint64(dbcSpell->SpellFamilyFlags[1]) << 32);
+        spell->MaxAffectedTargets = dbcSpell->MaxAffectedTargets;
+        spell->DmgClass = dbcSpell->DmgClass;
+        spell->PreventionType = dbcSpell->PreventionType;
+
+        std::copy(std::begin(dbcSpell->Totem), std::end(dbcSpell->Totem), std::begin(spell->Totem));
+        std::copy(std::begin(dbcSpell->Reagent), std::end(dbcSpell->Reagent), std::begin(spell->Reagent));
+        std::copy(std::begin(dbcSpell->ReagentCount), std::end(dbcSpell->ReagentCount), std::begin(spell->ReagentCount));
+        std::copy(std::begin(dbcSpell->Effect), std::end(dbcSpell->Effect), std::begin(spell->Effect));
+        std::copy(std::begin(dbcSpell->EffectDieSides), std::end(dbcSpell->EffectDieSides), std::begin(spell->EffectDieSides));
+        std::copy(std::begin(dbcSpell->EffectBaseDice), std::end(dbcSpell->EffectBaseDice), std::begin(spell->EffectBaseDice));
+        std::copy(std::begin(dbcSpell->EffectDicePerLevel), std::end(dbcSpell->EffectDicePerLevel), std::begin(spell->EffectDicePerLevel));
+        std::copy(std::begin(dbcSpell->EffectRealPointsPerLevel), std::end(dbcSpell->EffectRealPointsPerLevel), std::begin(spell->EffectRealPointsPerLevel));
+        std::copy(std::begin(dbcSpell->EffectBasePoints), std::end(dbcSpell->EffectBasePoints), std::begin(spell->EffectBasePoints));
+        std::copy(std::begin(dbcSpell->EffectMechanic), std::end(dbcSpell->EffectMechanic), std::begin(spell->EffectMechanic));
+        std::copy(std::begin(dbcSpell->ImplicitTargetA), std::end(dbcSpell->ImplicitTargetA), std::begin(spell->EffectImplicitTargetA));
+        std::copy(std::begin(dbcSpell->ImplicitTargetB), std::end(dbcSpell->ImplicitTargetB), std::begin(spell->EffectImplicitTargetB));
+        std::copy(std::begin(dbcSpell->EffectRadiusIndex), std::end(dbcSpell->EffectRadiusIndex), std::begin(spell->EffectRadiusIndex));
+        std::copy(std::begin(dbcSpell->EffectAura), std::end(dbcSpell->EffectAura), std::begin(spell->EffectApplyAuraName));
+        std::copy(std::begin(dbcSpell->EffectAmplitude), std::end(dbcSpell->EffectAmplitude), std::begin(spell->EffectAmplitude));
+        std::copy(std::begin(dbcSpell->EffectMultipleValue), std::end(dbcSpell->EffectMultipleValue), std::begin(spell->EffectMultipleValue));
+        std::copy(std::begin(dbcSpell->EffectChainTarget), std::end(dbcSpell->EffectChainTarget), std::begin(spell->EffectChainTarget));
+        std::copy(std::begin(dbcSpell->EffectItemType), std::end(dbcSpell->EffectItemType), std::begin(spell->EffectItemType));
+        std::copy(std::begin(dbcSpell->EffectMiscValue), std::end(dbcSpell->EffectMiscValue), std::begin(spell->EffectMiscValue));
+        std::copy(std::begin(dbcSpell->EffectTriggerSpell), std::end(dbcSpell->EffectTriggerSpell), std::begin(spell->EffectTriggerSpell));
+        std::copy(std::begin(dbcSpell->EffectPointsPerCombo), std::end(dbcSpell->EffectPointsPerCombo), std::begin(spell->EffectPointsPerComboPoint));
+        std::copy(std::begin(dbcSpell->DmgMultiplier), std::end(dbcSpell->DmgMultiplier), std::begin(spell->DmgMultiplier));
+        std::fill(std::begin(spell->EffectBonusCoefficient), std::end(spell->EffectBonusCoefficient), -1.0f);
+
+        for (uint32 locale = 0; locale < MAX_DBC_LOCALE; ++locale)
+        {
+            spell->SpellName[locale] = dbcSpell->Name[locale];
+            spell->Rank[locale] = dbcSpell->NameSubtext[locale];
+            spell->ToolTip[locale] = dbcSpell->AuraDescription[locale];
+        }
+
+        ParseTooltip(spell.get());
+        spell->InitCachedValues();
+        mSpellEntryMap[spellId] = std::move(spell);
+    }
+
+    LoadSpellExtra();
+}
+
+void SpellMgr::LoadSpellExtra()
+{
+    std::unique_ptr<QueryResult> result(WorldDatabase.Query(
+        "SELECT `entry`, `effectBonusCoefficient1`, `effectBonusCoefficient2`, "
+        "`effectBonusCoefficient3`, `minTargetLevel`, `customFlags` FROM `spell_extra`"));
+
+    if (!result)
+    {
+        sLog.outString("Loaded 0 spell extra records.");
+        return;
+    }
+
+    uint32 count = 0;
+    do
+    {
+        Field* fields = result->Fetch();
+        uint32 const spellId = fields[0].GetUInt32();
+        SpellEntry* spell = spellId < mSpellEntryMap.size() ? mSpellEntryMap[spellId].get() : nullptr;
+        if (!spell)
+        {
+            sLog.outErrorDb("Table `spell_extra` has data for nonexistent spell (Id: %u), ignoring.", spellId);
+            continue;
+        }
+
+        spell->EffectBonusCoefficient[0] = fields[1].GetFloat();
+        spell->EffectBonusCoefficient[1] = fields[2].GetFloat();
+        spell->EffectBonusCoefficient[2] = fields[3].GetFloat();
+        spell->MinTargetLevel = fields[4].GetUInt32();
+        spell->Custom = fields[5].GetUInt32();
+        ++count;
+    } while (result->NextRow());
+
+    sLog.outString("Loaded %u spell extra records.", count);
+}
+
+void SpellMgr::LoadSpellsFromSpellTemplate()
+{
+    mSpellEntryMap.clear();
 
     // Getting the maximum ID.
     std::unique_ptr<QueryResult> result(WorldDatabase.Query("SELECT MAX(`entry`) FROM `spell_template`"));

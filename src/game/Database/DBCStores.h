@@ -87,6 +87,7 @@ extern DBCStorage <SpellCastTimesEntry>          sSpellCastTimesStore;
 extern DBCStorage <SpellDurationEntry>           sSpellDurationStore;
 extern DBCStorage <SpellFocusObjectEntry>        sSpellFocusObjectStore;
 extern DBCStorage <SpellItemEnchantmentEntry>    sSpellItemEnchantmentStore;
+extern DBCStorage <SpellDbcEntry>                sSpellStore;
 extern DBCStorage <SpellCategoryEntry>           sSpellCategoryStore;
 extern SpellCategoriesStore                      sSpellCategoriesStore;
 extern PetFamilySpellsStore                      sPetFamilySpellsStore;
@@ -108,6 +109,7 @@ extern DBCStorage <WMOAreaTableEntry>            sWMOAreaTableStore;
 extern DBCStorage <WorldSafeLocsEntry>           sWorldSafeLocsStore;
 
 void LoadDBCStores(std::string const& dataPath);
+void LoadSpellDBCStore(std::string const& dataPath);
 
 char const* GetRaceName(uint8 race, uint8 locale);
 char const* GetClassName(uint8 class_, uint8 locale);

@@ -61,6 +61,11 @@ const char SpellCastTimefmt[]="niii";
 const char SpellDurationfmt[]="niii";
 const char SpellFocusObjectfmt[]="nxxxxxxxxx";
 const char SpellItemEnchantmentfmt[]="niiiiiixxxiiissssssssxii";
+const char Spellfmt[] =
+    "niiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiifiiiiiiiiiiii"
+    "iiiiiiiiiiiiiiiiiiiiffffffiiiiiiiiiiiiiiiiiiiiifff"
+    "iiiiiiiiiiiifffiiiiissssssssissssssssissssssssisss"
+    "sssssiiiiiiiiiiiifffiii";
 const char SpellRadiusfmt[]="nfxx";
 const char SpellRangefmt[]="nffxxxxxxxxxxxxxxxxxxx";
 const char SpellShapeshiftfmt[]="nxxxxxxxxxxiix";

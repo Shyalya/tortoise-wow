@@ -42,6 +42,10 @@
 
 #include <vector>
 
+#if defined(_MSC_VER) || defined(_WIN32)
+#define strtok_r strtok_s
+#endif
+
 ChatCommand * ChatHandler::getCommandTable()
 {
 #ifdef USE_ANTICHEAT

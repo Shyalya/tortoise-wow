@@ -33,7 +33,13 @@ namespace
         static uint32 counter = 0;
         std::time_t const now = std::time(nullptr);
         std::tm tmBuf{};
+        // localtime_s nimmt (tm*, time_t*), localtime_r (time_t*, tm*) - die
+        // Reihenfolge ist vertauscht, ein #define-Alias waere hier falsch.
+#if defined(_MSC_VER)
+        localtime_s(&tmBuf, &now);
+#else
         localtime_r(&now, &tmBuf);
+#endif
         char buf[32];
         std::strftime(buf, sizeof(buf), "tp-%Y%m%d-%H%M%S", &tmBuf);
         return std::string(buf) + "-" + std::to_string(++counter);

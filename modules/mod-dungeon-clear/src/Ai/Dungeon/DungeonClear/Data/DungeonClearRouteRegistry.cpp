@@ -8,7 +8,8 @@
 #include "Config.h"
 #include <cstdio>
 #include <fstream>
-#include <dirent.h>
+#include <filesystem>
+#include <system_error>
 
 #include "Ai/Dungeon/DungeonClear/Data/Events/DungeonEventTables.h"
 
@@ -27,14 +28,21 @@ static void LoadRecordedRoutesFromDisk()
         return;
 
     uint32 loaded = 0;
-    if (DIR* d = opendir(dir.c_str()))
+    // std::filesystem statt dirent.h: MSVC kennt dirent nicht, und der
+    // Iterator spart den manuellen Endungsvergleich samt closedir.
+    std::error_code ec;
+    std::filesystem::directory_iterator it(dir, ec), ende;
+    if (!ec)
     {
-        while (dirent* e = readdir(d))
+        for (; it != ende; it.increment(ec))
         {
-            std::string const name = e->d_name;
-            if (name.size() < 7 || name.compare(name.size() - 6, 6, ".route") != 0)
+            if (ec)
+                break;
+            if (!it->is_regular_file(ec) || ec)
                 continue;
-            std::ifstream in((dir + "/" + name).c_str());
+            if (it->path().extension() != ".route")
+                continue;
+            std::ifstream in(it->path());
             if (!in.is_open())
                 continue;
             std::string header;
@@ -53,7 +61,6 @@ static void LoadRecordedRoutesFromDisk()
                 ++loaded;
             }
         }
-        closedir(d);
     }
     if (loaded)
         LOG_INFO("playerbots.dungeonclear",

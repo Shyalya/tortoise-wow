@@ -68,7 +68,39 @@ CHECKS = [
         "POSIX function absent from the MSVC CRT (MSVC spells these _stricmp,\n"
         "    _strnicmp, _getpid, ...). Use the core's portable helper.",
     ),
+    (
+        re.compile(r"\b(localtime_r|gmtime_r|ctime_r|asctime_r)\s*\("),
+        "POSIX reentrant time function; MSVC has localtime_s / gmtime_s.\n"
+        "    WARNING: the _s forms take (tm*, time_t*) - arguments reversed\n"
+        "    against the _r forms. A #define alias compiles and then silently\n"
+        "    does the wrong thing. Guard on _MSC_VER and swap the arguments.",
+    ),
+    (
+        re.compile(r"\bstrtok_r\s*\("),
+        "POSIX strtok_r; MSVC spells it strtok_s. Signatures match here, so\n"
+        "    a guarded #define is safe - see src/game/Chat/Chat.cpp.",
+    ),
 ]
+
+
+def in_compiler_guard(code, pos, lookback=12):
+    """True, wenn der Treffer in einem _MSC_VER/_WIN32-Zweig steht.
+
+    Ein bewusst abgesicherter Aufruf ist kein Portabilitaetsproblem - im
+    Gegenteil, er ist die Loesung. Gemeldet wuerde er trotzdem, und eine Regel,
+    die richtigen Code anmeckert, schaltet man irgendwann ab.
+
+    Heuristik statt echtem Praeprozessor: die Zeilen ueber dem Treffer
+    rueckwaerts lesen. Ein _MSC_VER oder _WIN32 schuetzt, ein #endif davor
+    beendet den Zweig und schuetzt nicht mehr.
+    """
+    zeilen = code[:pos].split("\n")
+    for zeile in reversed(zeilen[-lookback:]):
+        if "#endif" in zeile:
+            return False
+        if "_MSC_VER" in zeile or "_WIN32" in zeile:
+            return True
+    return False
 
 
 def strip_comments_and_strings(text):
@@ -130,6 +162,8 @@ def main():
             code = strip_comments_and_strings(path.read_text(encoding="utf-8", errors="replace"))
             for pattern, explanation in CHECKS:
                 for match in pattern.finditer(code):
+                    if in_compiler_guard(code, match.start()):
+                        continue
                     line = code.count("\n", 0, match.start()) + 1
                     errors.append(f"{rel}:{line}: `{match.group(0)}`\n    {explanation}")
 

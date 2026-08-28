@@ -9752,6 +9752,24 @@ CREATE TABLE `spell_effect_mod` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `spell_extra`
+--
+
+DROP TABLE IF EXISTS `spell_extra`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `spell_extra` (
+  `entry` int(10) unsigned NOT NULL DEFAULT 0,
+  `effectBonusCoefficient1` float NOT NULL DEFAULT -1,
+  `effectBonusCoefficient2` float NOT NULL DEFAULT -1,
+  `effectBonusCoefficient3` float NOT NULL DEFAULT -1,
+  `minTargetLevel` int(10) unsigned NOT NULL DEFAULT 0,
+  `customFlags` int(10) unsigned NOT NULL DEFAULT 0,
+  PRIMARY KEY (`entry`) USING BTREE
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci ROW_FORMAT=FIXED COMMENT='Server-only Spell.dbc fields';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `spell_elixir`
 --
 
