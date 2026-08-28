@@ -14,6 +14,7 @@ namespace
     constexpr uint32 kCastDurationMs = 5000;
     constexpr uint32 kSkipDurationMs = 8000;
     constexpr uint32 kLeaseMemoryDurationMs = kSkipDurationMs;
+    constexpr uint32 kInactiveSweepIntervalMs = 5000;
     constexpr uint8 kMaxFailedStarts = 3;
     // Bound: same owner+target may fail to start CC at most 3 times per 8s
     // lease-memory window, then is skipped 8s. Selection is a hard 3s lease
@@ -53,9 +54,20 @@ namespace
         uint32 durationMs = 0;
     };
 
+    // World-thread only (World::UpdatePlayerbotsTick / PlayerbotAI::UpdateAI).
+    // These tables are not synchronized.
     std::unordered_map<uint32, std::vector<CcClaim>> claimsByGroup;
     std::unordered_map<uint32, std::vector<CcSkip>> skipsByGroup;
     std::unordered_map<uint32, std::vector<CcLeaseMemory>> memoryByGroup;
+
+    // Per-access Prune only expires the caller's group. Inactive group IDs are
+    // reaped every kInactiveSweepIntervalMs (wrap-safe) so disbanded groups
+    // cannot retain keys. The interval is the amortization: maps are not
+    // scanned on every bot tick. inInactiveSweep blocks nested Prune/sweep
+    // while claim expiry may insert/erase skip and memory keys.
+    uint32 lastInactiveSweepMs = 0;
+    bool hasInactiveSweepMs = false;
+    bool inInactiveSweep = false;
 
     bool IsTimedOut(uint32 startMs, uint32 durationMs)
     {
@@ -146,9 +158,8 @@ namespace
         memoryByGroup[groupId].push_back(memory);
     }
 
-    void Prune(uint32 groupId)
+    void PruneExpiredClaims(uint32 groupId, std::vector<CcClaim>& claims)
     {
-        std::vector<CcClaim>& claims = claimsByGroup[groupId];
         for (std::vector<CcClaim>::iterator it = claims.begin(); it != claims.end();)
         {
             if (IsTimedOut(it->startMs, it->durationMs))
@@ -170,11 +181,10 @@ namespace
             else
                 ++it;
         }
+    }
 
-        if (claims.empty())
-            claimsByGroup.erase(groupId);
-
-        std::vector<CcSkip>& skips = skipsByGroup[groupId];
+    void PruneExpiredSkips(std::vector<CcSkip>& skips)
+    {
         for (std::vector<CcSkip>::iterator it = skips.begin(); it != skips.end();)
         {
             if (IsTimedOut(it->startMs, it->durationMs))
@@ -182,25 +192,119 @@ namespace
             else
                 ++it;
         }
+    }
 
-        if (skips.empty())
-            skipsByGroup.erase(groupId);
+    void PruneExpiredMemory(std::vector<CcLeaseMemory>& memories)
+    {
+        for (std::vector<CcLeaseMemory>::iterator it = memories.begin(); it != memories.end();)
+        {
+            if (IsTimedOut(it->startMs, it->durationMs))
+                it = memories.erase(it);
+            else
+                ++it;
+        }
+    }
+
+    // Interval-gated. Must not call Prune: nested prune can erase the key
+    // currently being iterated. AddSkip/RememberLease/ClearMemory may insert
+    // or erase skipsByGroup and memoryByGroup; those maps are walked only
+    // after claims finish, so those iterators stay valid. Claims run first
+    // so in-flight -> skip and selection -> lease memory happen before
+    // skip/memory expiry, matching per-group Prune. Empty keys are erased
+    // with the loop iterator; helpers never leave an empty vector behind.
+    void MaybeSweepInactiveGroups()
+    {
+        if (inInactiveSweep)
+            return;
+
+        uint32 now = WorldTimer::getMSTime();
+        if (!hasInactiveSweepMs)
+        {
+            hasInactiveSweepMs = true;
+            lastInactiveSweepMs = now;
+            return;
+        }
+
+        if (WorldTimer::getMSTimeDiff(lastInactiveSweepMs, now) < kInactiveSweepIntervalMs)
+            return;
+
+        lastInactiveSweepMs = now;
+        inInactiveSweep = true;
+
+        for (std::unordered_map<uint32, std::vector<CcClaim>>::iterator it = claimsByGroup.begin();
+             it != claimsByGroup.end();)
+        {
+            PruneExpiredClaims(it->first, it->second);
+            if (it->second.empty())
+                it = claimsByGroup.erase(it);
+            else
+                ++it;
+        }
+
+        for (std::unordered_map<uint32, std::vector<CcSkip>>::iterator it = skipsByGroup.begin();
+             it != skipsByGroup.end();)
+        {
+            PruneExpiredSkips(it->second);
+            if (it->second.empty())
+                it = skipsByGroup.erase(it);
+            else
+                ++it;
+        }
+
+        for (std::unordered_map<uint32, std::vector<CcLeaseMemory>>::iterator it = memoryByGroup.begin();
+             it != memoryByGroup.end();)
+        {
+            PruneExpiredMemory(it->second);
+            if (it->second.empty())
+                it = memoryByGroup.erase(it);
+            else
+                ++it;
+        }
+
+        inInactiveSweep = false;
+    }
+
+    void Prune(uint32 groupId)
+    {
+        MaybeSweepInactiveGroups();
+        if (inInactiveSweep)
+            return;
+
+        std::unordered_map<uint32, std::vector<CcClaim>>::iterator claimsGroup = claimsByGroup.find(groupId);
+        if (claimsGroup != claimsByGroup.end())
+        {
+            PruneExpiredClaims(groupId, claimsGroup->second);
+            if (claimsGroup->second.empty())
+                claimsByGroup.erase(claimsGroup);
+        }
+
+        std::unordered_map<uint32, std::vector<CcSkip>>::iterator skipsGroup = skipsByGroup.find(groupId);
+        if (skipsGroup != skipsByGroup.end())
+        {
+            PruneExpiredSkips(skipsGroup->second);
+            if (skipsGroup->second.empty())
+                skipsByGroup.erase(skipsGroup);
+        }
 
         std::unordered_map<uint32, std::vector<CcLeaseMemory>>::iterator memoryGroup = memoryByGroup.find(groupId);
         if (memoryGroup != memoryByGroup.end())
         {
-            std::vector<CcLeaseMemory>& memories = memoryGroup->second;
-            for (std::vector<CcLeaseMemory>::iterator it = memories.begin(); it != memories.end();)
-            {
-                if (IsTimedOut(it->startMs, it->durationMs))
-                    it = memories.erase(it);
-                else
-                    ++it;
-            }
-
-            if (memories.empty())
+            PruneExpiredMemory(memoryGroup->second);
+            if (memoryGroup->second.empty())
                 memoryByGroup.erase(memoryGroup);
         }
+    }
+
+    // Grouped callers prune their own group. Ungrouped callers still amortize
+    // the inactive sweep so disbanded IDs are reaped without a live group.
+    uint32 AccessGroupState(Player* bot)
+    {
+        uint32 groupId = GetGroupId(bot);
+        if (groupId)
+            Prune(groupId);
+        else
+            MaybeSweepInactiveGroups();
+        return groupId;
     }
 
     CcClaim* FindClaim(uint32 groupId, ObjectGuid targetGuid)
@@ -236,22 +340,20 @@ namespace
 
 bool GroupCcTargetReservation::IsClaimedByOther(Player* bot, ObjectGuid targetGuid)
 {
-    uint32 groupId = GetGroupId(bot);
+    uint32 groupId = AccessGroupState(bot);
     if (!groupId || targetGuid.IsEmpty())
         return false;
 
-    Prune(groupId);
     CcClaim* claim = FindClaim(groupId, targetGuid);
     return claim && claim->ownerGuid != bot->GetObjectGuid();
 }
 
 bool GroupCcTargetReservation::IsSkipped(Player* bot, ObjectGuid targetGuid)
 {
-    uint32 groupId = GetGroupId(bot);
+    uint32 groupId = AccessGroupState(bot);
     if (!groupId || targetGuid.IsEmpty())
         return false;
 
-    Prune(groupId);
     std::unordered_map<uint32, std::vector<CcSkip>>::iterator groupIt = skipsByGroup.find(groupId);
     if (groupIt == skipsByGroup.end())
         return false;
@@ -268,44 +370,40 @@ bool GroupCcTargetReservation::IsSkipped(Player* bot, ObjectGuid targetGuid)
 
 bool GroupCcTargetReservation::IsOwnedBy(Player* bot, ObjectGuid targetGuid)
 {
-    uint32 groupId = GetGroupId(bot);
+    uint32 groupId = AccessGroupState(bot);
     if (!groupId || targetGuid.IsEmpty())
         return false;
 
-    Prune(groupId);
     CcClaim* claim = FindClaim(groupId, targetGuid);
     return claim && claim->ownerGuid == bot->GetObjectGuid();
 }
 
 bool GroupCcTargetReservation::IsInFlight(Player* bot, ObjectGuid targetGuid)
 {
-    uint32 groupId = GetGroupId(bot);
+    uint32 groupId = AccessGroupState(bot);
     if (!groupId || targetGuid.IsEmpty())
         return false;
 
-    Prune(groupId);
     CcClaim* claim = FindClaim(groupId, targetGuid);
     return claim && claim->ownerGuid == bot->GetObjectGuid() && claim->inFlight;
 }
 
 ObjectGuid GroupCcTargetReservation::GetOwnedTarget(Player* bot)
 {
-    uint32 groupId = GetGroupId(bot);
+    uint32 groupId = AccessGroupState(bot);
     if (!groupId)
         return ObjectGuid();
 
-    Prune(groupId);
     CcClaim* claim = FindOwnedClaim(groupId, bot->GetObjectGuid());
     return claim ? claim->targetGuid : ObjectGuid();
 }
 
 void GroupCcTargetReservation::Claim(Player* bot, ObjectGuid targetGuid, bool reacquireAfterExpiry)
 {
-    uint32 groupId = GetGroupId(bot);
+    uint32 groupId = AccessGroupState(bot);
     if (!groupId || !bot || targetGuid.IsEmpty())
         return;
 
-    Prune(groupId);
     if (IsClaimedByOther(bot, targetGuid))
         return;
 
@@ -367,7 +465,8 @@ bool GroupCcTargetReservation::PrepareFallbackCast(PlayerbotAI* ai, Unit* target
         return false;
 
     // Ungrouped bots never participate in the fallback claim table.
-    if (!GetGroupId(bot))
+    // AccessGroupState still amortizes inactive-group expiry.
+    if (!AccessGroupState(bot))
         return true;
 
     Unit* rtiCcTarget = ai->GetAiObjectContext()->GetValue<Unit*>("rti cc target")->Get();
@@ -392,11 +491,10 @@ void GroupCcTargetReservation::RecordCast(Player* bot, Unit* target, bool castSt
     if (!bot || !target)
         return;
 
-    uint32 groupId = GetGroupId(bot);
+    uint32 groupId = AccessGroupState(bot);
     if (!groupId)
         return;
 
-    Prune(groupId);
     CcClaim* claim = FindClaim(groupId, target->GetObjectGuid());
     if (!claim || claim->ownerGuid != bot->GetObjectGuid())
         return;
@@ -433,14 +531,23 @@ void GroupCcTargetReservation::Release(Player* bot, ObjectGuid targetGuid)
 {
     uint32 groupId = GetGroupId(bot);
     if (!groupId || !bot || targetGuid.IsEmpty())
+    {
+        MaybeSweepInactiveGroups();
         return;
+    }
 
+    // Explicit drop must not run claim-expiry transitions on this target.
+    // Sweep after the erase so an interval hit cannot RememberLease/AddSkip
+    // a timed-out claim and then have ClearMemory wipe that result.
     ObjectGuid botGuid = bot->GetObjectGuid();
     ClearMemory(groupId, botGuid, targetGuid);
 
     std::unordered_map<uint32, std::vector<CcClaim>>::iterator groupIt = claimsByGroup.find(groupId);
     if (groupIt == claimsByGroup.end())
+    {
+        MaybeSweepInactiveGroups();
         return;
+    }
 
     std::vector<CcClaim>& claims = groupIt->second;
     for (std::vector<CcClaim>::iterator it = claims.begin(); it != claims.end(); ++it)
@@ -454,4 +561,6 @@ void GroupCcTargetReservation::Release(Player* bot, ObjectGuid targetGuid)
 
     if (claims.empty())
         claimsByGroup.erase(groupIt);
+
+    MaybeSweepInactiveGroups();
 }
