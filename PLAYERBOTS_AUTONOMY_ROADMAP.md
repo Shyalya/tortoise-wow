@@ -21,7 +21,7 @@ Upstream snapshots examined on 2026-08-27 were CMaNGOS PlayerBots
 `076045efa835da9aab7caa943bca752aebe1baad` and mod-playerbots
 `2f7d9f774987d0157c6a0d0cc08c40bec3db3945`.
 
-## Current branch implementation status (`cc6e2d7`…`ee6031c`)
+## Current branch implementation status
 
 The following P0 items are implemented in code on this branch. This is a source
 review only: none of the evaluation scenarios below have been runtime-validated
