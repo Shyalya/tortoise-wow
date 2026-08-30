@@ -206,6 +206,15 @@ namespace ai
             return created[name];
         }
 
+        // Look up an object without invoking its factory. This is intentionally
+        // separate from GetObject/Create so maintenance paths cannot create
+        // values merely because they want to invalidate one.
+        T* FindObject(const std::string& name)
+        {
+            typename std::map<std::string, T*>::iterator it = created.find(name);
+            return it == created.end() ? NULL : it->second;
+        }
+
         virtual ~NamedObjectContext()
         {
             Clear();
@@ -291,6 +300,16 @@ namespace ai
             for (typename std::list<NamedObjectContext<T>*>::iterator i = contexts.begin(); i != contexts.end(); i++)
             {
                 T* object = (*i)->Create(name, ai);
+                if (object) return object;
+            }
+            return NULL;
+        }
+
+        T* FindObject(const std::string& name)
+        {
+            for (typename std::list<NamedObjectContext<T>*>::iterator i = contexts.begin(); i != contexts.end(); i++)
+            {
+                T* object = (*i)->FindObject(name);
                 if (object) return object;
             }
             return NULL;

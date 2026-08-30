@@ -131,22 +131,58 @@ bool ReactionEngine::FindReaction(bool isStunned)
     return false;
 }
 
-bool ReactionEngine::StartReaction()
+bool ReactionEngine::StartReaction(bool minimal)
 {
+    // The action and its listeners may synchronously cause another AI update.
+    // Keep the selected reaction claimed for the whole start sequence so a
+    // nested update cannot execute it twice or fall through to the normal
+    // engine while the outer reaction is still being started.
+    if (reactionStartInProgress || !incomingReaction.IsValid())
+        return false;
+
+    reactionStartInProgress = true;
+
+    if (incomingReaction.ShouldInterruptCast())
+        ai->InterruptSpell();
+
+    if (incomingReaction.ShouldInterruptMovement())
+        ai->StopMoving();
+
     bool reactionExecuted = false;
-    if (incomingReaction.IsValid())
+    // Execute the incoming reaction.
+    reactionExecuted = ListenAndExecute(incomingReaction.GetAction(), incomingReaction.GetEvent());
+    if (reactionExecuted)
     {
-        // Execute the incoming reaction
-        reactionExecuted = ListenAndExecute(incomingReaction.GetAction(), incomingReaction.GetEvent());
-        if (reactionExecuted)
+        // Move the incoming reaction to the ongoing reaction
+        ongoingReaction = incomingReaction;
+    }
+
+    // Remove the incoming reaction
+    incomingReaction.Reset();
+
+    // Preserve the existing backoff when an attempted reaction fails.
+    // This is also needed when the reaction was selected and started by
+    // PlayerbotAI in the same update. Always use a non-zero delay so a
+    // failed reaction cannot be retried on every update when reactDelay is 0.
+    if (!reactionExecuted && !IsReacting())
+    {
+        uint32 retryDelay = sPlayerbotAIConfig.reactDelay;
+        if (!retryDelay)
+            retryDelay = 1U;
+
+        if (minimal)
         {
-            // Move the incoming reaction to the ongoing reaction
-            ongoingReaction = incomingReaction;
+            if (retryDelay > 0xFFFFFFFFU / 10U)
+                retryDelay = 0xFFFFFFFFU;
+            else
+                retryDelay *= 10U;
         }
 
-        // Remove the incoming reaction
-        incomingReaction.Reset();
+        if (aiReactionUpdateDelay < retryDelay)
+            aiReactionUpdateDelay = retryDelay;
     }
+
+    reactionStartInProgress = false;
 
     return reactionExecuted;
 }
@@ -165,7 +201,16 @@ bool ReactionEngine::Update(uint32 elapsed, bool minimal, bool isStunned, bool& 
     aiReactionUpdateDelay = aiReactionUpdateDelay > elapsed ? aiReactionUpdateDelay - elapsed : 0U;
 
     reactionFound = false;
+
+    // A listener, interruption hook, or action can synchronously re-enter the
+    // AI update. The outer reaction owns this update until its start sequence
+    // has completed; in particular, do not find or start another reaction and
+    // do not allow the normal engine to run from the nested update.
+    if (reactionStartInProgress)
+        return true;
+
     bool reactionFinished = false;
+    bool reactionAttempted = false;
 
     // Can update reaction?
     if (CanUpdateAIReaction())
@@ -186,7 +231,8 @@ bool ReactionEngine::Update(uint32 elapsed, bool minimal, bool isStunned, bool& 
             if (HasIncomingReaction())
             {
                 // Start the incoming reaction
-                StartReaction();
+                reactionAttempted = true;
+                StartReaction(minimal);
             }
             else
             {
@@ -206,8 +252,10 @@ bool ReactionEngine::Update(uint32 elapsed, bool minimal, bool isStunned, bool& 
         }
     }
 
-    // Return true if a reaction is pending or currently running
-    return HasIncomingReaction() || IsReacting();
+    // Return true if a reaction was attempted, is pending, or is currently
+    // running. An attempted reaction consumes this update even when its
+    // action fails, so the normal engine cannot run immediately afterward.
+    return reactionAttempted || HasIncomingReaction() || IsReacting();
 }
 
 bool ReactionEngine::ListenAndExecute(Action* action, Event& event)
