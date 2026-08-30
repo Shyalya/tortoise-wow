@@ -786,7 +786,8 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
 
     if (IsBetweenPullsReady(bot, context))
     {
-        appr.partyNotReadyTicks = 0;
+        appr.partyNotReadyTicks  = 0;
+        appr.partyYieldStartedMs = 0;
         return Step::Continue;
     }
 
@@ -827,6 +828,59 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
     // DIAG(vis): run 32's tank stood in THIS gate for whole route TTLs with
     // the limiting member named only on debug. First halt past the debounce
     // logs at info, then every ~20 ticks.
+    // --- the hold is now BOUNDED ------------------------------------------
+    // Past the debounce this used to be log / StopBot(Hold) / ReturnFalse with
+    // nothing to end it: partyNotReadyTicks counted up and the tank stood until
+    // the run froze at 420s. One member who never became ready cost the run.
+    // Ticks cannot bound it (the ladder has no fixed rate), so stamp a clock.
+    if (!appr.partyYieldStartedMs)
+        appr.partyYieldStartedMs = WorldTimer::getMSTime();
+    uint32 const heldMs =
+        WorldTimer::getMSTimeDiff(appr.partyYieldStartedMs, WorldTimer::getMSTime());
+
+    // B) SOMEBODY IS FIGHTING. Then this gate has no business holding: it is the
+    //    BETWEEN-pulls gate and we are not between pulls. Hand back to the
+    //    ladder and let relevance decide - AssistCamp (29) and LeaderAssist (24)
+    //    both outrank Advance (15), so the party joins the fight rather than
+    //    walking on, which is what the symmetry rule above wants anyway.
+    //    Deliberately broader than DcLeaderSignal::IsLeaderShouldAssistFight:
+    //    that one also demands the tank see no target of its own, which is the
+    //    right question for driving it into a fight and the wrong one for
+    //    whether standing still is defensible.
+    {
+        std::string who;
+        if (DcPartyState::IsAnyMemberInCombat(bot, &who))
+        {
+            if (appr.partyNotReadyTicks > DC_PARTY_YIELD_DEBOUNCE_TICKS + 1)
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC:{}] yield released after {}ms held: {} is in combat "
+                         "-> not between pulls, handing back to the ladder",
+                         bot->GetName(), heldMs, who);
+            appr.partyNotReadyTicks  = 0;
+            appr.partyYieldStartedMs = 0;
+            return Step::Continue;
+        }
+    }
+
+    // A) SAFETY NET. Nobody is fighting and the party still will not come ready.
+    //    Release once per budget instead of standing here until the freeze. The
+    //    clock restarts, so a party that stays unready pays the full budget
+    //    again before the next release - this reopens the travel window the
+    //    ratchet above closes, and once a minute is the price for not deadlocking.
+    if (heldMs >= DC_PARTY_YIELD_MAX_MS)
+    {
+        DcPartyState::SpreadGate const gate = DcPartyState::GetSpreadGate(bot, context);
+        DcPartyState::RestGate const rest = DcPartyState::GetRestGate(bot, context);
+        std::string const why = DcPartyState::DescribePartyNotReady(
+            bot, rest.minHp, rest.minMp, gate.maxSpread, gate.anchor, gate.maxTankGap);
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] yield budget spent after {}ms -> releasing once ({})",
+                 bot->GetName(), heldMs, why.empty() ? std::string("resting") : why);
+        appr.partyNotReadyTicks  = 0;
+        appr.partyYieldStartedMs = 0;
+        return Step::Continue;
+    }
+
     if (appr.partyNotReadyTicks == DC_PARTY_YIELD_DEBOUNCE_TICKS + 1 ||
         appr.partyNotReadyTicks % 20 == 0)
     {
@@ -836,8 +890,8 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::TryBetweenPullsRest(A
             bot, rest.minHp, rest.minMp,
             gate.maxSpread, gate.anchor, gate.maxTankGap);
         LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] advance yielding after {} ticks: party not ready / resting{}",
-                 bot->GetName(), appr.partyNotReadyTicks,
+                 "[DC:{}] advance yielding after {} ticks ({}ms held): party not ready / resting{}",
+                 bot->GetName(), appr.partyNotReadyTicks, heldMs,
                  why.empty() ? " (resting)" : (" — " + why));
     }
     DcMovement::StopBot(bot, DcMovement::Stop::Hold);
@@ -1217,11 +1271,18 @@ void DungeonClearAdvanceAction::FillPathObs(AdvanceState& st, DungeonClearApproa
     {
         st.offPathTicks = follower.offPathTicks;  // Resnap zeroes it; carry for the log
         if (!DungeonPathFollower::Resnap(bot, path, follower))
+        {
             obs.offPath = true;
+            // Carry the spend so the ladder can stop rung 4 once rebuilding has
+            // demonstrably failed to bring us back to the line.
+            obs.offPathRebuilds = appr.offPathRebuilds;
+        }
         else
             LOG_DEBUG("playerbots.dungeonclear",
                       "[DC:{}] off-path {} ticks -> Resnapped to seg {} pt {}",
                       bot->GetName(), st.offPathTicks, follower.segmentIdx, follower.pointIdx);
+            // Back on the line - an ordinary blip must not spend the rung-4 budget.
+            appr.offPathRebuilds = 0;
     }
 }
 
@@ -1325,9 +1386,11 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoOffPathRebuild(Adva
     DcApproachState& appr = *st.appr;
     DungeonFollowerState& follower = *st.follower;
 
+    ++appr.offPathRebuilds;
     LOG_INFO("playerbots.dungeonclear",
-             "[DC:{}] off-path {} ticks, Resnap FAILED (>{}yd) -> rebuild",
-             bot->GetName(), st.offPathTicks, DungeonPathFollower::RESNAP_RADIUS);
+             "[DC:{}] off-path {} ticks, Resnap FAILED (>{}yd) -> rebuild #{}",
+             bot->GetName(), st.offPathTicks, DungeonPathFollower::RESNAP_RADIUS,
+             appr.offPathRebuilds);
     SetPhase(context, "recovering");
     DcMovement::ResolveEscortConflict(bot);
     appr.longPathExpiresMs = 0;

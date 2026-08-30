@@ -182,6 +182,14 @@ public:
     // looting; the caller bounds the wait with a commit-timeout.
     static bool IsAnyPartyMemberLooting(Player* bot, std::string* whoOut = nullptr);
 
+    // True when ANY alive same-map groupmate (the bot itself included) is in
+    // combat. Broader on purpose than DcLeaderSignal::IsLeaderShouldAssistFight,
+    // which additionally demands the tank see no target of its own and no pull
+    // maneuver be holding: those extra guards are right for DRIVING the tank
+    // into a fight, but they are the wrong question for "may the between-pulls
+    // rest gate hold?". If anyone is swinging, we are not between pulls.
+    static bool IsAnyMemberInCombat(Player* bot, std::string* whoOut = nullptr);
+
     // Builds a short, human-readable account of who the tank is waiting on to
     // become pull-ready, using the SAME thresholds IsPartyReady is called with
     // (so the description always matches the gate that actually holds the

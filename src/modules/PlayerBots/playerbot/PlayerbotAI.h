@@ -699,6 +699,13 @@ public:
         this->master = m;
         this->masterGuid = m ? m->GetObjectGuid() : ObjectGuid();
     }
+
+    // Null `master` if the Player it points at is gone. Was an inline block at
+    // the top of UpdateAI; it is a method now because the TICK is not the only
+    // path that dereferences the pointer - the LOGOUT path does too, and that is
+    // exactly where a master who just disconnected leaves a dangling pointer
+    // behind (see PlayerbotHolder::LogoutPlayerBot).
+    void RevalidateMasterPointer();
     AiObjectContext* GetAiObjectContext() { return aiObjectContext; }
     void SetAiObjectContext(AiObjectContext* aiObjectContext) { this->aiObjectContext = aiObjectContext; }
     ChatHelper* GetChatHelper() { return &chatHelper; }

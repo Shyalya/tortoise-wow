@@ -45,6 +45,7 @@
 
 #include "ScriptMgr.h"
 #include "Ai/Dungeon/DungeonClear/Data/BossSpawnIndex.h"
+#include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcEncounterMask.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRouteRecorder.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcRun.h"
@@ -65,6 +66,7 @@
 
 #include "AiObjectContextAccess.h"
 #include "DcStrategyGate.h"
+#include "Ai/Dungeon/DungeonClear/Data/DcRosterFile.h"
 
 // Per-class context registries — each owns its own shared static lists.
 #include "DKAiObjectContext.h"
@@ -267,9 +269,25 @@ public:
     // an admin reloads the config so an edited conf value takes effect live. The
     // `reload` flag is true only for `.reload config`; the initial load needs no
     // invalidation (nothing cached yet), but bumping then is harmless.
-    void OnAfterConfigLoad(bool /*reload*/) override
+    void OnAfterConfigLoad(bool reload) override
     {
         DcSettings::InvalidateConfCache();
+        if (!reload)
+            return;
+
+        // This is the whole point of the roster file: a dungeon's missing
+        // bosses and its encounter order become a data edit plus
+        // `.reload config`, instead of a forty-minute rebuild. Dropping
+        // the index is enough - nothing caches above it, since
+        // DungeonBossesValue re-applies the roster patches on every call.
+        //
+        // A clear already under way picks the new order up mid-run. That
+        // is the intended trade, not an oversight: the alternative is
+        // holding a stale roster until every group happens to be idle,
+        // and with ten parallel groups that moment does not come.
+        std::string err;
+        DcRosterFile::Reload(&err);
+        BossSpawnIndex::Invalidate();
     }
 
 private:
@@ -282,32 +300,38 @@ private:
 // idle cost) and the invariant guarantee. This script provides the two
 // responsive drivers; the world-tick sweep (DungeonClearReaperScript) is the
 // correctness net behind them.
-//   * OnPlayerLogin    — a bot that logs in already inside an instance gets the
-//                        strategies immediately.
-//   * OnPlayerMapChanged — install on dungeon entry, strip on exit, within a
-//                        frame of the map change.
-// Reconcile() is idempotent and no-ops on real players and on already-compliant
-// bots, and runs the dc-off teardown when it strips (so `enabled` can't survive
-// to auto-resume on the next entry, and no follower keeps a stale MoveFollow).
-class DungeonClearLoginPlayerScript : public PlayerScript
-{
-public:
-    DungeonClearLoginPlayerScript()
-        : PlayerScript("DungeonClearLoginPlayerScript", {
-            PLAYERHOOK_ON_LOGIN,
-            PLAYERHOOK_ON_MAP_CHANGED
-        }) {}
-
-    void OnLogin(Player* player) override
-    {
-        DcStrategyGate::Reconcile(player);
-    }
-
-    void OnMapChanged(Player* player) override
-    {
-        DcStrategyGate::Reconcile(player);
-    }
-};
+// The login / map-changed drivers are GONE, and deliberately so.
+//
+// They used to call DcStrategyGate::Reconcile straight out of
+// PLAYERHOOK_ON_LOGIN and PLAYERHOOK_ON_MAP_CHANGED. The world-tick sweep
+// above lost its Reconcile for exactly this reason; the map hook was missed in
+// that pass, and it is the more dangerous of the two.
+//
+// OnMapChanged fires from WorldSession::HandleMoveWorldportAckOpcode - from
+// INSIDE the transfer, at the instant the bot is hung into the DESTINATION
+// map's player list, and on whatever thread happens to be driving that
+// session. Under ten parallel groups that thread is regularly not the bot's
+// own: PlayerbotHolder::UpdateSessions walks every bot in the holder out of a
+// single player's Player::Update, so map A's thread runs the teleport ack of a
+// bot map B's thread has just begun updating. Mutating the strategy map there
+// tears it apart mid-erase:
+//
+//   Map::Update(A) -> Player::Update -> PlayerbotMgr::UpdateSessions
+//     -> PlayerbotAI::HandleTeleportAck -> HandleMoveWorldportAckOpcode
+//       -> OnMapChanged -> DcStrategyGate::Reconcile -> Engine::ChangeStrategy
+//         -> removeStrategy("rpg") -> RpgStrategy::OnStrategyRemoved
+//           -> Engine::ChangeStrategy -> removeStrategy("rpg guild")
+//             -> std::map::erase -> _Rb_tree_rebalance_for_erase -> SIGSEGV
+//
+// (crash_2026-08-28_10-20-07, three map threads live, the bot mid-worldport.
+// Note the nesting too: RpgStrategy::OnStrategyRemoved re-enters
+// ChangeStrategy, so one Reconcile is two passes over the same map.)
+//
+// Nothing is lost by dropping them. DungeonClearGateScript reconciles every
+// bot unconditionally on PLAYERHOOK_ON_UPDATE, which fires from Player::Update
+// on the map thread that OWNS the bot - entry and exit are still handled, one
+// tick later, by the only thread allowed to touch that engine, with the
+// world-tick sweep as the net behind it.
 
 // The pull walk-in's brake, wired to the combat flag itself.
 //
@@ -584,7 +608,30 @@ public:
 
     void OnUnitDeath(Unit* unit, Unit* /*killer*/) override
     {
-        if (!unit || !unit->IsCreature())
+        if (!unit)
+            return;
+
+        // Bot deaths, counted. Nothing logged one until now: the only line in the
+        // whole module carrying the word "died" is the post-combat rez notice, so
+        // any tally built on it counts RESURRECTIONS - a body nobody picks up, a
+        // wipe, or a death out of combat leaves no trace at all. Role comes from
+        // the leader flag because the strategy names cannot supply it: only feral
+        // tanks carry a "tank <spec>" marker, and the "protection" strings on a
+        // paladin are its blessings, not its spec.
+        if (unit->IsPlayer())
+        {
+            Player* const dead = unit->ToPlayer();
+            Map* const pmap = dead ? dead->FindMap() : nullptr;
+            if (dead && pmap && pmap->IsDungeon() && GET_PLAYERBOT_AI(dead))
+                LOG_INFO("playerbots.dungeonclear",
+                         "[DC-DEATH] {} class={} level={} role={} map={} instance={}",
+                         dead->GetName(), uint32(dead->getClass()), uint32(dead->GetLevel()),
+                         DcLeaderSignal::IsDungeonClearLeader(dead) ? "tank" : "other",
+                         pmap->GetId(), pmap->GetInstanceId());
+            return;
+        }
+
+        if (!unit->IsCreature())
             return;
         Map* map = unit->FindMap();
         if (!map || !map->IsDungeon())
@@ -665,7 +712,6 @@ public:
 void AddSC_dungeon_clear_module()
 {
     new DungeonClearRegistrarWorldScript();
-    new DungeonClearLoginPlayerScript();
     new DungeonClearPullBrakeScript();
     // Opening half only — the End script registers on the first world tick so
     // it sorts after playerbots' AI-update hook (see the ordering contract).

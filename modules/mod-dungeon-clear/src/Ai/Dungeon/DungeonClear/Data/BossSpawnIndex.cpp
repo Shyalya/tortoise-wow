@@ -10,6 +10,7 @@
 #include "CreatureData.h"
 #include "CreatureSpawnEntry.h"
 #include "DcBossEntries1121.h"
+#include "DcRosterFile.h"
 #include "DBCStores.h"
 #include "DBCStructure.h"
 #include "ObjectMgr.h"
@@ -35,6 +36,12 @@ void BossSpawnIndex::EnsureBuilt()
     _built = true;
 }
 
+void BossSpawnIndex::Invalidate()
+{
+    _store.clear();
+    _built = false;
+}
+
 void BossSpawnIndex::Build()
 {
     // 1. Build creditEntry -> encounter list, keyed by (mapId, difficulty).
@@ -54,10 +61,18 @@ void BossSpawnIndex::Build()
     // from the spawns below, the name from the creature template, and the
     // encounter index is assigned per map in entry order - see the header
     // note on what that costs.
+    // Credit list and encounter order come through DcRosterFile, which
+    // lays the on-disk overlay over the compiled tables - see
+    // DcRosterFile.h for why they moved out of the header. Taken once,
+    // by value, so the whole build sees ONE consistent roster even if a
+    // `.reload config` lands while it runs.
+    std::vector<uint32> const creditEntries = DcRosterFile::CreditEntries();
+    std::vector<DcBossOrderRow> const orderRows = DcRosterFile::OrderRows();
+
     std::unordered_multimap<uint32, EncounterRow> byCreditEntry;
     {
         std::map<uint32, uint32> nextIndexOnMap; // deterministic: entries ascend
-        for (uint32 entry : DC_BOSS_ENTRIES_1121)
+        for (uint32 entry : creditEntries)
         {
             CreatureInfo const* info = sObjectMgr.GetCreatureTemplate(entry);
             if (!info)
@@ -74,7 +89,7 @@ void BossSpawnIndex::Build()
 
         // Door bosses and friends that only the order table names - they are
         // bosses to the router even though the curated list skipped them.
-        for (DcBossOrderRow const& orow : DC_BOSS_ORDER_1121)
+        for (DcBossOrderRow const& orow : orderRows)
         {
             if (byCreditEntry.count(orow.entry))
                 continue;
@@ -95,18 +110,19 @@ void BossSpawnIndex::Build()
     if (byCreditEntry.empty())
         return;
 
-    // Encounter numbering: an authored order wins (DC_BOSS_ORDER_1121,
+    // Encounter numbering: an authored order wins (the compiled
+    // DC_BOSS_ORDER_1121 plus the roster file laid over it,
     // 1-based there, 0-based here to line up with the mask bits); everything
     // else on the map numbers upward from just past the authored block.
-    auto orderFor = [](uint32 mapId, uint32 entry) -> uint32
+    auto orderFor = [&orderRows](uint32 mapId, uint32 entry) -> uint32
     {
-        for (DcBossOrderRow const& r : DC_BOSS_ORDER_1121)
+        for (DcBossOrderRow const& r : orderRows)
             if (r.mapId == mapId && r.entry == entry)
                 return r.order;
         return 0;
     };
     std::map<uint32, uint32> firstFallback;
-    for (DcBossOrderRow const& r : DC_BOSS_ORDER_1121)
+    for (DcBossOrderRow const& r : orderRows)
         firstFallback[r.mapId] = std::max<uint32>(firstFallback[r.mapId], r.order);
     std::map<uint32, uint32> encounterIndexOnMap;
 

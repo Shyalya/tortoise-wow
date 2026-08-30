@@ -17,6 +17,11 @@ class BossSpawnIndex
 {
 public:
     static std::vector<DungeonBossInfo> const& Get(uint32 mapId, Difficulty difficulty);
+    // Drop the built index so the next Get() rebuilds it. For a roster
+    // reload: the credit list and the encounter order now come from a
+    // file (DcRosterFile.h), and this is what makes an edited file take
+    // effect without a rebuild.
+    static void Invalidate();
 
 private:
     static void EnsureBuilt();

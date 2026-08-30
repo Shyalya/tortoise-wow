@@ -56,6 +56,7 @@ namespace
             RegisterSethekkHallsRoster(t);
             RegisterBlackMorassRoster(t);
             RegisterMaraudonRoster(t);
+            RegisterBlackfathomDeepsRoster(t);
             RegisterUtgardeKeepRoster(t);
             RegisterNexusRoster(t);
             RegisterAzjolNerubRoster(t);

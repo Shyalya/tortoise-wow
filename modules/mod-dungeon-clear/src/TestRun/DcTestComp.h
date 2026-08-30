@@ -53,7 +53,15 @@ namespace DcTestComp
     inline constexpr Slot kTankPool[] = {
         { 1,  "protection", "prot",  "tank" },  // warrior
         { 2,  "protection", "prot",  "tank" },  // paladin
-        { 11, "feral",      "feral", "tank" },  // druid
+        // DRUID FERAL PULLED FROM THE TANK SEAT, 2026-08-29 - temporary.
+        // 14 runs, average 1.50 bosses, and NOT ONCE past two, while warrior and
+        // paladin tanks on comparable samples reached five and four. Controlled
+        // for the speed fix (post-fix runs only) and for the comp's distinct-class
+        // rule hiding a druid healer (excluded those runs too); the gap survives
+        // both. Cause unknown - bear-form geometry and the missing ranged pull are
+        // both ruled out (see the analysis note). Restore this line the moment it
+        // is understood: without it the feral tank seat has no coverage at all.
+        // { 11, "feral",      "feral", "tank" },  // druid
     };
 
     inline constexpr Slot kHealPool[] = {

@@ -484,6 +484,14 @@ void PlayerbotHolder::LogoutPlayerBot(uint32 guid, bool allowInstant, bool forDe
             return;
         }
 
+        // The farewells below (logout_start / goodbye) go THROUGH the security
+        // check, which dereferences the master. A master who disconnected a
+        // moment ago leaves a dangling pointer that `if (master)` cannot catch -
+        // four crashes on 2026-08-22 in IsOpposing, reached from TellPlayer with
+        // the text "Have fun". The tick revalidates the pointer; logout never
+        // did, so do it here before anything can speak to the master.
+        ai->RevalidateMasterPointer();
+
         // BotActionLog: write LIFECYCLE LOGOUT and close the per-bot log
         // file. Done early in the logout sequence so the file flushes
         // before any potentially-crashing teardown work runs.

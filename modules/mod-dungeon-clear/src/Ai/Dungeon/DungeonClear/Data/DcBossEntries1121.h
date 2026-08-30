@@ -24,7 +24,7 @@
 // order block when a dungeon misroutes.
 
 inline constexpr uint32 DC_BOSS_ENTRIES_1121[] = {
-639,646,647,1666,1696,1717,1853,2748,3653,3654,3669,3670,3671,3673,3674,3886,3887,3914,3927,3974,3975,4274,4275,4278,4279,4421,4424,4543,4829,4831,4842,4854,4887,5709,5710,5712,5715,5719,5720,5721,5722,5775,6228,6229,6235,6487,6488,6910,7023,7206,7228,7267,7271,7291,7355,7356,7357,7358,7604,7800,8127,8443,8580,8983,9016,9017,9024,9030,9033,9156,9196,9218,9236,9237,9568,9816,9938,10184,10220,10264,10339,10363,10429,10430,10432,10433,10435,10437,10440,10504,10507,10508,10516,10558,10584,10596,10811,10812,10813,10901,10997,11143,11488,11489,11490,11492,11496,11502,11517,11518,11519,11520,11622,11982,12018,12056,12057,12098,12118,12119,12129,12201,12203,12236,12237,12258,12259,12264,13280,13282,13601,14321,14323,14325,14326,14327,14354,40068,61961,61963,61965,61968,61969,2000092,63129,63130,63131,63132,63133,62037,62038,62056,62057,62067,62069,62070,62071,62072
+639,646,647,1663,1666,1696,1716,1717,1853,2748,3653,3654,3669,3670,3671,3673,3674,3886,3887,3914,3927,3974,3975,4274,4275,4278,4279,4421,4424,4543,4829,4830,4831,4832,4842,4854,4887,5709,5710,5712,5715,5719,5720,5721,5722,5775,6228,6229,6235,6243,6487,6488,6910,7023,7206,7228,7267,7271,7291,7355,7356,7357,7358,7604,7800,8127,8443,8580,8983,9016,9017,9024,9030,9033,9156,9196,9218,9236,9237,9568,9816,9938,10184,10220,10264,10339,10363,10429,10430,10432,10433,10435,10437,10440,10504,10507,10508,10516,10558,10584,10596,10811,10812,10813,10901,10997,11143,11488,11489,11490,11492,11496,11502,11517,11518,11519,11520,11622,11982,12018,12056,12057,12098,12118,12119,12129,12201,12203,12236,12237,12258,12259,12264,13280,13282,13601,14321,14323,14325,14326,14327,14354,40068,61961,61963,61965,61968,61969,2000092,63129,63130,63131,63132,63133,62037,62038,62056,62057,62067,62069,62070,62071,62072,62530
 };
 
 // Per-dungeon encounter order, plus the door bosses the curated kith_boss
@@ -40,6 +40,51 @@ struct DcBossOrderRow
 };
 
 inline constexpr DcBossOrderRow DC_BOSS_ORDER_1121[] = {
+    // The Stockade (map 34). Two of the five were missing from the credit list,
+    // one of them the END boss - Bazil Thredd - so the dungeon would have run
+    // as three of five and stopped short of its own finish.
+    //
+    // Bruegal Ironknuckle (1720) is NOT a member: rank 2, a rare, and waiting
+    // on a rare is not an objective. The Defias Insurgent/Convict/Inmate/
+    // Captive/Prisoner lines are elite-flagged trash (10-33 spawns each).
+    //
+    // Order measured on the navmesh from the entrance (49.0, 0.5, -16.4) with
+    // tools/meshprobe.cpp, in polygons per leg: entrance->Targorr 32,
+    // Targorr->Dextren 43, Dextren->Kam 63, Kam->Hamhock 23, Hamhock->Bazil 9,
+    // total 170. Running Dextren last instead (Targorr->Kam 31 ... Bazil->
+    // Dextren 79) costs 174 - the same to within noise, but it would end the
+    // clear somewhere other than the end boss. Hence Dextren as a northern spur
+    // before the southern chain.
+    { 34, 1696, 1 },   // Targorr the Dread
+    { 34, 1663, 2 },   // Dextren Ward
+    { 34, 1666, 3 },   // Kam Deepfury
+    { 34, 1717, 4 },   // Hamhock
+    { 34, 1716, 5 },   // Bazil Thredd        (end boss)
+
+    // Blackfathom Deeps (map 48). Four of the seven were missing from the
+    // credit list entirely - Old Serra'kis, Kelris, Gelihast and Turtle's own
+    // Velthelaxx - so the roster read three.
+    //
+    // Order walked and supplied by the user, and it matches the travel path
+    // from the entrance at (-150.2, 106.6, -39.8): Ghamoo-ra -> Sarevess (the
+    // approach needs swimming) -> Gelihast -> Velthelaxx -> Old Serra'kis
+    // (underwater) -> Kelris -> the four braziers -> Aku'mai.
+    //
+    // Key 7 is deliberately skipped here: it belongs to the Fires of Aku'mai
+    // objective, which BlackfathomDeepsEvents.cpp inserts as OBJ(1) with
+    // encounterIndex 7. Aku'mai therefore takes 8 - he cannot be reached
+    // before the braziers are lit, since his portal is shut until then.
+    //
+    // Lorgus Jett (12902) is NOT a member: he is a rare with three possible
+    // spots and a spawn chance, and waiting on a rare is not an objective.
+    { 48, 4887, 1 },   // Ghamoo-ra
+    { 48, 4831, 2 },   // Lady Sarevess
+    { 48, 6243, 3 },   // Gelihast
+    { 48, 62530, 4 },  // Velthelaxx the Defiler  (Turtle custom)
+    { 48, 4830, 5 },   // Old Serra'kis
+    { 48, 4832, 6 },   // Twilight Lord Kelris
+    { 48, 4829, 8 },   // Aku'mai                 (7 = the braziers, see above)
+
     // Shadowfang Keep (map 33). Eleven bosses, of which five were missing from
     // the credit list entirely - Razorclaw, Silverlaine, Fenrus, Sever and
     // Turtle's own Prelate Ironmane - so the roster read six.

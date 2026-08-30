@@ -72,6 +72,11 @@ namespace DungeonClearApproach
         bool  startFarFromPoly = false;     // wedged off the navmesh
         bool  waterBetween     = false;     // a swim leg could span the gap
         bool  offPath          = false;     // off the corridor past OFF_PATH_TICK_LIMIT
+        // Rung 4 is BOUNDED by these: rebuilding an anchor route the bot is
+        // already too far from hands back the same route, so an unbounded rung 4
+        // starves rung 8 (OffLineRejoin) exactly when it is needed.
+        std::uint32_t offPathRebuilds     = 0;
+        std::uint32_t offPathRebuildLimit = 3;
 
         // --- post-NextHop / hop cluster ---
         bool  hopDone          = false;

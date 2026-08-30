@@ -1,0 +1,97 @@
+# Blackfathom-Deeps-style roster corrections, as data.
+#
+# The auto-derived boss roster misses bosses in every dungeon we have measured
+# so far, and it has no encounter order at all for most maps. Both used to live
+# in DcBossEntries1121.h, so each correction cost a full rebuild. They live
+# here now: edit, then `.reload config`. No build.
+#
+# Two directives, '#' starts a comment:
+#
+#     credit <entry> [<entry> ...]     add creature entries to the credit list
+#     order  <mapId> <entry> <index>   place an entry in that map's order
+#
+# An `order` line credits its entry as well, so a boss the curated list never
+# carried needs the order line and nothing else.
+#
+# `index` is 1-based and must stay within 1..32 - the completion mask bit is
+# index-1. Order is replaced PER MAP: naming any order for a map drops that
+# map's compiled rows outright, so what is written here is what runs, never a
+# half-merge with a stale compiled order.
+#
+# Rares are not objectives. A rare that may simply not be in the instance
+# (Bruegal Ironknuckle in The Stockade, Lorgus Jett in Blackfathom Deeps) must
+# never be given an order line, or every group waits on a spawn that is not
+# there.
+#
+# Worked example - what The Stockade would look like here, were it not already
+# compiled in. Two of its five bosses were missing from the credit list, one of
+# them Bazil Thredd, the END boss:
+#
+#     order 34 1696 1      # Targorr the Dread
+#     order 34 1663 2      # Dextren Ward
+#     order 34 1666 3      # Kam Deepfury
+#     order 34 1717 4      # Hamhock
+#     order 34 1716 5      # Bazil Thredd (end boss)
+#
+# Live directives below this line.
+
+# --- Rares that must never be objectives ---------------------------------
+# All six come out of a spawn pool. Credited, each becomes a required kill,
+# and the group then waits on something that usually is not in the instance
+# at all - Fallen Champion shows up in one run out of fifty.
+drop 4842     # Earthcaller Halmgar      Razorfen Kraul      30%
+drop 6228     # Dark Iron Ambassador     Gnomeregan          30%
+drop 6488     # Fallen Champion          Scarlet Monastery    2%
+drop 9218     # Spirestone Battle Lord   Blackrock Spire     15%
+drop 10558    # Hearthsinger Forresten   Stratholme          25%
+drop 12237    # Meshlok the Harvester    Maraudon            30%
+# NOT dropped: Lady Anacondra (3671, Wailing Caverns). She is pooled at chance
+# 0, which is the even split across her four spawn spots - always present,
+# just not always in the same place.
+
+# --- Razorfen Kraul (map 47) ---------------------------------------------
+# Five of the seven bosses were missing from the credit list: Roogug, Death
+# Speaker Jargba, Overlord Ramtusk, Agathelos the Raging and Turtle's own
+# Rotthorn.
+#
+# Order measured leg by leg on the navmesh from the entrance
+# (1942.3, 1544.2, 83.3), in polygons: entrance->Roogug 90, Roogug->Aggem 158,
+# ->Jargba 44, ->Ramtusk 35, ->Rotthorn 146, ->Agathelos 178, ->Charlga 72;
+# 723 in total. Running Charlga sixth and Agathelos last costs 737 AND ends
+# the clear on something other than the end boss. Measured leg by leg on
+# purpose: a single entrance-to-boss query exhausts the pathfinder's node
+# budget on a dungeon this size and comes back partial, which makes its
+# polygon count useless for comparing distances.
+#
+# Also left out: Blind Hunter (4425, a 30% pool rare like Halmgar) and Willix
+# the Importer (4508) - the escort gnome, elite-flagged but not an enemy.
+order 47 6168 1      # Roogug
+order 47 4424 2      # Aggem Thorncurse
+order 47 4428 3      # Death Speaker Jargba
+order 47 4420 4      # Overlord Ramtusk
+order 47 62503 5     # Rotthorn                (Turtle custom)
+order 47 4422 6      # Agathelos the Raging
+order 47 4421 7      # Charlga Razorflank      (end boss)
+
+# --- Blackfathom Deeps (map 48): Old Serra'kis moved to the end -----------
+# Owner's call, and the run data backs it: groups reach Serra'kis, kill him,
+# and then hang 19 yards BELOW Twilight Lord Kelris in the water - 706 stuck
+# reports at (-790.5, -162.2, -44.8) while Kelris sits at -25.8. The mesh does
+# offer a way up (107 polygons) but no single query finds it, and the learned
+# Kelris route starts at the same depth so it does not help either.
+#
+# Serra'kis is the underwater boss. Fought LAST, the dive is the final step and
+# nobody has to climb back out afterwards. This sidesteps the problem rather
+# than solving it - the climb out of water stays broken and is worth fixing on
+# its own, in Wailing Caverns too.
+#
+# Key 7 is deliberately skipped: it belongs to the Fires of Aku'mai objective,
+# which is compiled in with that index and now sorts between Kelris and
+# Aku'mai, exactly where it has to be.
+order 48 4887 1      # Ghamoo-ra
+order 48 4831 2      # Lady Sarevess
+order 48 6243 3      # Gelihast
+order 48 62530 4     # Velthelaxx the Defiler
+order 48 4832 5      # Twilight Lord Kelris
+order 48 4829 8      # Aku'mai
+order 48 4830 9      # Old Serra'kis  (underwater, deliberately last)

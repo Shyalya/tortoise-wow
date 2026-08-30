@@ -453,10 +453,25 @@ std::unique_ptr<DcTestRunJob> DcTestRunJob::Create(Player* gm, DcTestDungeonRegi
         mgr->AddPlayerBot(slot.guid, gm->GetSession()->GetAccountId());
     }
 
+    // Spell out WHO is running, not just the seed that picked them. Deriving the
+    // comp from the seed means reimplementing BuildComp, and a reimplementation
+    // is an assumption: an analysis on 2026-08-29 concluded druid tanks never
+    // clear more than two bosses while the run -> class mapping behind it had
+    // never been checked against reality. Logged here, every later breakdown by
+    // class is a measurement instead.
+    std::string compStr;
+    for (DcTestComp::Slot const& c : comp)
+    {
+        if (!compStr.empty())
+            compStr += ",";
+        compStr += std::string(c.role) + ":" + std::string(c.specName)
+                 + "(" + std::to_string(uint32(c.classId)) + ")";
+    }
+
     LOG_INFO("playerbots.dungeonclear",
-             "TESTRUN START {} dungeon={} map={} level={} heroic={} seed={} gm={}",
+             "TESTRUN START {} dungeon={} map={} level={} heroic={} seed={} gm={} comp={}",
              job->_record.runId, job->_record.dungeon, job->_mapId, job->_level,
-             heroic ? 1 : 0, seed, gm->GetName());
+             heroic ? 1 : 0, seed, gm->GetName(), compStr);
 
     job->EnterStage(Stage::SpawningBots);
     return job;

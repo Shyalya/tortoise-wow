@@ -1,0 +1,59 @@
+# Faengt Windows-Build-Brueche ab, ohne dass jemand Windows braucht.
+#
+# Anlass: PR #8 musste strtok_r fuer MSVC nachruesten, und mod-dungeon-clear
+# hatte dirent.h und localtime_r im Code. Beides faellt unter Linux nie auf,
+# weil dort alles uebersetzt - und niemand baut vor dem Merge unter Windows.
+#
+# Bewusst nur die Module, nicht der Kern: dort meldet der Pruefer 60 Treffer,
+# die grosse Mehrheit davon zu Recht bestehend (M_PI ist im Kern anders
+# geloest, PosixDaemon.cpp wird unter Windows nie gebaut, httplib.h und
+# json.hpp sind Fremdcode). Eine CI, die 60 Fehler meldet, wird abgeschaltet
+# statt befolgt.
+name: MSVC-Portabilität
+
+on:
+  pull_request:
+    paths:
+      - 'modules/**'
+      - '.github/workflows/msvc-portability.yml'
+  push:
+    paths:
+      - 'modules/**'
+      - '.github/workflows/msvc-portability.yml'
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: POSIX-only-Aufrufe in den Modulen
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Nicht jeder Branch fuehrt jedes Modul. Fehlt der Pruefer, ist das
+      # kein Fehlschlag - nur nichts zu tun.
+      - name: Prüfer suchen
+        id: suchen
+        run: |
+          gefunden=$(find modules -name check_msvc_portability.py -type f | head -20)
+          if [ -z "$gefunden" ]; then
+            echo "Kein Portabilitätsprüfer in modules/ - übersprungen."
+            echo "vorhanden=nein" >> "$GITHUB_OUTPUT"
+          else
+            echo "$gefunden"
+            echo "vorhanden=ja" >> "$GITHUB_OUTPUT"
+            echo "pfade<<ENDE" >> "$GITHUB_OUTPUT"
+            echo "$gefunden" >> "$GITHUB_OUTPUT"
+            echo "ENDE" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prüfen
+        if: steps.suchen.outputs.vorhanden == 'ja'
+        run: |
+          status=0
+          while IFS= read -r pruefer; do
+            [ -z "$pruefer" ] && continue
+            echo "::group::$pruefer"
+            python3 "$pruefer" || status=1
+            echo "::endgroup::"
+          done <<< "${{ steps.suchen.outputs.pfade }}"
+          exit $status

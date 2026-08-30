@@ -35,7 +35,12 @@ namespace DungeonClearApproach
         }
 
         // 4. Drifted off the corridor past the tick budget — resnap/rebuild.
-        if (o.offPath)
+        //    BOUNDED. The rebuild returns the ANCHOR route when one is
+        //    registered, i.e. the very route the bot is too far from, so this
+        //    rung cannot fix a large drift and used to spin on it forever (81
+        //    consecutive rebuilds observed). Past the budget, fall through and
+        //    let rung 8 build a real path back to the line.
+        if (o.offPath && o.offPathRebuilds < o.offPathRebuildLimit)
             return Verdict::OffPathRebuild;
 
         // (The action computes NextHop here; the fields below describe its result.)

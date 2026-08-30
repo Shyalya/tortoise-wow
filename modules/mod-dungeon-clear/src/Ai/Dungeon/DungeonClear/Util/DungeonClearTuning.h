@@ -402,6 +402,14 @@ constexpr uint32 DC_STUCK_TICK_LIMIT = 5;
 // unbounded travel if the ready/not-ready flicker repeats. See the note there.
 constexpr uint32 DC_PARTY_YIELD_DEBOUNCE_TICKS = 3;
 
+// Upper bound on the between-pulls hold. The debounce above rides out a blip;
+// this bounds the WAIT, which had none - partyNotReadyTicks counted up forever
+// and the tank held until the run froze at 420s. Live 2026-08-29 in Blackfathom
+// Deeps: 219 holds in 90 minutes, 58 on "out of range", no run recovered from
+// one. Releasing reopens the travel window the ratchet above deliberately
+// closes, so keep this long enough that it stays a last resort.
+constexpr uint32 DC_PARTY_YIELD_MAX_MS = 60000;
+
 // Consecutive Resnap recoveries allowed before the stuck ladder stops trusting
 // the cached route and forces a rebuild. Resnap only proves the bot's position
 // can be snapped ONTO the polyline — never that it can walk ALONG it — so a bot

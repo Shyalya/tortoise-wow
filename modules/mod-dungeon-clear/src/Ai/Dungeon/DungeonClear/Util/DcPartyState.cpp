@@ -445,6 +445,40 @@ bool DcPartyState::IsAnyPartyMemberLooting(Player* bot, std::string* whoOut)
     }
     return false;
 }
+bool DcPartyState::IsAnyMemberInCombat(Player* bot, std::string* whoOut)
+{
+    if (!bot)
+        return false;
+    if (bot->IsInCombat())
+    {
+        if (whoOut)
+            *whoOut = bot->GetName();
+        return true;
+    }
+    Group* group = bot->GetGroup();
+    if (!group)
+        return false;
+
+    for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+    {
+        Player* member = ref->GetSource();
+        if (!member || member == bot)
+            continue;
+        // Same map and alive, mirroring IsPartyReady/DescribePartyNotReady: a
+        // member on another map cannot be fought alongside, and a corpse is the
+        // rez recovery's business.
+        if (member->GetMapId() != bot->GetMapId() || member->isDead())
+            continue;
+        if (member->IsInCombat())
+        {
+            if (whoOut)
+                *whoOut = member->GetName();
+            return true;
+        }
+    }
+    return false;
+}
+
 std::string DcPartyState::DescribePartyNotReady(Player* bot,
                                                     float minHpPct, float minMpPct,
                                                     float maxSpread,

@@ -57,6 +57,7 @@ bool DcRoomAggroPreClearCondition(Player* bot, AiObjectContext* context);
 // --- event rows (one appender per dungeon) -------------------------------
 void RegisterSunkenTempleEvents(std::vector<DungeonEvent>& out);
 void RegisterZulFarrakEvents(std::vector<DungeonEvent>& out);
+void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out);
 void RegisterShadowfangKeepEvents(std::vector<DungeonEvent>& out);
 void RegisterScarletMonasteryEvents(std::vector<DungeonEvent>& out);
 void RegisterRazorfenDownsEvents(std::vector<DungeonEvent>& out);
@@ -147,6 +148,7 @@ void RegisterArcatrazRoster(std::vector<BossRosterPatch>& t);
 void RegisterSethekkHallsRoster(std::vector<BossRosterPatch>& t);
 void RegisterBlackMorassRoster(std::vector<BossRosterPatch>& t);
 void RegisterMaraudonRoster(std::vector<BossRosterPatch>& t);
+void RegisterBlackfathomDeepsRoster(std::vector<BossRosterPatch>& t);
 void RegisterUtgardeKeepRoster(std::vector<BossRosterPatch>& t);
 void RegisterNexusRoster(std::vector<BossRosterPatch>& t);
 void RegisterAzjolNerubRoster(std::vector<BossRosterPatch>& t);

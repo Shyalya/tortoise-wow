@@ -257,6 +257,21 @@ PlayerbotAI::~PlayerbotAI()
         delete aiObjectContext;
 }
 
+void PlayerbotAI::RevalidateMasterPointer()
+{
+    // The masterGuid shadow (set in SetMaster) is the safe lookup key - the
+    // cached `master` pointer is never dereferenced here. If the Player it named
+    // is gone, or a DIFFERENT live Player now holds that guid, drop both.
+    if (!master)
+        return;
+    Player* live = masterGuid ? sObjectAccessor.FindPlayer(masterGuid) : nullptr;
+    if (live != master)
+    {
+        master = nullptr;
+        masterGuid = ObjectGuid();
+    }
+}
+
 void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
 {
     AiObjectContext* context = aiObjectContext;
@@ -273,15 +288,7 @@ void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
     // pointer. We null `master` defensively. The masterGuid shadow
     // (set in SetMaster, see PlayerbotAI.h) is the safe lookup key —
     // we never deref the cached `master` pointer in this check.
-    if (master)
-    {
-        Player* live = masterGuid ? sObjectAccessor.FindPlayer(masterGuid) : nullptr;
-        if (live != master)
-        {
-            master = nullptr;
-            masterGuid = ObjectGuid();
-        }
-    }
+    RevalidateMasterPointer();
 
     if(aiInternalUpdateDelay > elapsed)
     {
