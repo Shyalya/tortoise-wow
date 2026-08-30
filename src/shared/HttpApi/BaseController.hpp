@@ -80,8 +80,11 @@ namespace HttpApi
                         internalHandler(req, resp);
                     else
                     {
-                        resp.status = 403;
-                        resp.set_content("Forbidden.", "text/plain");
+                        if (resp.status < 400)
+                            resp.status = 401;
+
+                        if (resp.body.empty())
+                            resp.set_content("Unauthorized.", "text/plain");
                     }
                 };
             }
@@ -93,8 +96,15 @@ namespace HttpApi
                         internalHandler(req, resp, reader);
                     else
                     {
-                        resp.status = 403;
-                        resp.set_content("Forbidden.", "text/plain");
+                        if (resp.status < 400)
+                            resp.status = 401;
+
+                        if (resp.body.empty())
+                            resp.set_content("Unauthorized.", "text/plain");
+
+                        // The ContentReader has not consumed the body. Close the
+                        // connection so it cannot be parsed as a later request.
+                        resp.set_header("Connection", "close");
                     }
                 };
             }

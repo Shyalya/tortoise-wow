@@ -327,7 +327,8 @@ void WorldSession::HandleWhoOpcode(WorldPacket & recv_data)
         m_lastWhoRequest = time(nullptr);
 
     SetReceivedWhoRequest(true);
-    sWorld.AddAsyncTask(std::move(task));
+    if (!sWorld.TryAddAsyncTask(std::move(task)))
+        SetReceivedWhoRequest(false);
 }
 
 void WorldSession::HandleLFGOpcode(WorldPacket & recv_data)

@@ -789,7 +789,8 @@ void WorldSession::HandleAuctionListBidderItems(WorldPacket & recv_data)
     task.listfrom = listfrom;
     task.outbiddedCount = outbiddedCount;
     SetReceivedAHListRequest(true);
-    sWorld.AddAsyncTask(std::move(task));
+    if (!sWorld.TryAddAsyncTask(std::move(task)))
+        SetReceivedAHListRequest(false);
 }
 
 // this void sends player info about his auctions
@@ -818,7 +819,8 @@ void WorldSession::HandleAuctionListOwnerItems(WorldPacket & recv_data)
     task.accountId = GetAccountId();
     task.listfrom = listfrom;
     SetReceivedAHListRequest(true);
-    sWorld.AddAsyncTask({std::move(task)});
+    if (!sWorld.TryAddAsyncTask({std::move(task)}))
+        SetReceivedAHListRequest(false);
 }
 
 void WorldSession::HandleAuctionListItems(WorldPacket & recv_data)
@@ -882,5 +884,6 @@ void WorldSession::HandleAuctionListItems(WorldPacket & recv_data)
 
     wstrToLower(task.wsearchedname);
     SetReceivedAHListRequest(true);
-    sWorld.AddAsyncTask(std::move(task));
+    if (!sWorld.TryAddAsyncTask(std::move(task)))
+        SetReceivedAHListRequest(false);
 }

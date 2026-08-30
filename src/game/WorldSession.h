@@ -36,6 +36,9 @@
 #include "Analysis/AccountAnalyser.hpp"
 
 
+#include <atomic>
+#include <deque>
+#include <mutex>
 #include <optional>
 
 struct ItemPrototype;
@@ -435,6 +438,8 @@ class WorldSession
          */
         bool CanProcessPackets() const;
         void ProcessPackets(PacketFilter& updater);
+        bool PopIncomingPacket(PacketProcessing type, WorldPacket*& packet, PacketFilter& updater);
+        bool EnqueueIncomingPacket(PacketProcessing type, WorldPacket* packet);
 
         /// Handle the authentication waiting queue (to be completed)
         void SendAuthWaitQue(uint32 position);
@@ -538,6 +543,10 @@ class WorldSession
         // Account mute time
         time_t m_muteTime;
         time_t m_lastPubChannelMsgTime;
+        uint32 m_lastChannelRosterRequestTime = 0;
+        uint32 m_addonChannelWindowStart = 0;
+        uint32 m_addonChannelFanoutUnits = 0;
+        std::mutex m_channelRateLimitMutex;
 
         uint32 GetTimeActive() const { return m_activeTime; }
         void AddActiveTime(uint32 diff) { m_activeTime += diff; }
@@ -636,11 +645,11 @@ class WorldSession
 
         void SetReceivedWhoRequest(bool v) { m_who_recvd = v; }
         bool ReceivedWhoRequest() const { return m_who_recvd; }
-        bool m_who_recvd;
+        std::atomic_bool m_who_recvd;
 
         void SetReceivedAHListRequest(bool v) { m_ah_list_recvd = v; }
         bool ReceivedAHListRequest() const { return m_ah_list_recvd; }
-        bool m_ah_list_recvd;
+        std::atomic_bool m_ah_list_recvd;
 
         void OnPassedQueue();
 
@@ -938,6 +947,8 @@ class WorldSession
         void HandleTextEmoteOpcode(WorldPacket& recvPacket);
         void HandleChatIgnoredOpcode(WorldPacket& recvPacket);
         uint32_t ChatCooldown();
+        bool IsChannelRosterRequestAllowed();
+        bool IsAddonChannelMessageAllowed(uint32 recipientCount);
 
         void HandleReclaimCorpseOpcode( WorldPacket& recvPacket );
         void HandleCorpseQueryOpcode( WorldPacket& recvPacket );
@@ -1056,7 +1067,13 @@ class WorldSession
         uint32 m_latency;
         uint32 m_Tutorials[ACCOUNT_TUTORIALS_COUNT];
         TutorialDataState m_tutorialState;
-        LockedQueue<WorldPacket*, std::mutex> _recvQueue[PACKET_PROCESS_MAX_TYPE];
+        std::deque<WorldPacket*> _recvQueue[PACKET_PROCESS_MAX_TYPE];
+        mutable std::mutex _recvQueueLock;
+        uint32 _recvQueuePacketCount = 0;
+        uint32 _recvQueueBytes = 0;
+        uint32 _recvQueueMaxPackets = 512;
+        uint32 _recvQueueMaxBytes = 4 * 1024 * 1024;
+        std::atomic<bool> _recvQueueOverflowed{false};
         bool _receivedPacketType[PACKET_PROCESS_MAX_TYPE];
 
         Anticheat::Movement* m_cheatData;

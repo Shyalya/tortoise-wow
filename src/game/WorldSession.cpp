@@ -110,6 +110,16 @@ WorldSession::WorldSession(uint32 id, WorldSocket *sock, AccountTypes sec, time_
     m_antiCheat = std::make_unique<NullSessionAnticheat>(this);
 
     m_lastUpdateTime = WorldTimer::getMSTime();
+
+    _recvQueueMaxPackets = sWorld.getConfig(CONFIG_UINT32_NETWORK_SESSION_INBOUND_QUEUE_MAX_PACKETS);
+    _recvQueueMaxBytes = sWorld.getConfig(CONFIG_UINT32_NETWORK_SESSION_INBOUND_QUEUE_MAX_BYTES);
+    // Keep the safety boundary enabled if a session is created before config
+    // loading has completed (or an old config omits these values).
+    if (_recvQueueMaxPackets == 0)
+        _recvQueueMaxPackets = 512;
+    if (_recvQueueMaxBytes == 0)
+        _recvQueueMaxBytes = 4 * 1024 * 1024;
+
     _analyser = std::make_unique<AccountAnalyser>(this);
 }
 
@@ -138,10 +148,15 @@ WorldSession::~WorldSession()
     }
 
     ///- empty incoming packet queue
-    WorldPacket* packet = nullptr;
-    for (auto& i : _recvQueue)
-        while (i.next(packet))
+    std::lock_guard<std::mutex> lock(_recvQueueLock);
+    for (auto& queue : _recvQueue)
+    {
+        for (WorldPacket* packet : queue)
             delete packet;
+        queue.clear();
+    }
+    _recvQueuePacketCount = 0;
+    _recvQueueBytes = 0;
 
     delete m_cheatData;
 }
@@ -290,6 +305,9 @@ void WorldSession::QueuePacket(WorldPacket const& new_packet)
 /// Add an incoming packet to the queue
 void WorldSession::QueuePacket(WorldPacket* newPacket)
 {
+    if (!newPacket)
+        return;
+
     uint32 processing;
 
     // Handle chat packets on async thread when possible
@@ -311,8 +329,69 @@ void WorldSession::QueuePacket(WorldPacket* newPacket)
         }
     }
 
-    m_lastReceivedPacketTime = newPacket->GetPacketTime();
-    _recvQueue[processing].add(newPacket);
+    if (!EnqueueIncomingPacket(PacketProcessing(processing), newPacket))
+        delete newPacket;
+}
+
+bool WorldSession::EnqueueIncomingPacket(PacketProcessing type, WorldPacket* packet)
+{
+    ASSERT(type < PACKET_PROCESS_MAX_TYPE);
+    ASSERT(packet);
+
+    bool overflowed = false;
+    uint32 queuedPackets = 0;
+    uint32 queuedBytes = 0;
+    {
+        std::lock_guard<std::mutex> lock(_recvQueueLock);
+        const uint32 packetBytes = packet->size();
+        if (_recvQueueOverflowed.load(std::memory_order_relaxed) ||
+            _recvQueuePacketCount >= _recvQueueMaxPackets ||
+            packetBytes > _recvQueueMaxBytes ||
+            _recvQueueBytes > _recvQueueMaxBytes - packetBytes)
+        {
+            overflowed = true;
+            queuedPackets = _recvQueuePacketCount;
+            queuedBytes = _recvQueueBytes;
+        }
+        else
+        {
+            _recvQueue[type].push_back(packet);
+            ++_recvQueuePacketCount;
+            _recvQueueBytes += packetBytes;
+            m_lastReceivedPacketTime = packet->GetPacketTime();
+        }
+    }
+
+    if (overflowed)
+    {
+        if (!_recvQueueOverflowed.exchange(true, std::memory_order_release))
+        {
+            DETAIL_LOG("Disconnecting session [account id %u / address %s]: inbound packet queue limit exceeded (%u packets, " SIZEFMTD " bytes)",
+                       GetAccountId(), GetRemoteAddress().c_str(), queuedPackets, static_cast<size_t>(queuedBytes));
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool WorldSession::PopIncomingPacket(PacketProcessing type, WorldPacket*& packet, PacketFilter& updater)
+{
+    ASSERT(type < PACKET_PROCESS_MAX_TYPE);
+
+    std::lock_guard<std::mutex> lock(_recvQueueLock);
+    std::deque<WorldPacket*>& queue = _recvQueue[type];
+    if (queue.empty())
+        return false;
+
+    packet = queue.front();
+    if (!updater.Process(packet))
+        return false;
+
+    queue.pop_front();
+    --_recvQueuePacketCount;
+    _recvQueueBytes -= packet->size();
+    return true;
 }
 
 /// Logging helper for unexpected opcodes
@@ -358,6 +437,13 @@ bool WorldSession::ForcePlayerLogoutDelay()
 /// Update the WorldSession (triggered by World update)
 bool WorldSession::Update(PacketFilter& updater)
 {
+    if (_recvQueueOverflowed.load(std::memory_order_acquire) && m_Socket && !m_Socket->IsClosed())
+    {
+        DETAIL_LOG("Closing session [account id %u / address %s] after inbound packet queue overflow",
+                   GetAccountId(), GetRemoteAddress().c_str());
+        m_Socket->CloseSocket();
+    }
+
     uint32 sessionUpdateTime = WorldTimer::getMSTime();
     for (uint32 & i : _floodPacketsCount)
         i = 0;
@@ -441,7 +527,7 @@ bool WorldSession::CanProcessPackets() const
 {
     // sPlayerBotMgr.IsChatBot() clause removed — Penqle stub binned. cmangos's
     // bot system uses isRealPlayer() guards in instead.
-    return (m_Socket && !m_Socket->IsClosed());
+    return (m_Socket && !m_Socket->IsClosed() && !_recvQueueOverflowed.load(std::memory_order_acquire));
 }
 
 void WorldSession::ProcessPackets(PacketFilter& updater)
@@ -456,19 +542,23 @@ void WorldSession::ProcessPackets(PacketFilter& updater)
     constexpr uint32 MaxPacketsPerUpdate = 200;
     uint32 totalPackets = 0;
 
-    while (CanProcessPackets() && _recvQueue[updater.PacketProcessType()].next(packet, updater))
+    while (CanProcessPackets() && PopIncomingPacket(updater.PacketProcessType(), packet, updater))
     {
         ++totalPackets;
 
         _receivedPacketType[updater.PacketProcessType()] = true;
         auto packetAllowed = AllowPacket(packet->GetOpcode(), timeNow);
         if (packetAllowed == PacketAllowResult::Denied)
+        {
+            delete packet;
+            packet = nullptr;
             break;
+        }
 
         if (packetAllowed == PacketAllowResult::Requeue)
         {
             requeuePackets.push_back(packet);
-            continue;
+            break;
         }
 
 
@@ -584,7 +674,8 @@ void WorldSession::ProcessPackets(PacketFilter& updater)
 
     for (const auto& elem : requeuePackets)
     {
-        _recvQueue[updater.PacketProcessType()].add(elem);
+        if (!EnqueueIncomingPacket(updater.PacketProcessType(), elem))
+            delete elem;
     }
 }
 
@@ -592,9 +683,16 @@ void WorldSession::ProcessPackets(PacketFilter& updater)
 void WorldSession::ClearIncomingPacketsByType(PacketProcessing type)
 {
     ASSERT(type < PACKET_PROCESS_MAX_TYPE);
-    WorldPacket* data = nullptr;
-    while (_recvQueue[type].next(data))
+    std::lock_guard<std::mutex> lock(_recvQueueLock);
+    std::deque<WorldPacket*>& queue = _recvQueue[type];
+    while (!queue.empty())
+    {
+        WorldPacket* data = queue.front();
+        queue.pop_front();
+        _recvQueuePacketCount--;
+        _recvQueueBytes -= data->size();
         delete data;
+    }
 }
 
 void WorldSession::SetDisconnectedSession()
@@ -1169,8 +1267,23 @@ void WorldSession::ProcessAnticheatAction(const char* detector, const char* reas
 
 WorldSession::PacketAllowResult WorldSession::AllowPacket(uint16 opcode, uint64 time)
 {
-    // Do not count packets that are often spamed by the client when loading a zone for example.
+    auto allowBurst = [this, opcode, time](uint32 burst, uint32 window) -> PacketAllowResult
+    {
+        std::pair<uint32, uint32>& state = m_requeuePacketCount[opcode];
+        if (time < state.first || time - state.first >= window)
+        {
+            state.first = static_cast<uint32>(time);
+            state.second = 0;
+        }
 
+        if (state.second < burst)
+        {
+            ++state.second;
+            return PacketAllowResult::Allowed;
+        }
+
+        return PacketAllowResult::Requeue;
+    };
 
     switch (opcode)
     {
@@ -1182,29 +1295,28 @@ WorldSession::PacketAllowResult WorldSession::AllowPacket(uint16 opcode, uint64 
         case CMSG_PET_NAME_QUERY:
         case CMSG_GUILD_QUERY:
         {
-            //If last packet was 4 seconds ago then just let it go through anyway
-            if (time - m_requeuePacketCount[opcode].first > 3)
-            {
-                m_requeuePacketCount[opcode].first = time;
-                m_requeuePacketCount[opcode].second = 0;
-                return PacketAllowResult::Allowed;
-            }
-
-            uint32& count = m_requeuePacketCount[opcode].second;
-            ++count;
-            if (count > 1000)
-            {
-                //sLog.outInfo("Account %u is over requeue limit for packet opcode %u. Count %u.", GetAccountId(), opcode, count);
-                return PacketAllowResult::Requeue;
-            }
-
-            return PacketAllowResult::Allowed;
+            // Keep the generous loading burst accepted by normal clients, but
+            // stop repeatedly popping and requeueing the same query once the
+            // burst is exhausted.
+            return allowBurst(1000, 4);
         }
 
-        case CMSG_JOIN_CHANNEL:         // Can be flooded by addons upon login
-        case CMSG_AUCTION_LIST_ITEMS:   // We already handle only one per session update
-        case CMSG_WHO:                  // We already handle only one per session update
-            return PacketAllowResult::Allowed;
+        case CMSG_JOIN_CHANNEL:         // Clients may join several channels during login.
+            return allowBurst(16, 10);
+
+        case CMSG_AUCTION_LIST_ITEMS:   // Only one auction query may be in flight.
+            if (ReceivedAHListRequest())
+                return PacketAllowResult::Requeue;
+            return allowBurst(2, 2);
+
+        case CMSG_WHO:                  // WHO is backed by an asynchronous global query.
+            if (ReceivedWhoRequest())
+                return PacketAllowResult::Requeue;
+            if (GetSecurity() == SEC_PLAYER && m_lastWhoRequest != 0 &&
+                time >= static_cast<uint64>(m_lastWhoRequest) && time - static_cast<uint64>(m_lastWhoRequest) < 30 &&
+                !(GetPlayer() && GetPlayer()->HasCustomFlag(CUSTOM_PLAYER_FLAG_BYPASS_WHO_COOLDOWN)))
+                return PacketAllowResult::Requeue;
+            return allowBurst(2, 30);
 
         default:
             break;

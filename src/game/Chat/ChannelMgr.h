@@ -41,7 +41,8 @@ class ChannelMgr
         }
         ~ChannelMgr();
 
-        Channel *GetOrCreateChannel(std::string const& name, bool allowAreaDependantChans = true);
+        Channel *GetOrCreateChannel(std::string const& name, bool allowAreaDependantChans = true,
+            ObjectGuid playerGuid = ObjectGuid());
         Channel *GetChannel(std::string const& name, PlayerPointer p, bool pkt = true);
         // bot passes Player*; PlayerPointer is a smart-ish wrapper.
         Channel* GetChannel(std::string const& name, Player* p, bool pkt = true);
@@ -52,11 +53,16 @@ class ChannelMgr
         void LeftChannel(std::string const& name);
         void CreateDefaultChannels();
         static void AnnounceBothFactionsChannel(std::string const& channelName, ObjectGuid playerGuid, char const* message);
+        static bool IsValidChannelName(std::string const& name);
+        static bool IsReservedChannelName(std::string const& name);
+        static bool CanPlayerJoinCustomChannel(ObjectGuid playerGuid);
+        uint32 GetCustomChannelCount(ObjectGuid playerGuid) const;
 
     protected:
         Team m_team = ALLIANCE;
     private:
         ChannelMap channels;
+        static uint32 customChannelCount;
 };
 
 class AllianceChannelMgr : public ChannelMgr 

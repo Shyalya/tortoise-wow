@@ -37,10 +37,21 @@ class MangosSocketMgr;
 
 class WorldSocket : public MangosSocket<WorldSession, WorldSocket, AuthCrypt>
 {
-    friend class MangosSocket<WorldSession, WorldSocket, AuthCrypt>;
-    friend class MangosSocketMgr<WorldSocket>;
-    friend class WorldSocketMgr;
-    friend class ReactorRunnable< WorldSocket >;
+        using Base = MangosSocket<WorldSession, WorldSocket, AuthCrypt>;
+
+        friend class MangosSocket<WorldSession, WorldSocket, AuthCrypt>;
+        friend class MangosSocketMgr<WorldSocket>;
+        friend class WorldSocketMgr;
+        friend class ReactorRunnable< WorldSocket >;
+    public:
+        ~WorldSocket() override;
+
+    public:
+        int open(void*) override;
+        int handle_close(ACE_HANDLE = ACE_INVALID_HANDLE,
+            ACE_Reactor_Mask = ACE_Event_Handler::ALL_EVENTS_MASK) override;
+        int handle_timeout(const ACE_Time_Value&, const void* = 0) override;
+
     protected:
         int OnSocketOpen();
         int SendStartupPacket();
@@ -52,6 +63,15 @@ class WorldSocket : public MangosSocket<WorldSession, WorldSocket, AuthCrypt>
 
         /// Called by ProcessIncoming() on CMSG_PING.
         int HandlePing (WorldPacket& recvPacket);
+
+    private:
+        void CompleteAuthentication();
+        void ReleasePreAuthConnection();
+        void CancelPreAuthTimeout();
+
+        std::string _peerAddress;
+        bool _preAuthConnectionTracked = false;
+        long _preAuthTimerId = -1;
 };
 
 #endif  /* _WORLDSOCKET_H */

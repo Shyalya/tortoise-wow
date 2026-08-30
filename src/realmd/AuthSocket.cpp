@@ -43,6 +43,12 @@
 
 #include <openssl/md5.h>
 #include <ctime>
+#include <cctype>
+#include <chrono>
+#include <deque>
+#include <mutex>
+#include <new>
+#include <unordered_map>
 
 #include <ace/OS_NS_unistd.h>
 #include <ace/OS_NS_fcntl.h>
@@ -168,6 +174,146 @@ std::array<uint8, 16> VersionChallenge = { { 0xBA, 0xA3, 0x1E, 0x99, 0xA0, 0x0B,
 
 static std::unordered_map<std::string, std::pair<std::string, uint32>> keyCache;
 
+namespace
+{
+    struct AuthLimiter
+    {
+        std::mutex lock;
+        std::unordered_map<std::string, uint32> preauthConnections;
+        uint32 totalPreauthConnections = 0;
+        std::deque<std::chrono::steady_clock::time_point> authAttempts;
+        std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> authAttemptsByPeer;
+    };
+
+    AuthLimiter& GetAuthLimiter()
+    {
+        static AuthLimiter* limiter = new AuthLimiter();
+        return *limiter;
+    }
+
+    using AttemptQueue = std::deque<std::chrono::steady_clock::time_point>;
+
+    uint32 GetNonNegativeAuthConfig(char const* name, uint32 defaultValue)
+    {
+        int32 const value = sConfig.GetIntDefault(name, static_cast<int32>(defaultValue));
+        return value < 0 ? defaultValue : static_cast<uint32>(value);
+    }
+
+    void PruneAuthAttempts(AttemptQueue& attempts, std::chrono::steady_clock::time_point now,
+        std::chrono::seconds window)
+    {
+        while (!attempts.empty() && now - attempts.front() >= window)
+            attempts.pop_front();
+    }
+
+    void CleanupAuthAttempts(AuthLimiter& limiter, std::chrono::steady_clock::time_point now,
+        std::chrono::seconds window)
+    {
+        PruneAuthAttempts(limiter.authAttempts, now, window);
+        for (auto itr = limiter.authAttemptsByPeer.begin(); itr != limiter.authAttemptsByPeer.end();)
+        {
+            PruneAuthAttempts(itr->second, now, window);
+            if (itr->second.empty())
+                itr = limiter.authAttemptsByPeer.erase(itr);
+            else
+                ++itr;
+        }
+    }
+
+    bool AcquirePreAuthConnection(std::string const& peerAddress)
+    {
+        AuthLimiter& limiter = GetAuthLimiter();
+        std::lock_guard<std::mutex> guard(limiter.lock);
+
+        uint32 const perIpLimit = GetNonNegativeAuthConfig("Auth.MaxPreAuthConnectionsPerIp", 8);
+        uint32 const processLimit = GetNonNegativeAuthConfig("Auth.MaxPreAuthConnections", 256);
+        auto const itr = limiter.preauthConnections.find(peerAddress);
+        uint32 const perIpConnections = itr == limiter.preauthConnections.end() ? 0 : itr->second;
+
+        if ((perIpLimit && perIpConnections >= perIpLimit) ||
+            (processLimit && limiter.totalPreauthConnections >= processLimit))
+            return false;
+
+        ++limiter.preauthConnections[peerAddress];
+        ++limiter.totalPreauthConnections;
+        return true;
+    }
+
+    void ReleasePreAuthConnection(std::string const& peerAddress)
+    {
+        AuthLimiter& limiter = GetAuthLimiter();
+        std::lock_guard<std::mutex> guard(limiter.lock);
+
+        auto itr = limiter.preauthConnections.find(peerAddress);
+        if (itr != limiter.preauthConnections.end())
+        {
+            if (itr->second > 1)
+                --itr->second;
+            else
+                limiter.preauthConnections.erase(itr);
+        }
+
+        if (limiter.totalPreauthConnections > 0)
+            --limiter.totalPreauthConnections;
+    }
+
+    bool BeginAuthAttempt(std::string const& peerAddress)
+    {
+        AuthLimiter& limiter = GetAuthLimiter();
+        std::lock_guard<std::mutex> guard(limiter.lock);
+        auto const now = std::chrono::steady_clock::now();
+        auto const window = std::chrono::seconds(GetNonNegativeAuthConfig("Auth.AuthAttemptWindow", 300));
+        CleanupAuthAttempts(limiter, now, window);
+
+        auto peerItr = limiter.authAttemptsByPeer.find(peerAddress);
+        if (peerItr != limiter.authAttemptsByPeer.end())
+            PruneAuthAttempts(peerItr->second, now, window);
+
+        size_t const peerAttemptCount = peerItr == limiter.authAttemptsByPeer.end() ? 0 : peerItr->second.size();
+
+        uint32 const processAttemptLimit = GetNonNegativeAuthConfig("Auth.MaxAuthAttempts", 4096);
+        uint32 const perIpAttemptLimit = GetNonNegativeAuthConfig("Auth.MaxAuthAttemptsPerIp", 15);
+        if ((processAttemptLimit && limiter.authAttempts.size() >= processAttemptLimit) ||
+            (perIpAttemptLimit && peerAttemptCount >= perIpAttemptLimit))
+            return false;
+
+        limiter.authAttempts.push_back(now);
+        if (peerItr == limiter.authAttemptsByPeer.end())
+            peerItr = limiter.authAttemptsByPeer.emplace(peerAddress, AttemptQueue()).first;
+        peerItr->second.push_back(now);
+        return true;
+    }
+
+    bool IsValidIPv4(std::string const& address)
+    {
+        size_t begin = 0;
+        for (uint32 octet = 0; octet < 4; ++octet)
+        {
+            size_t end = address.find('.', begin);
+            if (octet == 3)
+                end = address.size();
+
+            if (end == std::string::npos || end == begin || end - begin > 3)
+                return false;
+
+            uint32 value = 0;
+            for (size_t i = begin; i < end; ++i)
+            {
+                if (!std::isdigit(static_cast<unsigned char>(address[i])))
+                    return false;
+                value = value * 10 + static_cast<uint32>(address[i] - '0');
+            }
+
+            if (value > 255)
+                return false;
+
+            begin = end + 1;
+        }
+
+        return begin == address.size() + 1;
+    }
+}
+
 /// Constructor - set the N and g values for SRP6
 AuthSocket::AuthSocket() : promptPin(false), gridSeed(0), _geoUnlockPIN(0), _accountId(0), _lastRealmListRequest(0)
 {
@@ -181,9 +327,38 @@ AuthSocket::AuthSocket() : promptPin(false), gridSeed(0), _geoUnlockPIN(0), _acc
     patch_ = ACE_INVALID_HANDLE;
 }
 
+int AuthSocket::open(void* arg)
+{
+    ACE_INET_Addr addr;
+    if (peer().get_remote_addr(addr) == -1)
+        return -1;
+
+    char address[1024];
+    addr.get_host_addr(address, sizeof(address));
+    _peerAddress = address;
+
+    if (!AcquirePreAuthConnection(_peerAddress))
+    {
+        return -1;
+    }
+
+    _preAuthConnectionTracked = true;
+    if (BufferedSocket::open(arg) == -1)
+    {
+        ReleasePreAuthConnection(_peerAddress);
+        _preAuthConnectionTracked = false;
+        return -1;
+    }
+
+    return 0;
+}
+
 /// Close patch file descriptor before leaving
 AuthSocket::~AuthSocket()
 {
+    if (_preAuthConnectionTracked)
+        ReleasePreAuthConnection(_peerAddress);
+
     if (patch_ != ACE_INVALID_HANDLE)
         ACE_OS::close(patch_);
 }
@@ -203,9 +378,51 @@ void AuthSocket::OnAccept()
     BASIC_LOG("Accepting connection from '%s'", get_remote_address().c_str());
 }
 
+void AuthSocket::OnClose()
+{
+    if (_preAuthConnectionTracked)
+    {
+        ReleasePreAuthConnection(_peerAddress);
+        _preAuthConnectionTracked = false;
+    }
+}
+
+bool AuthSocket::IsTrustedProxyPeer() const
+{
+    if (!sConfig.GetBoolDefault("Proxy.PassIp", false))
+        return false;
+
+    std::string trusted = sConfig.GetStringDefault("Proxy.Trusted", "");
+    size_t begin = 0;
+    while (begin < trusted.size())
+    {
+        size_t end = trusted.find(',', begin);
+        if (end == std::string::npos)
+            end = trusted.size();
+
+        while (begin < end && std::isspace(static_cast<unsigned char>(trusted[begin])))
+            ++begin;
+        while (end > begin && std::isspace(static_cast<unsigned char>(trusted[end - 1])))
+            --end;
+
+        if (trusted.compare(begin, end - begin, get_peer_address()) == 0)
+            return true;
+
+        begin = end + 1;
+    }
+
+    return false;
+}
+
 bool AuthSocket::ReadProxyHeader()
 {
-    static const re2::RE2 IpPattern = R"(TCP4 (\d+.\d+.\d+.\d+))";
+    if (!IsTrustedProxyPeer())
+        return false;
+
+    if (recv_len() < 6)
+        return false;
+
+    static const re2::RE2 IpPattern = R"(^PROXY TCP4 ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}) [^ ]+ [0-9]+ [0-9]+$)";
     std::string proxyString;
     proxyString.resize(recv_len());
     recv_soft((char*)&proxyString[0], recv_len());
@@ -213,11 +430,12 @@ bool AuthSocket::ReadProxyHeader()
     {
         auto endIndex = proxyString.find_first_of('\r');
 
-        if (endIndex == std::string::npos || proxyString.size() == endIndex || proxyString[endIndex + 1] != '\n')
+        if (endIndex == std::string::npos || endIndex + 1 >= proxyString.size() || proxyString[endIndex + 1] != '\n' || endIndex > 106)
             return false;
 
+        std::string headerLine = proxyString.substr(0, endIndex);
         std::string ipString;
-        if (!re2::RE2::PartialMatch(proxyString, IpPattern, &ipString))
+        if (!re2::RE2::FullMatch(headerLine, IpPattern, &ipString) || !IsValidIPv4(ipString))
             return false;
 
         remote_address_ = ipString;
@@ -250,7 +468,7 @@ void AuthSocket::OnRead()
     uint8 _cmd;
     while (1)
     {
-        if (sConfig.GetBoolDefault("Proxy.PassIp", false))
+        if (sConfig.GetBoolDefault("Proxy.PassIp", false) && IsTrustedProxyPeer())
         {
             if (!_proxyIpReceived)
             {
@@ -293,6 +511,9 @@ void AuthSocket::OnRead()
                 return;
             }
 
+            if (_status == STATUS_AUTHED)
+                CompleteAuthentication();
+
             break;
         }
 
@@ -302,6 +523,17 @@ void AuthSocket::OnRead()
             DEBUG_LOG("[Auth] got unknown packet %u", (uint32)_cmd);
             return;
         }
+    }
+}
+
+void AuthSocket::CompleteAuthentication()
+{
+    complete_preauth();
+
+    if (_preAuthConnectionTracked)
+    {
+        ReleasePreAuthConnection(_peerAddress);
+        _preAuthConnectionTracked = false;
     }
 }
 
@@ -408,6 +640,13 @@ bool AuthSocket::_HandleLogonChallenge()
     pkt << (uint8) CMD_AUTH_LOGON_CHALLENGE;
     pkt << (uint8) 0x00;
 
+    if (!BeginAuthAttempt(_peerAddress))
+    {
+        pkt << (uint8)WOW_FAIL_DB_BUSY;
+        send((char const*)pkt.contents(), pkt.size());
+        return false;
+    }
+
     // Whether to continue handling the logon after prechecks or not
     bool handle_logon{ true };
 
@@ -434,26 +673,6 @@ bool AuthSocket::_HandleLogonChallenge()
         BASIC_LOG("[AuthChallenge] Banned ip '%s' tries to login with account '%s'!", get_remote_address().c_str(), _login.c_str());
 
         handle_logon = false;
-    }
-
-    // Throttle the number of successful connections to different accounts from a single IP within a certain timeframe
-    const auto throttleCount{ 15 };
-    const auto throttleDuration{ 300 };
-    if (handle_logon && throttleCount > 0)
-    {
-        result.reset(LoginDatabase.PQuery("SELECT COUNT(id) FROM account WHERE last_ip = '%s' AND last_login > NOW() - '%d'", address.c_str(), throttleDuration));
-        if (result)
-        {
-            const auto connections{ result->Fetch()[0].GetInt32() + 1 }; // Include this connection in the throttle?
-
-            if (connections >= throttleCount)
-            {
-                pkt << (uint8)WOW_FAIL_DB_BUSY;
-                BASIC_LOG("[AuthChallenge] Too many successful login attempts from '%s' (%d) within last %d seconds (limit %d)", address.c_str(), connections, throttleDuration, throttleCount);
-
-                handle_logon = false;
-            }
-        }
     }
 
     if (handle_logon)
@@ -718,6 +937,14 @@ bool AuthSocket::_HandleLogonProof()
     /// <ul><li> If the client has no valid version
     if (!valid_version)
     {
+        if (!sConfig.GetBoolDefault("Patches.Enable", false))
+        {
+            uint8 data[2] = { CMD_AUTH_LOGON_PROOF, WOW_FAIL_VERSION_INVALID };
+            send((const char*)data, sizeof(data));
+            close_connection();
+            return true;
+        }
+
         if (this->patch_ != ACE_INVALID_HANDLE)
             return false;
 
@@ -1100,6 +1327,11 @@ bool AuthSocket::_HandleReconnectChallenge()
     _safelogin = _login;
     LoginDatabase.escape_string(_safelogin);
 
+    if (!BeginAuthAttempt(_peerAddress))
+    {
+        return false;
+    }
+
     EndianConvert(ch->build);
     _build = ch->build;
 
@@ -1425,15 +1657,22 @@ bool AuthSocket::ValidateToken(std::string const& secretString, PINData& data)
 
 void AuthSocket::InitPatch()
 {
-    PatchHandler* handler = new PatchHandler(ACE_OS::dup(get_handle()), patch_);
-
+    ACE_HANDLE patchSocket = detach_handle();
+    ACE_HANDLE patchFile = patch_;
     patch_ = ACE_INVALID_HANDLE;
 
-    if (handler->open() == -1)
+    PatchHandler* handler = new (std::nothrow) PatchHandler(patchSocket, patchFile, get_remote_address());
+    if (!handler)
     {
-        handler->close();
-        close_connection();
+        if (patchSocket != ACE_INVALID_HANDLE)
+            ACE_OS::close(patchSocket);
+        if (patchFile != ACE_INVALID_HANDLE)
+            ACE_OS::close(patchFile);
+        return;
     }
+
+    if (handler->open() == -1)
+        delete handler;
 }
 
 void AuthSocket::LoadAccountSecurityLevels(uint32 accountId)

@@ -18,6 +18,15 @@ LogsDir = "../logs/"
 
 PatchesDir = "./patches"
 
+#   Legacy client patch transfer is disabled by default. Enable only when
+#   serving patches is required; transfers are bounded and time-limited.
+
+Patches.Enable = 0
+Patches.MaxActiveTransfers = 4
+Patches.MaxTransfersPerIp = 2
+Patches.IdleTimeout = 15
+Patches.MaxTransferSeconds = 300
+
 #   Settings for maximum database-ping interval.
 
 MaxPingTime = 3
@@ -145,3 +154,26 @@ ForcePinAccountRank = 6
 #   MaxSessionDuration - Time in seconds after which session will be closed.
 
 MaxSessionDuration = 300
+
+#   Auth.PreAuthTimeout - Seconds allowed to complete the initial auth handshake.
+
+Auth.PreAuthTimeout = 15
+
+#   Maximum simultaneous unauthenticated sockets. Zero disables that limit.
+
+Auth.MaxPreAuthConnections = 256
+Auth.MaxPreAuthConnectionsPerIp = 8
+
+#   Maximum auth challenges handled by this process and by one peer during the
+#   rolling window. This replaces the database-backed successful-login throttle
+#   for DoS control.
+
+Auth.MaxAuthAttempts = 4096
+Auth.MaxAuthAttemptsPerIp = 15
+Auth.AuthAttemptWindow = 300
+
+#   Only accept PROXY protocol client addresses from explicitly trusted peers.
+#   Use a comma-separated list of exact proxy source IP addresses.
+
+Proxy.PassIp = 0
+Proxy.Trusted = ""

@@ -45,8 +45,22 @@
 #include "Policies/SingletonImp.h"
 #include "Policies/ThreadingModel.h"
 
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <limits>
+#include <mutex>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
+#endif
+
+#ifndef MSG_DONTWAIT
+#define MSG_DONTWAIT 0
 #endif
 
 #if defined( __GNUC__ )
@@ -57,7 +71,189 @@
 
 PatchLimiter sPatchLimiter;
 
-extern int32 PatchHandlerKBytesDownloadLimit;
+extern std::atomic<int32> PatchHandlerKBytesDownloadLimit;
+
+static int GetPatchLimit(char const* name, int defaultValue, int minimum, int maximum)
+    {
+        int32 const value = sConfig.GetIntDefault(name, defaultValue);
+        return value < minimum || value > maximum ? defaultValue : value;
+    }
+
+class PatchTransferPool
+    {
+    public:
+        bool Enqueue(PatchHandler* handler)
+        {
+            if (!handler)
+                return false;
+
+            bool startFailed = false;
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                if (stopping_)
+                    return false;
+
+                if (!started_)
+                {
+                    maxTransfers_ = static_cast<size_t>(GetPatchLimit("Patches.MaxActiveTransfers", 4, 1, 64));
+                    maxTransfersPerIp_ = static_cast<size_t>(GetPatchLimit("Patches.MaxTransfersPerIp", 2, 0, 64));
+                    if (!StartWorkersLocked())
+                        startFailed = true;
+                }
+
+                if (!startFailed && (!started_ || transferSlots_ >= maxTransfers_))
+                    return false;
+
+                if (!startFailed)
+                {
+                    uint32 const peerCount = peerTransfers_[handler->peer_address_];
+                    if (maxTransfersPerIp_ && peerCount >= maxTransfersPerIp_)
+                        return false;
+
+                    ++peerTransfers_[handler->peer_address_];
+                    ++transferSlots_;
+                    jobs_.push_back(handler);
+                }
+            }
+
+            if (startFailed)
+                JoinWorkers();
+            else
+                condition_.notify_one();
+
+            return !startFailed;
+        }
+
+        bool IsStopping() const
+        {
+            return stopping_.load(std::memory_order_acquire);
+        }
+
+        void Shutdown()
+        {
+            std::deque<PatchHandler*> abandoned;
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                stopping_.store(true, std::memory_order_release);
+                abandoned.swap(jobs_);
+            }
+
+            for (PatchHandler* handler : abandoned)
+            {
+                ReleaseSlot(handler);
+                delete handler;
+            }
+
+            condition_.notify_all();
+            JoinWorkers();
+        }
+
+    private:
+        bool StartWorkersLocked()
+        {
+            try
+            {
+                for (size_t i = 0; i < maxTransfers_; ++i)
+                    workers_.emplace_back([this]() { Worker(); });
+                started_ = true;
+                return true;
+            }
+            catch (...)
+            {
+                stopping_.store(true, std::memory_order_release);
+                condition_.notify_all();
+                return false;
+            }
+        }
+
+        void Worker()
+        {
+            for (;;)
+            {
+                PatchHandler* handler = nullptr;
+                {
+                    std::unique_lock<std::mutex> guard(lock_);
+                    condition_.wait(guard, [this]() { return stopping_ || !jobs_.empty(); });
+
+                    if (jobs_.empty())
+                    {
+                        if (stopping_)
+                            return;
+                        continue;
+                    }
+
+                    handler = jobs_.front();
+                    jobs_.pop_front();
+                }
+
+                if (handler)
+                {
+                    try
+                    {
+                        handler->svc();
+                    }
+                    catch (...)
+                    {
+                        // Always release the transfer slot and both handles
+                        // below, even if an I/O wrapper unexpectedly throws.
+                    }
+
+                    ReleaseSlot(handler);
+                }
+
+                delete handler;
+            }
+        }
+
+        void JoinWorkers()
+        {
+            for (std::thread& worker : workers_)
+            {
+                if (worker.joinable())
+                    worker.join();
+            }
+            workers_.clear();
+        }
+
+        void ReleaseSlot(PatchHandler* handler)
+        {
+            std::lock_guard<std::mutex> guard(lock_);
+            if (transferSlots_ > 0)
+                --transferSlots_;
+
+            if (!handler)
+                return;
+
+            auto itr = peerTransfers_.find(handler->peer_address_);
+            if (itr != peerTransfers_.end())
+            {
+                if (itr->second > 1)
+                    --itr->second;
+                else
+                    peerTransfers_.erase(itr);
+            }
+        }
+
+        std::mutex lock_;
+        std::condition_variable condition_;
+        std::deque<PatchHandler*> jobs_;
+        std::unordered_map<std::string, uint32> peerTransfers_;
+        std::vector<std::thread> workers_;
+        std::atomic_bool stopping_{ false };
+        bool started_ = false;
+        size_t maxTransfers_ = 0;
+        size_t maxTransfersPerIp_ = 0;
+        size_t transferSlots_ = 0;
+};
+
+static PatchTransferPool& GetPatchTransferPool()
+    {
+        // The pool is explicitly stopped by realmd before process shutdown.
+        // Keeping the object alive until then avoids static-destruction order
+        // problems with ACE and the logger.
+        static PatchTransferPool* pool = new PatchTransferPool();
+        return *pool;
+}
 
 struct Chunk
 {
@@ -72,14 +268,13 @@ struct Chunk
 #pragma pack(pop)
 #endif
 
-PatchHandler::PatchHandler(ACE_HANDLE socket, ACE_HANDLE patch)
+PatchHandler::PatchHandler(ACE_HANDLE socket, ACE_HANDLE patch, std::string peerAddress)
 {
     reactor(nullptr);
     set_handle(socket);
     patch_fd_ = patch;
+    peer_address_ = std::move(peerAddress);
 
-	LastUpdateMs = WorldTimer::getMSTime();
-	SecondLimitBytes = PatchHandlerKBytesDownloadLimit * 1024;
 }
 
 PatchHandler::~PatchHandler()
@@ -113,9 +308,10 @@ int PatchHandler::open(void*)
     }
 #endif //TCP_CORK
 
-    (void) peer().disable(ACE_NONBLOCK);
+    if (peer().enable(ACE_NONBLOCK) == -1)
+        return -1;
 
-    return activate(THR_NEW_LWP | THR_DETACHED | THR_INHERIT_SCHED);
+    return GetPatchTransferPool().Enqueue(this) ? 0 : -1;
 }
 
 int PatchHandler::svc(void)
@@ -124,58 +320,87 @@ int PatchHandler::svc(void)
     // Seems client have problems with too fast sends.
     ACE_OS::sleep(1);
 
-    int flags = MSG_NOSIGNAL;
+    int flags = MSG_NOSIGNAL | MSG_DONTWAIT;
+
+    auto const transferStart = std::chrono::steady_clock::now();
+    auto lastProgress = transferStart;
+    auto const idleTimeout = std::chrono::seconds(GetPatchLimit("Patches.IdleTimeout", 15, 1, 3600));
+    auto const totalTimeout = std::chrono::seconds(GetPatchLimit("Patches.MaxTransferSeconds", 300, 1, 86400));
+    auto windowStart = transferStart;
+    uint64_t bytesSentInWindow = 0;
 
     Chunk data;
     data.cmd = CMD_XFER_DATA;
 
-    ssize_t r;
+    ssize_t r = 0;
 
-    while((r = ACE_OS::read(patch_fd_, data.data, sizeof(data.data))) > 0)
+    while(!GetPatchTransferPool().IsStopping() &&
+          (r = ACE_OS::read(patch_fd_, data.data, sizeof(data.data))) > 0)
     {
         data.data_size = (ACE_UINT16)r;
 
         auto size = ((size_t)r) + sizeof(data) - sizeof(data.data);
-        while (!sPatchLimiter.IsAllowed(size))
+        size_t offset = 0;
+        while (offset < size && !GetPatchTransferPool().IsStopping())
         {
-            ACE_Time_Value SleepValue;
-            SleepValue.set_msec(100u);
-            ACE_OS::sleep(SleepValue);
+            auto const now = std::chrono::steady_clock::now();
+            if (now - transferStart >= totalTimeout || now - lastProgress >= idleTimeout)
+                return -1;
+
+            auto const currentTime = std::chrono::steady_clock::now();
+            auto const elapsed = currentTime - windowStart;
+            if (elapsed >= std::chrono::seconds(1))
+            {
+                windowStart = currentTime;
+                bytesSentInWindow = 0;
+            }
+
+            uint64_t const bytesPerWindow = static_cast<uint64_t>(std::max<int32>(PatchHandlerKBytesDownloadLimit.load(), 1)) * 1024;
+            if (bytesSentInWindow >= bytesPerWindow)
+            {
+                auto const remaining = std::chrono::seconds(1) -
+                    std::chrono::duration_cast<std::chrono::seconds>(currentTime - windowStart);
+                if (remaining > std::chrono::seconds(0))
+                {
+                    ACE_Time_Value sleepValue;
+                    sleepValue.set_msec(100u);
+                    ACE_OS::sleep(sleepValue);
+                    continue;
+                }
+
+                windowStart = std::chrono::steady_clock::now();
+                bytesSentInWindow = 0;
+            }
+
+            size_t const requested = std::min<size_t>(size - offset,
+                std::min<uint64_t>(bytesPerWindow - bytesSentInWindow, 1024));
+            if (!sPatchLimiter.IsAllowed(static_cast<uint32>(requested)))
+            {
+                ACE_Time_Value sleepValue;
+                sleepValue.set_msec(100u);
+                ACE_OS::sleep(sleepValue);
+                continue;
+            }
+
+            ssize_t const sent = ACE_OS::send(get_handle(), reinterpret_cast<char const*>(&data) + offset, requested, flags);
+            if (sent > 0)
+            {
+                offset += static_cast<size_t>(sent);
+                bytesSentInWindow += static_cast<size_t>(sent);
+                lastProgress = std::chrono::steady_clock::now();
+                continue;
+            }
+
+            if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+            {
+                ACE_Time_Value sleepValue;
+                sleepValue.set_msec(10u);
+                ACE_OS::sleep(sleepValue);
+                continue;
+            }
+
+            return -1;
         }
-
-		ssize_t sendedBytes = peer().send((const char*)&data,
-			size,
-			flags);
-
-		if (sendedBytes == -1)
-		{
-			return -1;
-		}
-
-
-		SecondLimitBytes -= sendedBytes;
-
-		if (SecondLimitBytes <= 0)
-		{
-			// check for time limit now
-			uint32 Diff = 0;
-			do 
-			{
-				uint32 CurrentTime = WorldTimer::getMSTime();
-				Diff = CurrentTime - LastUpdateMs;
-				if (Diff > 1000)
-				{
-					SecondLimitBytes = PatchHandlerKBytesDownloadLimit * 1024;
-					LastUpdateMs = CurrentTime;
-				}
-				else
-				{
-					ACE_Time_Value SleepValue;
-					SleepValue.set_msec(100u);
-					ACE_OS::sleep(SleepValue);
-				}
-			} while (Diff < 1000);
-		}
     }
 
     if(r == -1)
@@ -184,6 +409,11 @@ int PatchHandler::svc(void)
     }
 
     return 0;
+}
+
+void PatchHandler::ShutdownPool()
+{
+    GetPatchTransferPool().Shutdown();
 }
 
 PatchCache::~PatchCache()

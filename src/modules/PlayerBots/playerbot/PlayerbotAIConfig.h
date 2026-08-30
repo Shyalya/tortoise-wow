@@ -427,6 +427,12 @@ public:
     std::vector<worldBuff> worldBuffs;
 
     int commandServerPort;
+    std::string commandServerAddress;
+    std::string commandServerSecret;
+    uint32 commandServerMaxClients;
+    uint32 commandServerMaxLineLength;
+    uint32 commandServerMaxResponseLength;
+    uint32 commandServerReadTimeout;
     bool perfMonEnabled;
     bool bExplicitDbStoreSave = false;
 

@@ -25,10 +25,12 @@
 #include "WorldSession.h"
 #include "World.h"
 #include "Opcodes.h"
+#include <algorithm>
 #include "ObjectMgr.h"
 #include "Chat.h"
 #include "Database/DatabaseEnv.h"
 #include "ChannelMgr.h"
+#include "ChannelBroadcaster.h"
 #include "Group.h"
 #include "LFTMgr.h"
 #include "Guild.h"
@@ -149,6 +151,32 @@ uint32_t WorldSession::ChatCooldown()
     }
 
     return 0;
+}
+
+bool WorldSession::IsAddonChannelMessageAllowed(uint32 recipientCount)
+{
+    static uint32 const WindowLength = 1000;
+    static uint32 const FanoutUnitsPerWindow = 64;
+    std::lock_guard<std::mutex> lock(m_channelRateLimitMutex);
+    uint32 const now = WorldTimer::getMSTime();
+
+    if (!m_addonChannelWindowStart ||
+        WorldTimer::getMSTimeDiff(m_addonChannelWindowStart, now) >= WindowLength)
+    {
+        m_addonChannelWindowStart = now;
+        m_addonChannelFanoutUnits = 0;
+    }
+
+    // Charge the actual fanout. Capping this value made a single addon
+    // message to a large channel look cheap and allowed repeated O(n)
+    // broadcasts to bypass the intended budget.
+    uint32 const fanoutUnits = std::max<uint32>(1, recipientCount);
+    if (fanoutUnits > FanoutUnitsPerWindow ||
+        m_addonChannelFanoutUnits > FanoutUnitsPerWindow - fanoutUnits)
+        return false;
+
+    m_addonChannelFanoutUnits += fanoutUnits;
+    return true;
 }
 
 bool EnforceEnglish(WorldSession* session, const std::string& msg)
@@ -415,6 +443,9 @@ void WorldSession::HandleMessagechatOpcode(WorldPacket & recv_data)
             {
                 if (Channel *chn = cMgr->GetChannel(channel, playerPointer))
                 {
+                    if (lang == LANG_ADDON && !IsAddonChannelMessageAllowed(chn->GetNumPlayers()))
+                        return;
+
                     // Level channels restrictions
                     if (chn->IsLevelRestricted() && playerPointer->GetLevel() < sWorld.getConfig(CONFIG_UINT32_WORLD_CHAN_MIN_LEVEL)
                         && GetAccountMaxLevel() < sWorld.getConfig(CONFIG_UINT32_PUB_CHANS_MUTE_VANISH_LEVEL))
@@ -463,12 +494,14 @@ void WorldSession::HandleMessagechatOpcode(WorldPacket & recv_data)
                     {
                         if (channel == "WorldH")
                         {
-                            channelMgr(HORDE)->GetOrCreateChannel("World")->AsyncSay(playerPointer->GetObjectGuid(), msg.c_str(), LANG_UNIVERSAL, true);
+                            if (ChannelBroadcaster* broadcaster = sWorld.GetChannelBroadcaster())
+                                broadcaster->EnqueueMessage(std::string(msg), "World", playerPointer->GetObjectGuid(), LANG_UNIVERSAL, HORDE, true);
                         }
 
                         if (channel == "WorldA")
                         {
-                            channelMgr(ALLIANCE)->GetOrCreateChannel("World")->AsyncSay(playerPointer->GetObjectGuid(), msg.c_str(), LANG_UNIVERSAL, true);
+                            if (ChannelBroadcaster* broadcaster = sWorld.GetChannelBroadcaster())
+                                broadcaster->EnqueueMessage(std::string(msg), "World", playerPointer->GetObjectGuid(), LANG_UNIVERSAL, ALLIANCE, true);
                         }
                     }
 

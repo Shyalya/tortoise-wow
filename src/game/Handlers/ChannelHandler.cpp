@@ -26,6 +26,19 @@
 #include "Config/Config.h"
 #include "Util.h"
 
+bool WorldSession::IsChannelRosterRequestAllowed()
+{
+    static uint32 const MinimumInterval = 2000;
+    std::lock_guard<std::mutex> lock(m_channelRateLimitMutex);
+    uint32 const now = WorldTimer::getMSTime();
+    if (m_lastChannelRosterRequestTime &&
+        WorldTimer::getMSTimeDiff(m_lastChannelRosterRequestTime, now) < MinimumInterval)
+        return false;
+
+    m_lastChannelRosterRequestTime = now;
+    return true;
+}
+
 
 void WorldSession::HandleJoinChannelOpcode(WorldPacket& recvPacket)
 {
@@ -35,8 +48,7 @@ void WorldSession::HandleJoinChannelOpcode(WorldPacket& recvPacket)
 
     DEBUG_LOG("Opcode CMSG_JOIN_CHANNEL channel \"%s\"", channelname.c_str());
 
-    // Channel name must begin with a letter.
-    if (channelname.empty() || (uint8(channelname[0]) <= 127 && !isalpha(channelname[0])))
+    if (!ChannelMgr::IsValidChannelName(channelname))
     {
         WorldPacket data(SMSG_CHANNEL_NOTIFY, 1 + channelname.size() + 1);
         data << uint8(CHAT_INVALID_NAME_NOTICE);
@@ -52,19 +64,23 @@ void WorldSession::HandleJoinChannelOpcode(WorldPacket& recvPacket)
 
     if (cMgr)
     {
-        if (Channel* chn = cMgr->GetOrCreateChannel(channelname))
-            chn->Join(player->GetObjectGuid(), pass.c_str());
+        if (Channel* chn = cMgr->GetOrCreateChannel(channelname, true, player->GetObjectGuid()))
+        {
+            if (!chn->Join(player->GetObjectGuid(), pass.c_str()) && chn->GetNumPlayers() == 0)
+                cMgr->LeftChannel(channelname);
+        }
     }
 
     if (player->GetSession()->GetSecurity() > SEC_PLAYER && sWorld.getConfig(CONFIG_BOOL_GM_JOIN_OPPOSITE_FACTION_CHANNELS))
     {
         if (ChannelMgr* cMgr = channelMgr(_player->GetTeam() == ALLIANCE ? HORDE : ALLIANCE))
         {
-            if (Channel *chn = cMgr->GetOrCreateChannel(channelname))
+            if (Channel *chn = cMgr->GetOrCreateChannel(channelname, true, player->GetObjectGuid()))
             {
                 if (!chn->GetSecurityLevel()) // Special both factions channel
                 {
-                    chn->Join(player->GetObjectGuid(), pass.c_str());
+                    if (!chn->Join(player->GetObjectGuid(), pass.c_str()) && chn->GetNumPlayers() == 0)
+                        cMgr->LeftChannel(channelname);
                 }
             }
         }
@@ -110,6 +126,9 @@ void WorldSession::HandleChannelListOpcode(WorldPacket& recvPacket)
     //recvPacket.hexlike();
     std::string channelname;
     recvPacket >> channelname;
+
+    if (!IsChannelRosterRequestAllowed())
+        return;
 
     PlayerPointer player = GetPlayerPointer();
     if (ChannelMgr* cMgr = channelMgr(player->GetTeam()))

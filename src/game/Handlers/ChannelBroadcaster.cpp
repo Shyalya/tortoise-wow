@@ -1,114 +1,82 @@
-#include <thread>
-#include <chrono>
 #include "ChannelBroadcaster.h"
+
+#include "Channel.h"
 #include "ChannelMgr.h"
-#include "World.h"
 
+#include <utility>
+#include <vector>
 
-ChannelBroadcaster::ChannelBroadcaster() : MessageQueue(15)
-{
-	StartThread();
-}
 
 ChannelBroadcaster::~ChannelBroadcaster()
 {
-	Stop();
-}
-
-void ChannelBroadcaster::StartThread()
-{
-	Worker = new std::thread([this]()
-	{
-		ThreadProc();
-	});
-}
-
-void ChannelBroadcaster::Stop()
-{
-	if (Worker == nullptr)
-	{
-		return;
-	}
-	
-	if (Worker->joinable())
-	{
-		Worker->join();
-	}
-
-	delete Worker;
-	Worker = nullptr;
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+    m_messageQueue.clear();
+    m_queuedMessageBytes = 0;
 }
 
 void ChannelBroadcaster::EnableSendingMessages()
 {
-	bShouldSentMessages.store(true);
-	// sleep_for(0) yields rather than waits, so this handshake spun too. It runs
-	// at startup and shutdown only, where a millisecond of granularity costs
-	// nothing.
-	while (!bIsWorking.load() && !sWorld.IsStopped())
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	}
+    // EnqueueMessage is always available. This hook marks the point before map
+    // workers start, but deliberately performs no channel operation itself.
 }
 
 void ChannelBroadcaster::DisableSendingMessages()
 {
-	bShouldSentMessages.store(false);
-	while (bIsWorking.load())
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	}
+    // MapManager invokes this on the world thread after waiting for every map
+    // worker. ChannelMgr and Channel remain exclusively world-thread owned.
+    DrainMessages();
 }
 
-void ChannelBroadcaster::EnqueueMessage(std::string&& Message, const std::string& ChannelName, ObjectGuid PlayerGuid, uint32 Language, Team ChannelTeam, bool bSkipChecks)
+bool ChannelBroadcaster::EnqueueMessage(std::string&& message, std::string const& channelName,
+    ObjectGuid playerGuid, uint32 language, Team channelTeam, bool skipChecks)
 {
-	MessageQueue.enqueue(ChannelMessage{std::move(Message), ChannelName, PlayerGuid, Language, ChannelTeam, bSkipChecks });
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+    if (m_messageQueue.size() >= MaxQueuedMessages ||
+        message.size() > MaxQueuedMessageBytes || channelName.size() > MaxQueuedChannelNameBytes ||
+        m_queuedMessageBytes > MaxQueuedBytes - message.size())
+    {
+        m_droppedMessages.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+
+    m_messageQueue.push_back(ChannelMessage{std::move(message), channelName, playerGuid,
+        language, channelTeam, skipChecks});
+    m_queuedMessageBytes += m_messageQueue.back().Message.size();
+    return true;
 }
 
-void ChannelBroadcaster::ThreadProc()
+void ChannelBroadcaster::DrainMessages()
 {
-	while (!sWorld.IsStopped())
-	{
-		while (bShouldSentMessages.load() && !sWorld.IsStopped())
-		{
-			bIsWorking.store(true);
+    std::vector<ChannelMessage> messages;
+    messages.reserve(MaxMessagesPerDrain);
 
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        while (!m_messageQueue.empty() && messages.size() < MaxMessagesPerDrain)
+        {
+            m_queuedMessageBytes -= m_messageQueue.front().Message.size();
+            messages.push_back(std::move(m_messageQueue.front()));
+            m_messageQueue.pop_front();
+        }
+    }
 
-			constexpr int32 MessageLimit = 5;
-			int32 MessageIterator = 0;
+    for (ChannelMessage const& message : messages)
+    {
+        ChannelMgr* channelManager = channelMgr(message.ChannelTeam);
+        if (!channelManager)
+            continue;
 
+        // Never recreate an attacker-controlled custom channel merely because
+        // an old queued message still names it. Reserved server channels are
+        // safe to lazily create on this world-thread-owned path.
+        Channel* targetChannel = nullptr;
+        if (ChannelMgr::IsReservedChannelName(message.ChannelName))
+            targetChannel = channelManager->GetOrCreateChannel(message.ChannelName);
+        else
+            targetChannel = channelManager->GetChannel(message.ChannelName, PlayerPointer(), false);
+        if (!targetChannel)
+            continue;
 
-			ChannelMessage msg;
-			while (MessageIterator < MessageLimit && MessageQueue.try_dequeue(msg))
-			{
-				ChannelMessage& ChanMsg = msg;
-
-				ChannelMgr* ChannelManager = channelMgr(ChanMsg.ChannelTeam);
-				Channel* TargetChannel = ChannelManager->GetOrCreateChannel(ChanMsg.ChannelName);
-				TargetChannel->Say(ChanMsg.PlayerGuid, ChanMsg.Message.c_str(), ChanMsg.Language, ChanMsg.bSkipChecks);
-				MessageIterator++;
-			}
-
-			// Nothing was waiting. Without this the loop simply asks again, and
-			// again, with no sleep and no yield anywhere inside it - the one
-			// millisecond below sits outside and is only reached once sending is
-			// switched off, which during normal operation never happens. The
-			// thread therefore spins for as long as the server is up: measured on
-			// a realm with ~990 bots, 1212 seconds of CPU over 1321 seconds of
-			// uptime, 91.7% of a core, state R and wchan 0 throughout. That was
-			// about a third of everything the process was doing.
-			//
-			// Sleeping only on an empty queue keeps a busy channel as responsive
-			// as before - the wait is skipped entirely whenever there is traffic.
-			// A condition variable signalled from EnqueueMessage would be tidier
-			// still and would drop even the idle wakeups, but it would have to
-			// reach into the enqueue path; this is the smaller change for
-			// essentially the same saving.
-			if (MessageIterator == 0)
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		}
-		bIsWorking.store(false);
-
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	}
+        targetChannel->Say(message.PlayerGuid, message.Message.c_str(), message.Language, message.bSkipChecks);
+    }
 }

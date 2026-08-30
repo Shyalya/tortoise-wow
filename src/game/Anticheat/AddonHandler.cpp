@@ -12,6 +12,7 @@
 #include "Util.h"
 #include "Database/DatabaseImpl.h"
 #include "Database/DatabaseEnv.h"
+#include "AddonHandler.h"
 #ifdef WIN32
 #include "..\zlib\zlib.h"
 #else
@@ -98,26 +99,26 @@ namespace Anticheat
 bool SessionAnticheat::ReadAddonInfo(WorldPacket *authSession, WorldPacket &out)
 {
     // broken addon packet, can't be received from real client
-    if (authSession->rpos() + 4 > authSession->size())
+    if (!authSession || authSession->rpos() > authSession->size() || authSession->size() - authSession->rpos() < sizeof(uint32))
         return false;
 
     // have we already received this information?  if so, it must be some kind of hacker
     if (!!_fingerprint)
     {
         sLog.out(LOG_ANTICHEAT_BASIC,
-            "ADDON: Received addon information when fingerprint is already known (0x%lx) account %u ip %s.  This may be an attempt to crash the server",
-            _session->GetAccountId(), _session->GetRemoteAddress().c_str());
+            "ADDON: Received addon information when fingerprint is already known (0x%08x) account %u ip %s.  This may be an attempt to crash the server",
+            _fingerprint, _session->GetAccountId(), _session->GetRemoteAddress().c_str());
         authSession->rpos(authSession->wpos());
         return false;
     }
 
-    uLong addonSize = authSession->read<uint32>();
+    uint32 addonSize = authSession->read<uint32>();
 
     // empty addon packet, nothing process, can't be received from real client
     if (!addonSize)
         return false;
 
-    if (addonSize > 0xFFFFF)
+    if (addonSize > AddonInfoLimits::MAX_UNCOMPRESSED_SIZE)
     {
         sLog.out(LOG_ANTICHEAT_BASIC, "ADDON: Addon info too big, size %u.  Account %s (id %u) IP %s",
             addonSize, _session->GetUsername().c_str(), _session->GetAccountId(), _session->GetRemoteAddress().c_str());
@@ -126,11 +127,7 @@ bool SessionAnticheat::ReadAddonInfo(WorldPacket *authSession, WorldPacket &out)
     }
 
     ByteBuffer clientAddonData;
-    clientAddonData.resize(addonSize);
-
-    if (uncompress(const_cast<Bytef*>(clientAddonData.contents()), &addonSize,
-        reinterpret_cast<const Bytef *>(authSession->contents() + authSession->rpos()),
-        static_cast<uLongf>(authSession->size() - authSession->rpos())) != Z_OK)
+    if (!DecompressAddonInfo(*authSession, addonSize, clientAddonData))
     {
         sLog.out(LOG_ANTICHEAT_BASIC, "ADDON: Addon information failed to compress.  Account %s (id %u) IP %s",
             _session->GetUsername().c_str(), _session->GetAccountId(), _session->GetRemoteAddress().c_str());
@@ -193,11 +190,18 @@ bool SessionAnticheat::ReadAddonInfo(WorldPacket *authSession, WorldPacket &out)
     std::vector<AddonInfo> addonInfo;
 
     // first, read client addon info, determining if the packet is valid, and if so, whether a fingerprint is already present
+    addonInfo.reserve(AddonInfoLimits::MAX_RECORDS);
     while (clientAddonData.rpos() < clientAddonData.size())
     {
+        if (addonInfo.size() >= AddonInfoLimits::MAX_RECORDS)
+            return false;
+
         AddonInfo info;
 
-        clientAddonData >> info.name >> info.flags >> info.moduluscrc >> info.urlcrc;
+        if (!ReadAddonName(clientAddonData, info.name) || clientAddonData.size() - clientAddonData.rpos() < sizeof(uint8) + sizeof(uint32) + sizeof(uint32))
+            return false;
+
+        clientAddonData >> info.flags >> info.moduluscrc >> info.urlcrc;
 
         sLog.out(LOG_ANTICHEAT_DEBUG, "ADDON: %s flags 0x%02x modulus crc 0x%08x url crc 0x%08x",
             info.name.c_str(), info.flags, info.moduluscrc, info.urlcrc);
@@ -228,7 +232,8 @@ bool SessionAnticheat::ReadAddonInfo(WorldPacket *authSession, WorldPacket &out)
             fingerprintFound = true;
     }
 
-    uint32 fingerprint = *reinterpret_cast<uint32 *>(&fingerprintBytes[0]);
+    uint32 fingerprint;
+    memcpy(&fingerprint, fingerprintBytes, sizeof(fingerprint));
 
     // if a fingerprint was found and is valid, use it
     if (fingerprintFound && FingerprintValid(fingerprint))

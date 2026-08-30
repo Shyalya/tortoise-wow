@@ -43,6 +43,7 @@ class BufferedSocket: public ACE_Svc_Handler<ACE_SOCK_STREAM, ACE_NULL_SYNCH>
         virtual void OnRead(void) { }
         virtual void OnAccept(void) { }
         virtual void OnClose(void) { }
+        void complete_preauth(void);
 
     public:
         BufferedSocket(void);
@@ -56,6 +57,8 @@ class BufferedSocket: public ACE_Svc_Handler<ACE_SOCK_STREAM, ACE_NULL_SYNCH>
         bool send(const char *buf, size_t len);
 
         const std::string& get_remote_address(void) const;
+        const std::string& get_peer_address(void) const;
+        ACE_HANDLE detach_handle(void);
 
         virtual int open(void *) override;
 
@@ -71,12 +74,20 @@ class BufferedSocket: public ACE_Svc_Handler<ACE_SOCK_STREAM, ACE_NULL_SYNCH>
 
     private:
         ssize_t noblk_send(ACE_Message_Block &message_block);
+        void cancel_timers(void);
+        void notify_close(void);
 
     private:
         ACE_Message_Block input_buffer_;
 
     protected:
         std::string remote_address_;
+        std::string peer_address_;
+
+        long session_timer_id_;
+        long preauth_timer_id_;
+        bool close_notified_;
+        bool handoff_pending_;
 
 };
 

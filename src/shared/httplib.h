@@ -107,6 +107,13 @@
                       : 0))
 #endif
 
+#ifndef CPPHTTPLIB_THREAD_POOL_MAX_QUEUE
+// Bound accepted-but-not-yet-processed connections. The worker count is
+// bounded separately by CPPHTTPLIB_THREAD_POOL_COUNT, so the total number of
+// sockets held by the default server is bounded by both values.
+#define CPPHTTPLIB_THREAD_POOL_MAX_QUEUE 64
+#endif
+
 #ifndef CPPHTTPLIB_RECV_FLAGS
 #define CPPHTTPLIB_RECV_FLAGS 0
 #endif
@@ -590,6 +597,13 @@ public:
   virtual ~TaskQueue() = default;
 
   virtual void enqueue(std::function<void()> fn) = 0;
+  // Admission-aware enqueue for servers that must reject work when a queue is
+  // full. Keep enqueue() as the compatibility API for custom TaskQueue
+  // implementations; the default implementation preserves their behavior.
+  virtual bool try_enqueue(std::function<void()> fn) {
+    enqueue(std::move(fn));
+    return true;
+  }
   virtual void shutdown() = 0;
 
   virtual void on_idle() {}
@@ -597,7 +611,10 @@ public:
 
 class ThreadPool : public TaskQueue {
 public:
-  explicit ThreadPool(size_t n, std::optional<std::function<void()>> init, std::optional<std::function<void()>> destroy) : shutdown_(false) {
+  explicit ThreadPool(size_t n, std::optional<std::function<void()>> init,
+                      std::optional<std::function<void()>> destroy,
+                      size_t max_queue = CPPHTTPLIB_THREAD_POOL_MAX_QUEUE)
+      : shutdown_(false), max_queue_(max_queue) {
     while (n) {
       threads_.emplace_back(worker(*this, init, destroy));
       n--;
@@ -608,18 +625,29 @@ public:
   ~ThreadPool() override = default;
 
   void enqueue(std::function<void()> fn) override {
+    (void)try_enqueue(std::move(fn));
+  }
+
+  bool try_enqueue(std::function<void()> fn) override {
     {
       std::unique_lock<std::mutex> lock(mutex_);
+      if (shutdown_ || !fn || jobs_.size() >= max_queue_) {
+        return false;
+      }
       jobs_.push_back(std::move(fn));
     }
 
     cond_.notify_one();
+    return true;
   }
 
   void shutdown() override {
     // Stop all worker threads...
     {
       std::unique_lock<std::mutex> lock(mutex_);
+      if (shutdown_) {
+        return;
+      }
       shutdown_ = true;
     }
 
@@ -672,6 +700,7 @@ private:
   std::list<std::function<void()>> jobs_;
 
   bool shutdown_;
+  size_t max_queue_;
 
   std::condition_variable cond_;
   std::mutex mutex_;
@@ -5862,7 +5891,8 @@ inline bool Server::write_response_core(Stream &strm, bool close_connection,
   if (need_apply_ranges) { apply_ranges(req, res, content_type, boundary); }
 
   // Prepare additional headers
-  if (close_connection || req.get_header_value("Connection") == "close") {
+  if (close_connection || req.get_header_value("Connection") == "close" ||
+      res.get_header_value("Connection") == "close") {
     res.set_header("Connection", "close");
   } else {
     std::stringstream ss;
@@ -6230,7 +6260,21 @@ inline bool Server::listen_internal() {
 #endif
       }
 
-      task_queue->enqueue([this, sock]() { process_and_close_socket(sock); });
+      if (!task_queue->try_enqueue(
+              [this, sock]() {
+                try {
+                  process_and_close_socket(sock);
+                } catch (...) {
+                  detail::shutdown_socket(sock);
+                  detail::close_socket(sock);
+                }
+              })) {
+        // The socket has already been accepted, but no worker capacity is
+        // available. Do not retain it in an unbounded queue or leave the peer
+        // waiting for a response that cannot be processed.
+        detail::shutdown_socket(sock);
+        detail::close_socket(sock);
+      }
     }
 
     task_queue->shutdown();
@@ -6584,9 +6628,15 @@ Server::process_request(Stream &strm, bool close_connection,
 
   if (routed) {
     if (res.status == -1) { res.status = req.ranges.empty() ? 200 : 206; }
+    if (res.get_header_value("Connection") == "close") {
+      connection_closed = true;
+    }
     return write_response_with_content(strm, close_connection, req, res);
   } else {
     if (res.status == -1) { res.status = 404; }
+    if (res.get_header_value("Connection") == "close") {
+      connection_closed = true;
+    }
     return write_response(strm, close_connection, req, res);
   }
 }

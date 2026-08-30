@@ -30,6 +30,7 @@
 #include "Config/Config.h"
 #include "Log.h"
 #include "AuthSocket.h"
+#include "PatchHandler.h"
 #include "SystemConfig.h"
 #include "revision.h"
 #include "Util.h"
@@ -96,9 +97,9 @@ bool stopEvent = false;                                     ///< Setting it to t
 
 DatabaseType LoginDatabase;                                 ///< Accessor to the realm server database
 
-int32 PatchHandlerKBytesDownloadLimit = 1024 * 1024; // 1024 Mb/second
+std::atomic<int32> PatchHandlerKBytesDownloadLimit{ 1024 * 1024 }; // 1024 Mb/second
 
-uint64_t MaxDataPerSecond = 1024 * 1024 * 1024; // ^
+std::atomic<uint64_t> MaxDataPerSecond{ 1024 * 1024 * 1024 }; // ^
 
 /// Print out the usage string for this program on the console.
 void usage(const char *prog)
@@ -396,7 +397,9 @@ extern int main(int argc, char **argv)
         }
     }
 
-    ///- Wait for the delay thread to exit
+	PatchHandler::ShutdownPool();
+
+	///- Wait for the delay thread to exit
     LoginDatabase.HaltDelayThread();
 
     ///- Remove signal handling before leaving
@@ -503,10 +506,10 @@ void UpdateConfigVariables()
 			{
 				int32 kBytes = atoi(Value.c_str());
 
-				if (PatchHandlerKBytesDownloadLimit != kBytes)
+				if (PatchHandlerKBytesDownloadLimit.load() != kBytes)
 				{
-					sLog.outString("Changing download speed limit from %d kB. to %d kB.", PatchHandlerKBytesDownloadLimit, kBytes);
-					PatchHandlerKBytesDownloadLimit = kBytes;
+					sLog.outString("Changing download speed limit from %d kB. to %d kB.", PatchHandlerKBytesDownloadLimit.load(), kBytes);
+					PatchHandlerKBytesDownloadLimit.store(kBytes);
 				}
 			}
 				break;
@@ -514,7 +517,7 @@ void UpdateConfigVariables()
             case ConfigId::HardSpeedLimit:
             {
                 int32 kBytes = atoi(Value.c_str());
-                MaxDataPerSecond = (uint64_t)kBytes * 1024;
+				MaxDataPerSecond.store((uint64_t)kBytes * 1024);
             }break;
 
 			default:
