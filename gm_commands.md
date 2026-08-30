@@ -8,7 +8,7 @@
 
 ## 📚 Modular Enterprise Reference Sitemaps
 
-To provide deep technical parameters and copy-paste in-game macro templates for every domain, the command manual is organized into 16 specialized reference modules:
+To provide deep technical parameters and copy-paste in-game macro templates for every domain, the command manual is organized into 19 specialized reference modules (00 through 18):
 
 | # | Reference Module | Scope & Core Topics | Ready Macros |
 | :-: | :--- | :--- | :-: |

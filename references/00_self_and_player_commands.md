@@ -4,7 +4,7 @@
 
 ---
 
-### 📚 Complete Module Reference Library
+## 📚 Complete Module Reference Library
 
 | Self & Accounts | Server & World | Gameplay & Progression | Bots & Automation |
 | :--- | :--- | :--- | :--- |
@@ -23,7 +23,9 @@ Copy and paste these macros directly into your World of Warcraft **Macro UI** (`
 ### Category A: Essential Character Boost, Gear & Resources (Top Priority)
 
 #### 🌟 Macro 1: Complete Level 60 Instant Boost Suite (Spells + Skills + Travel + Bags + Gold)
+
 Instantly raises your character to level 60, teaches all class abilities and trainer recipes, maxes all weapon and defense skills to 300, unlocks all flight paths and map fog, awards 1,000 Gold with 4x 18-slot Bottomless Bags, and fully replenishes HP and mana:
+
 ```lua
 .levelup 60
 .learn all_myspells
@@ -39,7 +41,9 @@ Instantly raises your character to level 60, teaches all class abilities and tra
 ```
 
 #### 🎲 Macro 2: Randomize Level-Scaled Epic Gear, Permanent Enchants & Consumables
+
 Generates randomized **Epic** quality armor and weapons scaled to your level, applies optimal permanent enchantments to all slots, and stocks class consumables, potions, and food:
+
 ```lua
 .bot gear * epic
 .bot enchants *
@@ -50,7 +54,9 @@ Generates randomized **Epic** quality armor and weapons scaled to your level, ap
 ```
 
 #### 💎 Macro 3: Equip Best-in-Slot Gear (Highest Item Level for Current Level)
+
 Equips the absolute highest stat Best-in-Slot items from the database for your current level and enchants all gear:
+
 ```lua
 .bot gear * best
 .bot enchants *
@@ -58,7 +64,9 @@ Equips the absolute highest stat Best-in-Slot items from the database for your c
 ```
 
 #### 🏦 Macro 4: Remote Bank Vault, Mailbox & 100% Gear Repair
+
 Opens your personal bank storage and mailbox anywhere in the world and repairs all equipped gear to full durability:
+
 ```lua
 .bank
 .mailbox
@@ -66,7 +74,9 @@ Opens your personal bank storage and mailbox anywhere in the world and repairs a
 ```
 
 #### 🔄 Macro 5: Free Talent Respec & Cooldown Reset
+
 Clears your talent tree free of charge without trainer fees and resets all ability cooldowns immediately:
+
 ```lua
 .reset talents
 .cooldown
@@ -77,7 +87,9 @@ Clears your talent tree free of charge without trainer fees and resets all abili
 ### Category B: Survival, World Buffs & Instant Recovery (Middle Priority)
 
 #### 🛡️ Macro 6: Panic Combat Recovery (God Mode + Drop Combat + Clear Cooldowns + Full Resources)
+
 Instantly prevents death, clears aggro/combat lock, resets all cooldowns, and restores 100% health, mana, rage, and energy:
+
 ```lua
 .god on
 .combatstop
@@ -86,7 +98,9 @@ Instantly prevents death, clears aggro/combat lock, resets all cooldowns, and re
 ```
 
 #### ⚰️ Macro 7: Instant Revive, Cleanse & Cooldown Reset
+
 Resurrects your character from ghost/corpse with 100% health and mana and clears cooldowns:
+
 ```lua
 .revive
 .replenish
@@ -94,7 +108,9 @@ Resurrects your character from ghost/corpse with 100% health and mana and clears
 ```
 
 #### ✨ Macro 8: Apply Major Raid World Buffs (Dragonslayer + Songflower + Warchief)
+
 Applies full world buffs to your character:
+
 ```lua
 .aura 22888
 .aura 15366
@@ -102,7 +118,9 @@ Applies full world buffs to your character:
 ```
 
 #### 👑 Macro 9: Max Exalted Raid Reputations (Argent Dawn, Cenarion, Zandalar, Nozdormu) + 5k Honor
+
 Instantly sets all major raid factions to Exalted (42,999 standing) and grants 5,000 spendable PvP Honor points:
+
 ```lua
 .modify rep 529 42999
 .modify rep 609 42999
@@ -117,34 +135,44 @@ Instantly sets all major raid factions to Exalted (42,999 standing) and grants 5
 ### Category C: Fast Travel, Flight & Mobility (Bottom Section)
 
 #### 🐎 Macro 10: Epic Mount Travel Speed (200% Movement)
+
 Sets your character's running speed to match a 100% epic ground mount:
+
 ```lua
 .modify speed 2.0
 ```
 
 #### 🚀 Macro 11: GM Flight Mode + High Speed
+
 Enables full levitation/flight and sets 250% travel speed:
+
 ```lua
 .hover on
 .modify speed 2.5
 ```
 
 #### ⚡ Macro 12: 20-Yard Forward Blink & 15-Yard Upward Leap
+
 Instantly blinks 20 yards through world geometry in your facing direction and lifts 15 yards:
+
 ```lua
 .go forward 20
 .go up 15
 ```
 
 #### 🛑 Macro 13: Normal Mobility Reset
+
 Disables flying and resets movement speed back to default 1.0:
+
 ```lua
 .hover off
 .modify speed 1.0
 ```
 
 #### 🆘 Macro 14: Emergency Hearthstone Return
+
 Rescues stuck characters by triggering an instant hearthstone homebind return:
+
 ```lua
 .unstuck
 ```
@@ -153,9 +181,10 @@ Rescues stuck characters by triggering an instant hearthstone homebind return:
 
 ## 2. Complete Self / Own Character Commands Directory
 
-Verified against CMaNGOS core engine handlers (`src/game/Commands/Commands.cpp` & `Chat.cpp`):
+Verified against CMaNGOS core engine handlers (`src/game/Chat/Chat.cpp`):
 
 ### ⚡ Character Progression & Training
+
 - `.levelup [levels]`
   - **What it does**: Advances your character by specified levels (e.g. `.levelup 60` or `.levelup 1`).
 - `.learn all_myspells`
@@ -174,8 +203,9 @@ Verified against CMaNGOS core engine handlers (`src/game/Commands/Commands.cpp` 
 ---
 
 ### 🎒 Gear, Enchants & Consumables by Level
-- `.bot gear * [epic | rare | green | best | upgrade]`
-  - **What it does**: Equips randomized gear scaled to your level of chosen quality.
+
+- `.bot gear * [epic|purple | rare|blue | uncommon|green | best | upgrade | sync]`
+  - **What it does**: Equips randomized gear scaled to your level of chosen quality, or best-in-slot / upgraded gear.
 - `.bot enchants *`
   - **What it does**: Applies optimal permanent enchantments to all equipped armor and weapon slots.
 - `.bot consumes *`
@@ -196,7 +226,9 @@ Verified against CMaNGOS core engine handlers (`src/game/Commands/Commands.cpp` 
 ---
 
 ### 🎲 RandomBot & Autonomous Scaling Engine (`.rndbot`)
-Verified in `src/modules/PlayerBots/playerbot/RandomPlayerbotMgr.cpp:3658-3735`:
+
+Verified in `src/modules/PlayerBots/playerbot/RandomPlayerbotMgr.cpp`:
+
 - `.rndbot init <target|%> [level]`
   - **What it does**: Completely re-rolls talents, equips randomized level-appropriate gear/enchants, learns all spells, and stocks consumables for current or specified level.
 - `.rndbot upgrade <target|%>`
@@ -215,8 +247,9 @@ Verified in `src/modules/PlayerBots/playerbot/RandomPlayerbotMgr.cpp:3658-3735`:
 ---
 
 ### 💵 Economy, Banking & Mail
+
 - `.modify money <copper_amount>`
-  - **What it does**: Adds gold directly to your character (`10000000` = 1,000 Gold).
+  - **What it does**: Adds copper/gold directly to your character (`10000000` = 1,000 Gold).
 - `.bank`
   - **What it does**: Opens your personal bank storage window anywhere in the world.
 - `.mailbox`
@@ -225,6 +258,7 @@ Verified in `src/modules/PlayerBots/playerbot/RandomPlayerbotMgr.cpp:3658-3735`:
 ---
 
 ### 🛡️ Combat Survival & Recovery
+
 - `.god [on | off]`
   - **What it does**: Toggles invulnerability / god mode. You take zero damage from all sources.
 - `.revive`
@@ -241,10 +275,11 @@ Verified in `src/modules/PlayerBots/playerbot/RandomPlayerbotMgr.cpp:3658-3735`:
 ---
 
 ### 🗺️ Mobility & World Exploration
+
 - `.modify speed <multiplier>`
   - **What it does**: Sets movement speed (`1.0` = normal, `2.0` = 100% mount speed, `2.5` = fast sprint).
 - `.hover [on | off]`
-  - **What it does**: Enables levitation / flight mode.
+  - **What it does**: Enables levitation / flight mode (Security: Administrator 4).
 - `.waterwalk [on | off]`
   - **What it does**: Enables walking on water surfaces without swimming.
 - `.taxicheat [on | off]`

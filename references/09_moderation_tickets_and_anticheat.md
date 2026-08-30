@@ -4,7 +4,7 @@
 
 ---
 
-### 📚 Complete 19-Module Reference Library
+## 📚 Complete 19-Module Reference Library
 
 | Security & Server | World & Characters | Gameplay & Items | Bots & Modules |
 | :--- | :--- | :--- | :--- |
@@ -23,34 +23,44 @@ Copy and paste these macros directly into your World of Warcraft **Macro UI** (`
 ### Category A: Essential GM Moderation & Ticket Support (Top Priority)
 
 #### 🎫 Macro 1: Open GM Support Ticket Queue
+
 Displays all active support tickets submitted by players, highlighting online submitters:
+
 ```lua
 .ticket list
 .ticket onlinelist
 ```
 
 #### 🔍 Macro 2: Target Player Audit (Account, IP & Security Rank)
+
 Instantly inspects the selected player's username, GUID, IP address, and mute/ban status:
+
 ```lua
 .pinfo
 .guid
 ```
 
 #### 🚫 Macro 3: 60-Minute Channel Mute
+
 Mutes the targeted player across all public channels, say, yell, and whispers for 60 minutes:
+
 ```lua
 .mute Spammer 60 Inappropriate Language
 ```
 
 #### 🧊 Macro 4: Freeze & Unfreeze Target Character
+
 Locks the selected character in place to prevent movement or exploitation during investigation:
+
 ```lua
 .freeze
 .unfreeze
 ```
 
 #### 🚪 Macro 5: Kick Player from Server
+
 Forcibly disconnects the targeted player from the realm with a reason:
+
 ```lua
 .kick Spammer AFK Exploitation
 ```
@@ -60,19 +70,25 @@ Forcibly disconnects the targeted player from the realm with a reason:
 ### Category B: Account & IP Disciplinary Bans (Middle Priority)
 
 #### 🔨 Macro 6: 7-Day Account Ban
+
 Applies a 7-day suspension to the specified account:
+
 ```lua
 .ban account BadGuy 7d Exploiting Game Mechanics
 ```
 
 #### 🌐 Macro 7: 30-Day IP Address Ban
+
 Bans a specific IP address from connecting to any realm on the logon server:
+
 ```lua
 .ban ip 192.168.1.100 30d Severe Botting
 ```
 
 #### 🔓 Macro 8: Unban Account & Restore Access
+
 Removes an active suspension from an account:
+
 ```lua
 .unban account BadGuy
 ```
@@ -82,14 +98,18 @@ Removes an active suspension from an account:
 ### Category C: Character Recovery & Anticheat Telemetry (Bottom Section)
 
 #### ♻️ Macro 9: Deleted Character Recovery Tool
+
 Lists soft-deleted characters for an account and restores character by GUID:
+
 ```lua
 .character deleted list name Sam
 .character deleted restore 123 Sam 1
 ```
 
 #### 🛡️ Macro 10: Anticheat Telemetry Statistics
+
 Dumps live Warden and movement detection counters:
+
 ```lua
 .anticheat info
 ```
@@ -98,9 +118,10 @@ Dumps live Warden and movement detection counters:
 
 ## 2. Moderation & Disciplinary Commands Reference
 
-Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.cpp`):
+Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp`):
 
 ### 🛡️ Player Moderation (`.kick` / `.mute` / `.freeze`)
+
 - `.kick <player> [reason]`
   - **Security**: Moderator (2)
   - **What it does**: Forcibly disconnects player from the game world.
@@ -129,6 +150,7 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
 ---
 
 ### 🎫 Support Ticket Queue (`.ticket`)
+
 - `.ticket list`
   - **Security**: Moderator (2)
   - **What it does**: Lists all active open player support tickets.
@@ -144,6 +166,16 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **What it does**: Displays the full submission text, coordinates, and timestamp for ticket ID.
   - **Example**: `.ticket 12`
 
+- `.ticket assign <id> <gm_name>`
+  - **Security**: Moderator (2)
+  - **What it does**: Assigns a ticket to a specific GM staff member.
+  - **Example**: `.ticket assign 12 Sam`
+
+- `.ticket unassign <id>`
+  - **Security**: Moderator (2)
+  - **What it does**: Releases assigned ticket back into the general queue.
+  - **Example**: `.ticket unassign 12`
+
 - `.ticket close <id>`
   - **Security**: Moderator (2)
   - **What it does**: Resolves and closes ticket ID.
@@ -151,7 +183,8 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
 
 ---
 
-### 🔨 Disciplinary Bans (`.ban` / `.unban`)
+### 🔨 Disciplinary Bans & Warnings (`.ban` / `.unban` / `.baninfo` / `.banlist`)
+
 - `.ban account <username> <duration> [reason]`
   - **Security**: Moderator (2)
   - **What it does**: Bans account for duration (e.g. `1d`, `7d`, `permanent`).
@@ -167,15 +200,45 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **What it does**: Bans IP address from connecting.
   - **Example**: `.ban ip 192.168.1.100 30d`
 
-- `.unban account <username>`
+- `.ban allip <username> <duration> [reason]`
+  - **Security**: Administrator (4)
+  - **What it does**: Bans all IP addresses previously associated with the account.
+  - **Example**: `.ban allip BadGuy 30d`
+
+- `.ban fingerprint <hash> <duration> [reason]`
+  - **Security**: Administrator (4)
+  - **What it does**: Bans client hardware fingerprint.
+  - **Example**: `.ban fingerprint A1B2C3D4 30d`
+
+- `.ban warn <char_name> [reason]` / `.ban removewarn <char_name>`
+  - **Security**: Moderator (2) / Administrator (4)
+  - **What it does**: Issues an official warning or clears warning count.
+  - **Example**: `.ban warn BadGuy "Refrain from offensive language"`
+
+- `.baninfo account <username>` / `.baninfo character <char_name>` / `.baninfo ip <ip>`
+  - **Security**: Moderator (2)
+  - **What it does**: Displays active ban reason, issuer, and expiration timestamp.
+  - **Example**: `.baninfo account BadGuy`
+
+- `.banlist account` / `.banlist character` / `.banlist ip`
   - **Security**: Developer (3)
-  - **What it does**: Unbans specified account.
+  - **What it does**: Lists all active bans registered in the database.
+  - **Example**: `.banlist account`
+
+- `.unban account <username>` / `.unban character <name>` / `.unban ip <ip>` / `.unban fingerprint <hash>`
+  - **Security**: Developer (3)
+  - **What it does**: Removes active ban and restores access.
   - **Example**: `.unban account BadGuy`
 
-- `.unban ip <ip>`
-  - **Security**: Developer (3)
-  - **What it does**: Unbans specified IP address.
-  - **Example**: `.unban ip 192.168.1.100`
+- `.pausingmute <player> <minutes> [reason]`
+  - **Security**: Moderator (2)
+  - **What it does**: Applies an in-game chat mute that only ticks down while player is online.
+  - **Example**: `.pausingmute Spammer 120`
+
+- `.marksuspicious <player>`
+  - **Security**: Moderator (2)
+  - **What it does**: Flags player for detailed anticheat packet inspection.
+  - **Example**: `.marksuspicious SpeedHacker`
 
 ---
 

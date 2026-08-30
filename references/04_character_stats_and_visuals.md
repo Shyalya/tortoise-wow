@@ -4,7 +4,7 @@
 
 ---
 
-### 📚 Complete 19-Module Reference Library
+## 📚 Complete 19-Module Reference Library
 
 | Security & Server | World & Characters | Gameplay & Items | Bots & Modules |
 | :--- | :--- | :--- | :--- |
@@ -23,7 +23,9 @@ Copy and paste these macros directly into your World of Warcraft **Macro UI** (`
 ### Category A: Essential Raid Readiness & Reputations (Top Priority)
 
 #### 👑 Macro 1: Max Exalted Alliance Raid Reputations
+
 Instantly sets Argent Dawn (Naxxramas), Cenarion Circle (AQ20/40), Zandalar Tribe (ZG), Brood of Nozdormu (AQ40), and Timbermaw Hold to Exalted (42,999 rep):
+
 ```lua
 .modify rep 529 42999
 .modify rep 609 42999
@@ -33,7 +35,9 @@ Instantly sets Argent Dawn (Naxxramas), Cenarion Circle (AQ20/40), Zandalar Trib
 ```
 
 #### 🏹 Macro 2: Max Exalted Horde Raid Reputations
+
 Instantly sets Horde raid reputations (Argent Dawn, Cenarion, Zandalar, Nozdormu, Timbermaw) to Exalted:
+
 ```lua
 .modify rep 529 42999
 .modify rep 609 42999
@@ -43,13 +47,17 @@ Instantly sets Horde raid reputations (Argent Dawn, Cenarion, Zandalar, Nozdormu
 ```
 
 #### ⚔️ Macro 3: Grant PvP Honor Points (Rank 14 Gear Unlock)
+
 Awards 5,000 spendable PvP Honor points for purchasing Grand Marshal / High Warlord gear:
+
 ```lua
 .modify honor 5000
 ```
 
 #### 👤 Macro 4: Full Demorph & Baseline Character Reset
+
 Restores character to original race and gender, resetting size and run speeds back to standard 1.0:
+
 ```lua
 .demorph
 .modify scale 1.0
@@ -62,13 +70,17 @@ Restores character to original race and gender, resetting size and run speeds ba
 ### Category B: Everyday Movement & City Reputations (Middle Priority)
 
 #### 🐎 Macro 5: Epic Mount Speed (200% Movement)
+
 Sets movement speed to match 100% epic mount travel for fast traversal:
+
 ```lua
 .modify speed 2.0
 ```
 
 #### 🏛️ Macro 6: Exalted Alliance Capital Cities (SW, IF, Darnassus, Gnomes)
+
 Sets all 4 Alliance capital city factions to Exalted standing:
+
 ```lua
 .modify rep 72 42999
 .modify rep 47 42999
@@ -77,7 +89,9 @@ Sets all 4 Alliance capital city factions to Exalted standing:
 ```
 
 #### 🐺 Macro 7: Exalted Horde Capital Cities (Org, Undercity, TB, Darkspear)
+
 Sets all 4 Horde capital city factions to Exalted standing:
+
 ```lua
 .modify rep 76 42999
 .modify rep 68 42999
@@ -90,7 +104,9 @@ Sets all 4 Horde capital city factions to Exalted standing:
 ### Category C: Fun, Testing & Sandbox Morphs (Bottom Section)
 
 #### 🦸 Macro 8: Sandbox Super Stats (Testing Solo Raids)
+
 Grants high health pool and attack power for solo sandbox boss testing:
+
 ```lua
 .modify hp 50000
 .modify strength 400
@@ -100,14 +116,18 @@ Grants high health pool and attack power for solo sandbox boss testing:
 ```
 
 #### 🐉 Macro 9: Onyxia Dragon Morph
+
 Morphs character model into Onyxia for visual testing:
+
 ```lua
 .modify morph 10182
 .modify scale 0.6
 ```
 
 #### 🔥 Macro 10: Ragnaros Firelord Morph
+
 Morphs character model into Ragnaros the Firelord:
+
 ```lua
 .modify morph 11121
 .modify scale 0.4
@@ -138,6 +158,7 @@ Morphs character model into Ragnaros the Firelord:
 Verified against CMaNGOS command table (`src/game/Chat/Chat.cpp:360`):
 
 ### 🏆 Essential Progression & Factions (Top Priority)
+
 - `.modify rep <faction_id> <amount>`
   - **Handler**: `HandleModifyRepCommand`
   - **Security**: Developer (3)
@@ -195,20 +216,23 @@ Verified against CMaNGOS command table (`src/game/Chat/Chat.cpp:360`):
 ---
 
 ### 🧪 Sandbox & Testing Commands (Bottom Section)
-- `.modify hp <amount>`: Sets current and maximum health pool (e.g. `.modify hp 50000`).
-- `.modify mana <amount>`: Sets current and maximum mana pool (e.g. `.modify mana 50000`).
-- `.modify rage <amount>`: Sets rage value between 0 and 1000 (e.g. `.modify rage 1000`).
-- `.modify energy <amount>`: Sets energy value between 0 and 100 (e.g. `.modify energy 100`).
-- `.modify strength <val>`: Direct stat override for Strength (e.g. `.modify strength 500`).
-- `.modify agility <val>`: Direct stat override for Agility (e.g. `.modify agility 500`).
-- `.modify stamina <val>`: Direct stat override for Stamina (e.g. `.modify stamina 500`).
-- `.modify intellect <val>`: Direct stat override for Intellect (e.g. `.modify intellect 500`).
-- `.modify spirit <val>`: Direct stat override for Spirit (e.g. `.modify spirit 500`).
-- `.modify ap <val>`: Direct stat override for Attack Power (e.g. `.modify ap 1500`).
-- `.modify spellpower <val>`: Direct stat override for Spell Power (e.g. `.modify spellpower 1000`).
-- `.modify parry <val>`: Direct stat override for Parry rating (e.g. `.modify parry 25`).
-- `.modify morph <display_id>`: Morphs character into creature model ID (e.g. `.modify morph 10182`).
-- `.modify drunk <0-100>`: Sets intoxication level (e.g. `.modify drunk 100`).
+
+- `.modify hp <amount>`: Sets current and maximum health pool (Dev 3, e.g. `.modify hp 50000`).
+- `.modify mana <amount>`: Sets current and maximum mana pool (Dev 3, e.g. `.modify mana 50000`).
+- `.modify rage <amount>`: Sets rage value between 0 and 1000 (Dev 3, e.g. `.modify rage 1000`).
+- `.modify energy <amount>`: Sets energy value between 0 and 100 (Dev 3, e.g. `.modify energy 100`).
+- `.modify strength <val>`: Direct stat override for Strength (Admin 4, e.g. `.modify strength 500`).
+- `.modify agility <val>`: Direct stat override for Agility (Admin 4, e.g. `.modify agility 500`).
+- `.modify stamina <val>`: Direct stat override for Stamina (Admin 4, e.g. `.modify stamina 500`).
+- `.modify intellect <val>`: Direct stat override for Intellect (Admin 4, e.g. `.modify intellect 500`).
+- `.modify spirit <val>`: Direct stat override for Spirit (Admin 4, e.g. `.modify spirit 500`).
+- `.modify ap <val>`: Direct stat override for Attack Power (Admin 4, e.g. `.modify ap 1500`).
+- `.modify spellpower <val>`: Direct stat override for Spell Power (Admin 4, e.g. `.modify spellpower 1000`).
+- `.modify parry <val>`: Direct stat override for Parry rating (Admin 4, e.g. `.modify parry 25`).
+- `.modify morph <display_id>`: Morphs character into creature model ID (Dev 3, e.g. `.modify morph 10182`).
+- `.modify drunk <0-100>`: Sets intoxication level (Dev 3, e.g. `.modify drunk 100`).
+- `.modify xp <amount>`: Sets character experience points (Dev 3).
+- `.modify hairstyle / haircolor / skincolor / face / accessories`: Customizes character appearance (Dev 3).
 
 ---
 

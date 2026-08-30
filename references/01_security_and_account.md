@@ -4,7 +4,7 @@
 
 ---
 
-### 📚 Complete 19-Module Reference Library
+## 📚 Complete 19-Module Reference Library
 
 | Security & Server | World & Characters | Gameplay & Items | Bots & Modules |
 | :--- | :--- | :--- | :--- |
@@ -23,26 +23,34 @@ Copy and paste these macros directly into your World of Warcraft **Macro UI** (`
 ### Category A: Essential Account Permissions & Character Auditing (Top Priority)
 
 #### 👑 Macro 1: Grant Full Administrator Permissions (Level 4 Administrator)
+
 Sets the target account's security rank to Administrator (Level 4), unlocking all commands, spawns, reloads, and bot controls:
+
 ```lua
 .account set gmlevel Sam 4
 ```
 
 #### 🔍 Macro 2: Target Player & Account Security Audit
+
 Instantly inspects the selected player's account username, GUID, security rank, IP address, and mute status:
+
 ```lua
 .pinfo
 .guid
 ```
 
 #### 👥 Macro 3: List All Characters on Account
+
 Lists all character names, classes, races, levels, and GUIDs belonging to the specified account:
+
 ```lua
 .account characters Sam
 ```
 
 #### 🔑 Macro 4: Create Game Account & Set Password
+
 Creates a new player account with credentials:
+
 ```lua
 .account create NewPlayer Secret123
 ```
@@ -52,7 +60,9 @@ Creates a new player account with credentials:
 ### Category B: GM Support & Stealth Patrol (Middle Priority)
 
 #### 👁️ Macro 5: Visible GM Support Mode
+
 Enables GM tag, makes character visible, opens whispers for player tickets, and normalizes speed:
+
 ```lua
 .gm on
 .gm visible on
@@ -61,7 +71,9 @@ Enables GM tag, makes character visible, opens whispers for player tickets, and 
 ```
 
 #### 🕵️ Macro 6: Stealth Patrol Mode (Invisible + Flight + 250% Speed)
+
 Enables GM invisibility, silences incoming whispers, and turns on high-speed flying:
+
 ```lua
 .gm on
 .gm visible off
@@ -71,7 +83,9 @@ Enables GM invisibility, silences incoming whispers, and turns on high-speed fly
 ```
 
 #### 📋 Macro 7: Active GM Roster & Online Staff List
+
 Displays all registered GM accounts and lists staff currently logged into the realm:
+
 ```lua
 .gm ingame
 .gm list
@@ -82,7 +96,9 @@ Displays all registered GM accounts and lists staff currently logged into the re
 ### Category C: Session Duty Teardown & Reset (Bottom Section)
 
 #### 🚪 Macro 8: Duty Teardown & Normal Mode Reset
+
 Disables flying, restores normal visibility, turns off GM mode, and resets movement speed back to standard 1.0:
+
 ```lua
 .hover off
 .gm visible on
@@ -94,9 +110,10 @@ Disables flying, restores normal visibility, turns off GM mode, and resets movem
 
 ## 2. Complete Account Commands Directory (`.account`)
 
-Verified against CMaNGOS core command handlers (`src/game/Commands/Commands.cpp`):
+Verified against CMaNGOS core command handlers (`src/game/Chat/Chat.cpp`):
 
 ### ⚡ Essential Account Administration (Top Priority)
+
 - `.account set gmlevel <username> <level>`
   - **Handler**: `HandleAccountSetGmLevelCommand` (Line 275)
   - **Security**: Administrator (4)
@@ -130,6 +147,7 @@ Verified against CMaNGOS core command handlers (`src/game/Commands/Commands.cpp`
 ---
 
 ### 🔍 Account Inspection & Telemetry (Middle Priority)
+
 - `.account`
   - **Handler**: `HandleAccountCommand` (Line 6283)
   - **Security**: Player (0)
@@ -157,6 +175,7 @@ Verified against CMaNGOS core command handlers (`src/game/Commands/Commands.cpp`
 ---
 
 ### 🗑️ Low-Level Maintenance (Bottom Section)
+
 - `.account delete <username>`
   - **Handler**: `HandleAccountDeleteCommand` (Line 6363)
   - **Security**: Console (6)

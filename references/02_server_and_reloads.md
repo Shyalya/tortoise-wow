@@ -98,6 +98,10 @@ Cancels any active server restart or shutdown countdown immediately:
 | `.server restart cancel` | Admin (4) | Cancels a pending server restart. | `.server restart cancel` |
 | `.server shutdown <seconds>` | Admin (4) | Initiates a countdown and shuts down the server. | `.server shutdown 120` |
 | `.server shutdown cancel` | Admin (4) | Cancels a pending server shutdown. | `.server shutdown cancel` |
+| `.server idlerestart <seconds>` | Admin (4) | Restarts server when no players are online. | `.server idlerestart 60` |
+| `.server idlerestart cancel` | Admin (4) | Cancels pending idle restart. | `.server idlerestart cancel` |
+| `.server idleshutdown <seconds>` | Admin (4) | Shuts down server when no players are online. | `.server idleshutdown 60` |
+| `.server idleshutdown cancel` | Admin (4) | Cancels pending idle shutdown. | `.server idleshutdown cancel` |
 | `.server corpses` | Admin (4) | Forces immediate cleanup of world corpses. | `.server corpses` |
 | `.server resetallraids` | Admin (4) | Forces an immediate reset on all active raid locks. | `.server resetallraids` |
 | `.broadcast <message>` | Admin (4) | Sends system-wide chat announcement to all players. | `.broadcast Event starting in 10 minutes!` |
@@ -129,15 +133,22 @@ Reload tables directly into server memory from MariaDB without restarting `mango
 | `.reload npc_vendor` | Admin (4) | Reloads vendor inventory stock and purchase costs. |
 | `.reload npc_trainer` | Admin (4) | Reloads trainer spell offerings and skill caps. |
 | `.reload game_tele` | Admin (4) | Reloads predefined `.tele` destination tokens. |
+| `.reload shop` | Admin (4) | Reloads donation shop items and categories (Turtle custom). |
+| `.reload housing` | Dev (3) | Reloads player and guild housing definitions (Turtle custom). |
+| `.reload visibilities` | Dev (3) | Reloads dynamic visibility zones and phases (Turtle custom). |
+| `.reload gmlevels` | Dev (3) | Reloads GM level command permissions table. |
+| `.reload gm_ticket_template` | Admin (4) | Reloads GM ticket response templates. |
+| `.reload bgplayers` | Admin (4) | Reloads battleground minimum player thresholds. |
 
 ### Complete Alphabetic Target Directory
+- **Turtle Custom Features**: `.reload shop`, `.reload housing`, `.reload visibilities`, `.reload gmlevels`, `.reload gm_ticket_template`, `.reload bgplayers`, `.reload petitions`
 - **Accounts & Bans**: `.reload account_banned`, `.reload ip_banned`
-- **Area Triggers & Graveyards**: `.reload areatrigger_involvedrelation`, `.reload areatrigger_tavern`, `.reload areatrigger_teleport`, `.reload game_graveyard_zone`, `.reload game_weather`, `.reload taxi_path_transitions`
+- **Area Triggers & Graveyards**: `.reload areatrigger_involvedrelation`, `.reload areatrigger_tavern`, `.reload areatrigger_teleport`, `.reload game_graveyard_zone`, `.reload game_weather`, `.reload taxi_path_transitions`, `.reload cinematic_waypoints`
 - **Creatures & Spawns**: `.reload creature`, `.reload creature_ai_events`, `.reload creature_battleground`, `.reload creature_display_info_addon`, `.reload creature_groups`, `.reload creature_involvedrelation`, `.reload creature_onkill_reputation`, `.reload creature_questrelation`, `.reload creature_spells`, `.reload creature_spells_scripts`, `.reload locales_creature`, `.reload pet_name_generation`, `.reload trainer_greeting`
-- **GameObjects**: `.reload gameobject_battleground`, `.reload gameobject_involvedrelation`, `.reload gameobject_loot_template`, `.reload gameobject_questrelation`, `.reload gameobject_requirement`, `.reload gameobject_scripts`, `.reload locales_gameobject`
+- **GameObjects & Scripts**: `.reload gameobject_battleground`, `.reload gameobject_involvedrelation`, `.reload gameobject_loot_template`, `.reload gameobject_questrelation`, `.reload gameobject_requirement`, `.reload gameobject_scripts`, `.reload locales_gameobject`, `.reload generic_scripts`, `.reload gossip_scripts`, `.reload gossip_menu`, `.reload gossip_menu_option`
 - **Items & Loot Tables**: `.reload item_enchantment_template`, `.reload item_loot_template`, `.reload item_required_target`, `.reload locales_item`, `.reload disenchant_loot_template`, `.reload fishing_loot_template`, `.reload mail_loot_template`, `.reload map_loot_disabled`, `.reload pickpocketing_loot_template`, `.reload reference_loot_template`, `.reload skinning_loot_template`
 - **Locales & Texts**: `.reload locales_gossip_menu_option`, `.reload locales_page_text`, `.reload locales_points_of_interest`, `.reload locales_quest`, `.reload mangos_string`, `.reload npc_gossip`, `.reload npc_text`, `.reload page_text`, `.reload points_of_interest`
-- **Quests & Reputations**: `.reload quest_end_scripts`, `.reload quest_greeting`, `.reload quest_start_scripts`, `.reload reputation_reward_rate`, `.reload reputation_spillover_template`, `.reload reserved_name`
+- **Quests, Skills & Reputations**: `.reload quest_end_scripts`, `.reload quest_greeting`, `.reload quest_start_scripts`, `.reload reputation_reward_rate`, `.reload reputation_spillover_template`, `.reload reserved_name`, `.reload skill_fishing_base_level`, `.reload conditions`, `.reload variables`, `.reload autobroadcast`
 - **Spells & Auras**: `.reload spell_affect`, `.reload spell_area`, `.reload spell_chain`, `.reload spell_disabled`, `.reload spell_elixir`, `.reload spell_group`, `.reload spell_group_stack_rules`, `.reload spell_learn_spell`, `.reload spell_mod`, `.reload spell_pet_auras`, `.reload spell_proc_event`, `.reload spell_proc_item_enchant`, `.reload spell_script_target`, `.reload spell_scripts`, `.reload spell_target_position`, `.reload spell_threats`, `.reload instance_buff_removal`
 - **Faction Change Mappings**: `.reload player_factionchange_items`, `.reload player_factionchange_mounts`, `.reload player_factionchange_quests`, `.reload player_factionchange_reputations`, `.reload player_factionchange_spells`
 

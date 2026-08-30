@@ -4,7 +4,7 @@
 
 # 🐢 TORTOISE-WOW
 
-### Enterprise-Grade 1.18.1 CMaNGOS Core & Autonomous Playerbot Ecosystem
+## Enterprise-Grade 1.18.1 CMaNGOS Core & Autonomous Playerbot Ecosystem
 
 [![Upstream Fork](https://img.shields.io/badge/Forked%20From-Shyalya%2Ftortoise--wow-blueviolet?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Shyalya/tortoise-wow)
 [![Build Status](https://img.shields.io/badge/Build-Passing-2ea043?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/ssdeanx/tortoise-wow)
@@ -140,12 +140,13 @@ Integrated from [jrad7's mod-dungeon-clear](https://github.com/jrad7/mod-dungeon
 
 ## 📖 Modular Command Manuals & In-Game Macros
 
-All 539 core commands, whisper triggers, and macro suites have been verified directly against the active C++ engine source files (`Chat.cpp`, `ChatCommandHandlerStrategy.cpp`, `DungeonClearCommand.cpp`) and organized into 16 specialized reference manuals:
+All 539 core commands, whisper triggers, and macro suites have been verified directly against the active C++ engine source files (`Chat.cpp`, `ChatCommandHandlerStrategy.cpp`, `DungeonClearCommand.cpp`) and organized into 19 specialized reference manuals:
 
 ### 🌟 Master Hub: [**Master GM & Playerbot Command Portal (gm_commands.md)**](./gm_commands.md)
 
 | Module Index & Title | Scope & Key Capabilities | Quick Access Link |
 | :--- | :--- | :---: |
+| [![Self](https://img.shields.io/badge/00-Self%20%26%20Player-58a6ff?style=flat-square&logo=person&logoColor=white)](./references/00_self_and_player_commands.md) | **Dedicated to your own character** (level 60 boost, level-scaled random gear, enchants, flight). | [`00_self_and_player_commands.md`](./references/00_self_and_player_commands.md) |
 | [![Security](https://img.shields.io/badge/01-Security%20%26%20Accounts-1f6feb?style=flat-square&logo=auth0&logoColor=white)](./references/01_security_and_account.md) | Security Levels 0–6, account creation, password/IP locks, GM permissions. | [`01_security_and_account.md`](./references/01_security_and_account.md) |
 | [![Server](https://img.shields.io/badge/02-Server%20%26%20Reloads-238636?style=flat-square&logo=gnubash&logoColor=white)](./references/02_server_and_reloads.md) | `.server` restarts/shutdowns, 106+ `.reload` tables (configs, items, spells, strings). | [`02_server_and_reloads.md`](./references/02_server_and_reloads.md) |
 | [![Teleports](https://img.shields.io/badge/03-Teleports%20%26%20Maps-d29922?style=flat-square&logo=googlemaps&logoColor=white)](./references/03_teleports_and_movement.md) | `.tele` tokens (647+ destinations), custom Turtle dungeons & raids, `.go xyz`, `.hover`. | [`03_teleports_and_movement.md`](./references/03_teleports_and_movement.md) |
@@ -162,6 +163,8 @@ All 539 core commands, whisper triggers, and macro suites have been verified dir
 | [![Strategies](https://img.shields.io/badge/14-Tactical%20AI%20%26%20Specs-d29922?style=flat-square&logo=strategy&logoColor=white)](./references/14_bot_strategies_and_tactics.md) | Strategy buckets (`co`, `nc`, `de`), **target-based (`%t`) macros for all 28 class specs**. | [`14_bot_strategies_and_tactics.md`](./references/14_bot_strategies_and_tactics.md) |
 | [![DungeonClear](https://img.shields.io/badge/15-mod--dungeon--clear-39c5bb?style=flat-square&logo=gnubash&logoColor=white)](./references/15_dungeon_clear_module.md) | Autonomous dungeon clearing behavior trees, pull governors, and door policies. | [`15_dungeon_clear_module.md`](./references/15_dungeon_clear_module.md) |
 | [![Diagnostics](https://img.shields.io/badge/16-Developer%20%26%20Debug-da3633?style=flat-square&logo=gnometerminal&logoColor=white)](./references/16_developer_and_diagnostics.md) | Universal `.lookup` engine, `.list` inspectors, `.debug` profilers, field modifiers. | [`16_developer_and_diagnostics.md`](./references/16_developer_and_diagnostics.md) |
+| [![TierSets](https://img.shields.io/badge/17-Tier%20Sets%20%26%20Gear-bc8cff?style=flat-square&logo=warcraft&logoColor=white)](./references/17_tier_items_and_endgame_gear.md) | Complete Tier 0–3 item IDs, legendary weapons, BiS 1-click gear loadouts. | [`17_tier_items_and_endgame_gear.md`](./references/17_tier_items_and_endgame_gear.md) |
+| [![Specs](https://img.shields.io/badge/18-Class%20Talent%20Specs-1f6feb?style=flat-square&logo=bookstack&logoColor=white)](./references/18_class_talent_specs.md) | 18+ high-performance specs, 51-point builds, custom Turtle WoW 1.18.1 abilities. | [`18_class_talent_specs.md`](./references/18_class_talent_specs.md) |
 
 ---
 
@@ -404,7 +407,7 @@ Any client that does not match this version or build will likely have a myriad o
 
 Additions will be added as the core code reaches feature completion.
 
-#### Current Additions
+### Current Additions
 
 - **Autoscale** - Rudimentary toggleable dungeon/raid auto scaling system, found in `mangosd.conf`.
 - **Leech** - Basic toggleable leech system designed for solo play, found in `mangosd.conf`.

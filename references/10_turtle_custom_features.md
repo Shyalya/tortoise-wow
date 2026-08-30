@@ -4,7 +4,7 @@
 
 ---
 
-### 📚 Complete 19-Module Reference Library
+## 📚 Complete 19-Module Reference Library
 
 | Security & Server | World & Characters | Gameplay & Items | Bots & Modules |
 | :--- | :--- | :--- | :--- |
@@ -23,20 +23,26 @@ Copy and paste these macros directly into your World of Warcraft **Macro UI** (`
 ### Category A: Guild Administration & Guild Housing (Top Priority)
 
 #### 🏰 Macro 1: Fast Travel to Instantiated Guild House
+
 Teleports your character directly to your guild's custom instantiated guild house:
+
 ```lua
 .guild house
 ```
 
 #### 🛡️ Macro 2: Create Guild & Grant Guild Master Rank
+
 Creates a guild with designated leader and assigns Guild Master Rank 0:
+
 ```lua
 .guild create Sam "Knights of Tortoise"
 .guild rank Sam 0
 ```
 
 #### ✉️ Macro 3: Invite Player Directly to Guild
+
 Adds target character directly to guild roster without requiring a guild charter:
+
 ```lua
 .guild invite Sam "Knights of Tortoise"
 ```
@@ -46,21 +52,27 @@ Adds target character directly to guild roster without requiring a guild charter
 ### Category B: Hardcore & Turtle Challenge Modes (Middle Priority)
 
 #### 💀 Macro 4: Hardcore Alerts & Dedicated Hardcore Chat
+
 Enables global broadcast notifications for Hardcore character deaths and unlocks the Hardcore channel:
+
 ```lua
 .hcmessages 1
 .hcchat 1
 ```
 
 #### 🗺️ Macro 5: Cartographer Addon Map Explorer
+
 Reveals all map tiles for Cartographer addon integration:
+
 ```lua
 .cartographer
 .explorecheat on
 ```
 
 #### 🐢 Macro 6: Slow & Steady / Trainee Challenge Mode
+
 Toggles the custom Turtle-WoW "Trainee" slow-leveling mode:
+
 ```lua
 .toggletrainee
 ```
@@ -70,7 +82,9 @@ Toggles the custom Turtle-WoW "Trainee" slow-leveling mode:
 ### Category C: Engine Profiling & Performance Telemetry (Bottom Section)
 
 #### 📈 Macro 7: Live Performance Monitor HUD
+
 Toggles real-time server tick rates, memory usage, and thread performance HUD:
+
 ```lua
 .perfmon
 ```
@@ -79,9 +93,10 @@ Toggles real-time server tick rates, memory usage, and thread performance HUD:
 
 ## 2. Guild & Custom Features Reference (`.guild` / `.cartographer` / `.hcmessages`)
 
-Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.cpp`):
+Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp`):
 
 ### 🏰 Guild Operations (`.guild`)
+
 - `.guild house`
   - **Security**: Developer (3)
   - **What it does**: Teleports player to their guild's instantiated guild house map.
@@ -120,6 +135,7 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
 ---
 
 ### 🐢 Turtle Custom System Commands
+
 - `.cartographer`
   - **Security**: Player (0)
   - **What it does**: Uncovers map fog-of-war for Cartographer addon.
@@ -140,15 +156,65 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **What it does**: Toggles Trainee / Slow & Steady challenge mode.
   - **Example**: `.toggletrainee`
 
+- `.toggleinferno`
+  - **Security**: Developer (3)
+  - **What it does**: Toggles the custom Turtle-WoW Inferno Mode challenge.
+  - **Example**: `.toggleinferno`
+
+- `.toggleillusions`
+  - **Security**: Developer (3)
+  - **What it does**: Toggles weapon enchant illusion appearance unlocks.
+  - **Example**: `.toggleillusions`
+
+- `.tmogdelete`
+  - **Security**: Developer (3)
+  - **What it does**: Deletes saved transmogrification collection data for target player.
+  - **Example**: `.tmogdelete`
+
+- `.shellcoin`
+  - **Security**: Player (0)
+  - **What it does**: Displays and manages Turtle Shellcoin currency and token balances.
+  - **Example**: `.shellcoin`
+
+- `.radio`
+  - **Security**: Player (0)
+  - **What it does**: Controls Turtle-WoW in-game streaming radio playback.
+  - **Example**: `.radio`
+
 - `.xp [on | off]`
   - **Security**: Player (0)
   - **What it does**: Turns character experience gain on or off.
   - **Example**: `.xp off`
 
+- `.blockegg`
+  - **Security**: Developer (3)
+  - **What it does**: Toggles blocking of Easter egg object triggers.
+  - **Example**: `.blockegg`
+
+- `.showborders`
+  - **Security**: Developer (3)
+  - **What it does**: Renders territorial boundary lines on map.
+  - **Example**: `.showborders`
+
+- `.cinematic <cinematic_id>`
+  - **Security**: Administrator (4)
+  - **What it does**: Plays custom Turtle-WoW in-game cinematic cutscene.
+  - **Example**: `.cinematic 1`
+
+- `.wareffort info` / `.wareffort setstage <stage>` / `.wareffortget <res_id>` / `.wareffortset <res_id> <amount>`
+  - **Security**: Developer (3) / Administrator (4)
+  - **What it does**: Inspects and overrides Ahn'Qiraj War Effort global resource totals.
+  - **Example**: `.wareffort info`
+
 - `.perfmon`
   - **Security**: Moderator (2)
   - **What it does**: Toggles real-time performance telemetry HUD.
   - **Example**: `.perfmon`
+
+- `.perf enable <0|1>` / `.perf resources` / `.perf cpu` / `.perf memory`
+  - **Security**: Administrator (4) / Developer (3)
+  - **What it does**: Generates detailed system resource profiling metrics and memory breakdowns.
+  - **Example**: `.perf resources`
 
 ---
 

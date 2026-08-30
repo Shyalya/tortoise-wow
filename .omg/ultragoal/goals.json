@@ -1,15 +1,15 @@
 [
   {
     "id": "goal-1",
-    "description": "Verify daemon shutdown and stash all local uncommitted working tree modifications",
+    "description": "Stop running server daemons cleanly and stash all local uncommitted working tree modifications",
     "status": "completed",
-    "verification_criteria": "Services stopped, git stash created cleanly with working tree clean."
+    "verification_criteria": "turtle-mangosd and turtle-realmd inactive, git stash created cleanly with clean working tree."
   },
   {
     "id": "goal-2",
-    "description": "Pull latest commits from origin/playerbots-integration-gh",
+    "description": "Pull and merge latest commits from origin/playerbots-integration-gh",
     "status": "completed",
-    "verification_criteria": "Branch successfully updated to match origin/playerbots-integration-gh HEAD."
+    "verification_criteria": "Branch successfully rebased/merged with origin/playerbots-integration-gh HEAD."
   },
   {
     "id": "goal-3",
@@ -19,9 +19,9 @@
   },
   {
     "id": "goal-4",
-    "description": "Audit incoming commit diff and execute new database migrations",
+    "description": "Audit incoming commit diff and execute new database migrations if present",
     "status": "completed",
-    "verification_criteria": "All new SQL files applied with --force to tw_world/tw_char and tracked in tw_world.migrations."
+    "verification_criteria": "Commit diff audited; all new SQL files applied with --force to tw_world/tw_char and tracked in tw_world.migrations."
   },
   {
     "id": "goal-5",

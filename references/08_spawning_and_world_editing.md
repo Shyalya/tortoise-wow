@@ -81,7 +81,7 @@ Forces selected NPC to speak in `/say` and perform an animation emote:
 
 ## 2. Spawning Commands Reference (`.npc` / `.gobject`)
 
-Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.cpp`):
+Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp`):
 
 ### 🧙 Creature Spawning & Editing (`.npc`)
 - `.npc add <entry_id>`
@@ -156,11 +156,16 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
 
 ---
 
-### 📦 GameObject Manipulation (`.gobject`)
+### 📦 GameObject Manipulation (`.gobject` / `.wp` / `.path`)
 - `.gobject add <entry_id>`
   - **Security**: Developer (3)
   - **What it does**: Spawns permanent GameObject (chest, door, portal, chair) into `tw_world.gameobject`.
   - **Example**: `.gobject add 179501`
+
+- `.gobject tmpadd <entry_id>`
+  - **Security**: Developer (3)
+  - **What it does**: Spawns temporary GameObject (despawns on restart).
+  - **Example**: `.gobject tmpadd 179501`
 
 - `.gobject delete`
   - **Security**: Developer (3)
@@ -186,6 +191,26 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **Security**: Developer (3)
   - **What it does**: Rotates targeted GameObject by specified angle.
   - **Example**: `.gobject turn 90`
+
+- `.gobject scale <val>`
+  - **Security**: Developer (3)
+  - **What it does**: Sets the 3D scale multiplier on the targeted GameObject.
+  - **Example**: `.gobject scale 1.5`
+
+- `.gobject set gostate <0|1|2>` / `.gobject set respawntime <secs>`
+  - **Security**: Developer (3)
+  - **What it does**: Modifies the GameObject state (door open/closed/active) or respawn delay.
+  - **Example**: `.gobject set gostate 1`
+
+- `.path setup <path_id>` / `.path add` / `.path start`
+  - **Security**: Developer (3)
+  - **What it does**: Records and initiates creature waypoint patrol paths live.
+  - **Example**: `.path setup 1001`
+
+- `.wp add <point_id>` / `.wp show on` / `.wp export <creature_guid>`
+  - **Security**: Administrator (4)
+  - **What it does**: Manages waypoint grids and exports path SQL to disk.
+  - **Example**: `.wp show on`
 
 ---
 

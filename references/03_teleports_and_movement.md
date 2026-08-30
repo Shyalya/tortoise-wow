@@ -140,7 +140,7 @@ Casts emergency hearthstone homebind return to rescue stuck characters:
 
 ## 3. Movement & Teleport Commands Reference (`.go` / `.tele`)
 
-Verified against CMaNGOS core command handlers (`src/game/Chat/Chat.cpp:227` & `Commands.cpp`):
+Verified against CMaNGOS core command handlers (`src/game/Chat/Chat.cpp`):
 
 ### 🎯 Spatial Movement & Navigation (`.go`)
 - `.gps [target]`
@@ -188,10 +188,20 @@ Verified against CMaNGOS core command handlers (`src/game/Chat/Chat.cpp:227` & `
   - **What it does**: Teleports to static GameObject matching database GUID.
   - **Example**: `.go object 179501`
 
-- `.go ticket <ticket_id>`
-  - **Security**: Moderator (2)
-  - **What it does**: Teleports directly to player coordinates who submitted the specified support ticket.
-  - **Example**: `.go ticket 12`
+- `.go taxinode <id>`
+  - **Security**: Observer (1)
+  - **What it does**: Teleports directly to taxi flight node ID.
+  - **Example**: `.go taxinode 2`
+
+- `.go trigger <id>`
+  - **Security**: Observer (1)
+  - **What it does**: Teleports to area trigger ID location.
+  - **Example**: `.go trigger 120`
+
+- `.go graveyard <id>`
+  - **Security**: Observer (1)
+  - **What it does**: Teleports directly to the specified graveyard ID.
+  - **Example**: `.go graveyard 4`
 
 ---
 
@@ -225,27 +235,27 @@ Verified against CMaNGOS core command handlers (`src/game/Chat/Chat.cpp:227` & `
 
 ### 👥 Player Summoning & Fast Travel Cheats
 - `.appear <player>` / `.goname <player>`
-  - **Security**: Moderator (2)
+  - **Security**: Observer (1)
   - **What it does**: Teleports you directly to specified player's current coordinates.
   - **Example**: `.appear Sam`
 
-- `.summon <player>` / `.namego <player>`
+- `.summon <player>`
   - **Security**: Moderator (2)
   - **What it does**: Summons specified player directly to your current coordinates.
   - **Example**: `.summon Sam`
 
-- `.groupsummon <player>`
+- `.groupsummon <player>` / `.groupgo <player>`
   - **Security**: Moderator (2)
   - **What it does**: Summons specified player and all members in their party/raid to your location.
   - **Example**: `.groupsummon Sam`
 
 - `.recall [player]`
-  - **Security**: Moderator (2)
+  - **Security**: Developer (3)
   - **What it does**: Returns player to their previous coordinates before their last teleport.
   - **Example**: `.recall`
 
 - `.hover [on | off]`
-  - **Security**: Developer (3)
+  - **Security**: Administrator (4)
   - **What it does**: Enables character flight / levitation mode.
   - **Example**: `.hover on`
 
@@ -265,7 +275,7 @@ Verified against CMaNGOS core command handlers (`src/game/Chat/Chat.cpp:227` & `
   - **Example**: `.explorecheat on`
 
 - `.unstuck`
-  - **Security**: Player (0)
+  - **Security**: Moderator (2) *(Free auto-unstuck for players available via in-game Help/Hearthstone)*
   - **What it does**: Casts emergency hearthstone return to rescue stuck characters.
   - **Example**: `.unstuck`
 

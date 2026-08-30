@@ -122,22 +122,86 @@ Clears custom strategy overrides and returns bot to baseline class rotation:
 
 ---
 
-## 2. Strategy Bucket Directory
+## 2. Strategy Bucket & Stance Directory
 
 Bots execute dynamic behavior trees divided into four state buckets:
 
-- **`co`**: Combat Strategies (damage rotation, healing priority, tanking)
-- **`nc`**: Non-Combat Strategies (eating, looting, gathering, following)
+- **`co`**: Combat Strategies (damage rotation, healing priority, tanking, threat)
+- **`nc`**: Non-Combat Strategies (eating, looting, gathering, following, RPG)
 - **`de`**: Dead Strategies (releasing spirit, corpse running)
-- **`react`**: Reaction / Threat Triggers
+- **`react`**: Reaction / Threat / Interrupt Triggers
 
 ### Modification Syntax
 - `co ?` : Displays active and available combat strategies for the bot.
-- `co +<strat>` : Adds a combat strategy (e.g. `co +frost`, `co +behind`).
+- `co +<strat>` : Adds a combat strategy (e.g. `co +frost`, `co +behind`, `co +avoid aoe`).
 - `co -<strat>` : Removes a combat strategy (e.g. `co -fire`).
 - `co ~<strat>` : Toggles a combat strategy on/off.
-- `nc +<strat>` : Modifies non-combat strategies (e.g. `nc +food`).
-- `reset strats` : Resets strategies to class defaults.
+- `nc +<strat>` : Modifies non-combat strategies (e.g. `nc +food`, `nc +loot`, `nc +gather`).
+- `reset strats` : Resets all strategies to baseline class defaults.
+
+---
+
+## 3. Comprehensive Strategy Reference Table
+
+Verified against `src/modules/PlayerBots/playerbot/strategy/StrategyContext.h` and class AI contexts:
+
+### 🛡️ Universal Combat & Positioning Strategies (`co +...`)
+| Strategy | Bucket | Effect / Behavior |
+| :--- | :--- | :--- |
+| `tank assist` | `co` | Assists the group's main tank, attacking their active target. |
+| `dps assist` | `co` | Assists the group's highest priority DPS or group leader. |
+| `dps aoe` | `co` | Activates multi-target area-of-effect spells and cleaves. |
+| `avoid aoe` | `co` | Detects ground hazard zones and immediately runs out of damage circles. |
+| `avoid mobs` | `co` / `nc` | Paths around roaming hostile mob aggro radii. |
+| `behind` | `co` | Navigates behind target mob to avoid parry/block (Rogues, Melee DPS). |
+| `close` / `melee` | `co` | Closes distance into melee range (<5 yards). |
+| `ranged` | `co` | Maintains safe distance at maximum spell/ranged weapon range. |
+| `kite` | `co` | Stutters steps and casts while maintaining separation from melee attacker. |
+| `flee` | `co` | Breaks target lock and sprints to group master. |
+| `threat` | `co` | Throttles DPS output if bot approaches 90%+ threat on mob. |
+| `tell target` | `co` | Whispers target name or spell alerts in group chat. |
+| `pvp` | `co` | Prioritizes hostile enemy player characters over world NPCs. |
+| `mark rti` | `co` | Automatically assigns Raid Target Icons (Skull, Cross) to priority kill targets. |
+| `focus heal targets` | `co` | Restricts healing to specified tank or low-HP party members. |
+| `focus rti targets` | `co` | Restricts DPS spells exclusively to targets marked with Raid Icons. |
+| `heal interrupt` | `co` | Prioritizes casting interrupt spells when enemy begins casting a heal. |
+| `preheal` | `co` | Begins pre-casting heals on tank anticipating incoming spike damage. |
+| `potions` | `co` | Automatically drinks healing, mana, and protection potions in combat. |
+| `conserve mana` | `co` | Downranks spells or wand-casts when mana drops below 30%. |
+
+---
+
+### 📦 Non-Combat Strategies (`nc +...`)
+| Strategy | Bucket | Effect / Behavior |
+| :--- | :--- | :--- |
+| `food` | `nc` | Automatically eats food and drinks water when health/mana is depleted. |
+| `consumables` | `nc` | Uses flasks, elixirs, sharpening stones, and scrolls before pulls. |
+| `loot` | `nc` | Scans and loots all dead mob corpses in range. |
+| `gather` | `nc` | Harvests nearby Mining nodes, Herbalism herbs, and chests. |
+| `roll` / `delayed roll` | `nc` | Automatically rolls (Need / Greed / Pass) on dungeon loot drops. |
+| `quest` | `nc` | Automatically turns in and progresses shared party quests. |
+| `accept all quests` | `nc` | Accepts every available quest offered by nearby quest givers. |
+| `fish` / `tfish` | `nc` | Equips fishing rod and casts into nearby water pools. |
+| `mount` | `nc` | Automatically mounts when traveling long distances outdoors. |
+| `wbuff` / `wbuff travel`| `nc` | Gathers realm world buffs (Onyxia, Hakkar, DM Tribute, Songflower). |
+| `rpg` | `nc` | Visits town vendors, repairs gear, trains spells, and visits inns. |
+| `travel` | `nc` | Walks or rides along roads toward dungeon/quest destinations. |
+| `silent` | `nc` | Disables bot chat banter and voice spam in group. |
+
+---
+
+### ⚔️ Class Combat Specializations (`co +...`)
+| Class | Role Strategies | Key Spells / Rotation Triggers |
+| :--- | :--- | :--- |
+| **Warrior** | `prot`, `tank`, `arms`, `fury` | Shield Slam, Devastate, Sunder Armor, Bloodthirst, Mortal Strike, Whirlwind |
+| **Paladin** | `holy`, `heal`, `prot`, `tank`, `retribution` | Holy Light, Flash of Light, Consecration, Seal of Righteousness/Command |
+| **Hunter** | `beastmastery`, `marksmanship`, `survival`, `pet` | Aimed Shot, Multi-Shot, Serpent Sting, Feign Death, Pet Aggro |
+| **Rogue** | `assassination`, `combat`, `subtlety`, `stealth` | Sinister Strike, Backstab, Slice and Dice, Eviscerate, Blade Flurry |
+| **Priest** | `holy`, `heal`, `discipline`, `shadow` | Flash Heal, Greater Heal, Renew, Mind Blast, Shadow Word: Pain, Mind Flay |
+| **Shaman** | `restoration`, `heal`, `enhancement`, `elemental`, `totems` | Chain Heal, Healing Wave, Windfury Totem, Mana Spring, Lightning Bolt, Earth Shock |
+| **Mage** | `arcane`, `fire`, `frost`, `aoe` | Fireball, Pyroblast, Frostbolt, Blizzard, Arcane Missiles, Evocation |
+| **Warlock** | `affliction`, `demonology`, `destruction`, `pet` | Shadow Bolt, Corruption, Immolate, Drain Life, Life Tap, Curse of Shadows/Elements |
+| **Druid** | `balance`, `feral`, `cat`, `bear`, `tank`, `restoration`, `heal` | Healing Touch, Rejuvenation, Regrowth, Maul, Swipe, Shred, Ferocious Bite, Moonfire |
 
 ---
 

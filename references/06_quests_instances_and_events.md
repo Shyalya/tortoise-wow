@@ -75,7 +75,7 @@ Outputs live map grid memory allocations and instance performance metrics:
 
 ## 2. Quests & Instances Commands Reference
 
-Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.cpp`):
+Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp`):
 
 ### 📜 Quest Management (`.quest`)
 - `.quest add <quest_id>`
@@ -121,15 +121,20 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **What it does**: Lists all saved instance lockout IDs and reset timestamps for player.
   - **Example**: `.instance listbinds`
 
+- `.instance continents`
+  - **Security**: Developer (3)
+  - **What it does**: Lists continent maps and instances.
+  - **Example**: `.instance continents`
+
 - `.instance stats`
   - **Security**: Developer (3)
   - **What it does**: Dumps active dungeon instance memory and player counts.
   - **Example**: `.instance stats`
 
-- `.instance savedata`
-  - **Security**: Administrator (4)
-  - **What it does**: Forces an immediate write of instance memory state to database.
-  - **Example**: `.instance savedata`
+- `.instance perfinfos`
+  - **Security**: Developer (3)
+  - **What it does**: Outputs performance telemetry and update cycle timings for instances.
+  - **Example**: `.instance perfinfos`
 
 ---
 
@@ -150,12 +155,16 @@ For full documentation and GM test automation, see **[15. Dungeon Clear AI Modul
 ---
 
 ### 🎪 World Events & Pets (`.event` / `.pet`)
-- `.event start <event_id>`: Forces world event to activate (e.g. `.event start 1`).
-- `.event stop <event_id>`: Forces world event to terminate (e.g. `.event stop 1`).
-- `.event list`: Lists all active and scheduled world events.
-- `.pet tp <points>`: Grants training points to hunter pet (e.g. `.pet tp 300`).
-- `.pet loyalty <1-6>`: Sets pet loyalty level (e.g. `.pet loyalty 6`).
-- `.pet rename <name>`: Renames hunter pet (e.g. `.pet rename Rex`).
+- `.event start <event_id>`: Forces world event to activate (Admin 4, e.g. `.event start 1`).
+- `.event stop <event_id>`: Forces world event to terminate (Admin 4, e.g. `.event stop 1`).
+- `.event enable <event_id>` / `.event disable <event_id>`: Enables or disables event schedule (Admin 4).
+- `.event list`: Lists all active and scheduled world events (Admin 4).
+- `.queststatuses`: Displays quest completion bitmask for character (Player 0).
+- `.pet learnspell <spell_id>` / `.pet unlearnspell <spell_id>`: Teaches or unlearns pet ability (Dev 3).
+- `.pet loyalty <1-6>`: Sets pet loyalty level (Dev 3, e.g. `.pet loyalty 6`).
+- `.pet rename <name>`: Renames hunter pet (Dev 3, e.g. `.pet rename Rex`).
+- `.pet list`: Lists stored pets in stable (Dev 3).
+- `.pet delete`: Deletes active pet from database (Dev 3).
 
 ---
 

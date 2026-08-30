@@ -4,7 +4,7 @@
 
 ---
 
-### 📚 Complete 19-Module Reference Library
+## 📚 Complete 19-Module Reference Library
 
 | Security & Server | World & Characters | Gameplay & Items | Bots & Modules |
 | :--- | :--- | :--- | :--- |
@@ -23,7 +23,9 @@ Copy and paste these macros directly into your World of Warcraft **Macro UI** (`
 ### Category A: Instant Level 60 Boost & Raid Readiness (Top Priority)
 
 #### 🌟 Macro 1: Complete Level 60 Boost Suite (Spells + Skills + Full Resources)
+
 Instantly levels character to 60, teaches all class abilities and trainer recipes, maxes all weapon and defense skills to 300, and fully restores HP/mana:
+
 ```lua
 .levelup 60
 .learn all_myspells
@@ -34,7 +36,9 @@ Instantly levels character to 60, teaches all class abilities and trainer recipe
 ```
 
 #### 🛡️ Macro 2: Panic Raid Recovery (God Mode + Drop Combat + Clear Cooldowns)
+
 Instantly prevents death, breaks combat lock, resets all ability cooldowns, and restores full health and mana:
+
 ```lua
 .god on
 .combatstop
@@ -43,7 +47,9 @@ Instantly prevents death, breaks combat lock, resets all ability cooldowns, and 
 ```
 
 #### ⚰️ Macro 3: Instant Revive & Full Recovery
+
 Resurrects selected target or yourself with 100% health and mana and clears cooldowns:
+
 ```lua
 .revive
 .replenish
@@ -51,7 +57,9 @@ Resurrects selected target or yourself with 100% health and mana and clears cool
 ```
 
 #### 🔄 Macro 4: Free Talent Tree Reset
+
 Resets talent points for the selected player character without gold cost or increasing trainer respec fee:
+
 ```lua
 .reset talents
 ```
@@ -61,21 +69,27 @@ Resets talent points for the selected player character without gold cost or incr
 ### Category B: Targeted Abilities, Skills & Auras (Middle Priority)
 
 #### 🐎 Macro 5: Teach Epic Mount & Riding Skill
+
 Teaches Dreadsteed / Charger / Epic mount and sets Riding skill to max:
+
 ```lua
 .learn 23161
 .setskill 148 300 300
 ```
 
 #### ✨ Macro 6: Apply World Buffs (Rallying Cry & Songflower)
+
 Applies major raid world buffs to target:
+
 ```lua
 .aura 22888
 .aura 15366
 ```
 
 #### 🎯 Macro 7: Max Weapon & Defense Skills
+
 Raises all equipped weapon skills (Swords, Axes, Maces, Bows, Defense) to maximum skill cap (300):
+
 ```lua
 .maxskill
 ```
@@ -85,20 +99,26 @@ Raises all equipped weapon skills (Swords, Axes, Maces, Bows, Defense) to maximu
 ### Category C: Combat Cheats, Testing & Resets (Bottom Section)
 
 #### ⚡ Macro 8: 10,000 Direct Damage & Kill Target
+
 Deals massive damage or instantly slays the selected target:
+
 ```lua
 .damage 10000
 .die
 ```
 
 #### 💣 Macro 9: Area-of-Effect Radial Damage (5,000 DMG)
+
 Deals direct spell damage to all enemy units within radius:
+
 ```lua
 .aoedamage 5000
 ```
 
 #### ⚠️ Macro 10: Complete Spells & Stats Reset
+
 Clears learned spells and recalculates character stats:
+
 ```lua
 .reset spells
 .reset stats
@@ -108,9 +128,10 @@ Clears learned spells and recalculates character stats:
 
 ## 2. Combat & Survival Commands Reference
 
-Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.cpp`):
+Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp`):
 
 ### 🛡️ Combat Cheats (`.god` / `.combatstop` / `.revive`)
+
 - `.god [on | off]`
   - **Security**: Developer (3)
   - **What it does**: Toggles invulnerability / god mode. Character takes zero damage from all sources.
@@ -161,9 +182,30 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **What it does**: Deals direct damage to all hostile creatures in radius.
   - **Example**: `.aoedamage 5000`
 
+- `.cast <spell_id> [triggered]` / `.cast self <spell_id>` / `.cast target <spell_id>`
+  - **Security**: Developer (3)
+  - **What it does**: Casts specified spell ID on target or self.
+  - **Example**: `.cast 133` *(Fireball)*
+
+- `.castcustom <spell_id>`
+  - **Security**: Developer (3)
+  - **What it does**: Casts spell with custom target handling.
+  - **Example**: `.castcustom 133`
+
+- `.fear`
+  - **Security**: Developer (3)
+  - **What it does**: Forces selected target into fear flee state.
+  - **Example**: `.fear`
+
+- `.dismount`
+  - **Security**: Developer (3)
+  - **What it does**: Forces selected player/target to dismount.
+  - **Example**: `.dismount`
+
 ---
 
 ### 📚 Spells, Skills & Resets Reference (`.learn` / `.maxskill` / `.reset`)
+
 - `.learn all_myspells`
   - **Security**: Developer (3)
   - **What it does**: Teaches all class spells appropriate for target character's current level.
@@ -179,6 +221,11 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **What it does**: Teaches all recipes for current active professions.
   - **Example**: `.learn all_recipes`
 
+- `.learn all_items`
+  - **Security**: Developer (3)
+  - **What it does**: Teaches all item-taught spells.
+  - **Example**: `.learn all_items`
+
 - `.learn <spell_id>`
   - **Security**: Developer (3)
   - **What it does**: Teaches target character a specific spell ID.
@@ -189,6 +236,11 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **What it does**: Removes a spell ID from target character.
   - **Example**: `.unlearn 23161`
 
+- `.unlearnoffline <player> <spell_id>`
+  - **Security**: Developer (3)
+  - **What it does**: Removes a spell ID from an offline player character.
+  - **Example**: `.unlearnoffline Sam 23161`
+
 - `.maxskill`
   - **Security**: Developer (3)
   - **What it does**: Raises all known weapon, defense, and profession skills to current level cap (300 at level 60).
@@ -198,6 +250,11 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **Security**: Developer (3)
   - **What it does**: Sets specific skill ID value and maximum.
   - **Example**: `.setskill 95 300 300` *(Defense)*
+
+- `.getskillvalue <id>`
+  - **Security**: Developer (3)
+  - **What it does**: Displays the current skill value and cap for target.
+  - **Example**: `.getskillvalue 95`
 
 - `.reset talents`
   - **Security**: Developer (3)
@@ -213,6 +270,21 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **Security**: Administrator (4)
   - **What it does**: Recalculates all base stats and modifiers.
   - **Example**: `.reset stats`
+
+- `.reset honor`
+  - **Security**: Administrator (4)
+  - **What it does**: Resets PvP honor points and standing.
+  - **Example**: `.reset honor`
+
+- `.reset level`
+  - **Security**: Administrator (4)
+  - **What it does**: Resets character level back to 1.
+  - **Example**: `.reset level`
+
+- `.reset all`
+  - **Security**: Console (6)
+  - **What it does**: Completely wipes spells, talents, and stats back to character creation defaults.
+  - **Example**: `.reset all`
 
 ---
 

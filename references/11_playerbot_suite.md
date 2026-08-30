@@ -1,17 +1,23 @@
-# 11. Playerbot Control Suite
+---
+title: "11. Playerbot Control Suite"
+version: "0.2.0"
+author: "Sam"
+created: "2026-08-28"
+---
 
 > **Quick Navigation**: [🏠 Master Portal (gm_commands.md)](../gm_commands.md) • [📖 Project Readme](../README.md) • [🎯 Bot Macro Book (13_bot_whispers_and_macros.md)](./13_bot_whispers_and_macros.md) • [⚔️ Class Strategies (14_bot_strategies_and_tactics.md)](./14_bot_strategies_and_tactics.md) • [🗺️ Teleport Directory (03_teleports_and_movement.md)](./03_teleports_and_movement.md)
 
 ---
 
-### 📚 Complete 16-Module Reference Library
+## 📚 Complete 19-Module Reference Library
 
 | Security & Server | World & Characters | Gameplay & Items | Bots & Modules |
 | :--- | :--- | :--- | :--- |
-| [01. Security & Accounts](./01_security_and_account.md) | [03. Teleports & Movement](./03_teleports_and_movement.md) | [05. Combat & Spells](./05_combat_spells_and_skills.md) | **[11. Playerbot Suite](./11_playerbot_suite.md)** |
-| [02. Server & Reloads](./02_server_and_reloads.md) | [04. Stats & Visuals](./04_character_stats_and_visuals.md) | [06. Quests & Instances](./06_quests_instances_and_events.md) | [12. RandomBot Manager](./12_randombot_manager.md) |
-| [08. Spawning & Editing](./08_spawning_and_world_editing.md) | [07. Items & Economy](./07_items_economy_and_mail.md) | [10. Turtle Custom](./10_turtle_custom_features.md) | [13. Bot Whispers & Macros](./13_bot_whispers_and_macros.md) |
-| [09. Moderation & Anticheat](./09_moderation_tickets_and_anticheat.md) | [16. Diagnostics & Lookups](./16_developer_and_diagnostics.md) | [15. Dungeon Clear AI](./15_dungeon_clear_module.md) | [14. Bot Strategies & Tactics](./14_bot_strategies_and_tactics.md) |
+| [00. Self & Own Character](./00_self_and_player_commands.md) | [03. Teleports & Movement](./03_teleports_and_movement.md) | [06. Quests & Instances](./06_quests_instances_and_events.md) | **[11. Playerbot Suite](./11_playerbot_suite.md)** |
+| [01. Security & Accounts](./01_security_and_account.md) | [04. Stats & Visuals](./04_character_stats_and_visuals.md) | [07. Items & Economy](./07_items_economy_and_mail.md) | [12. RandomBot Manager](./12_randombot_manager.md) |
+| [02. Server & Reloads](./02_server_and_reloads.md) | [05. Combat & Spells](./05_combat_spells_and_skills.md) | [08. Spawning & Editing](./08_spawning_and_world_editing.md) | [13. Bot Whispers & Macros](./13_bot_whispers_and_macros.md) |
+| [09. Moderation & Anticheat](./09_moderation_tickets_and_anticheat.md) | [10. Turtle Custom](./10_turtle_custom_features.md) | [17. Tier Sets & Gear](./17_tier_items_and_endgame_gear.md) | [14. Bot Strategies & Tactics](./14_bot_strategies_and_tactics.md) |
+| [16. Diagnostics & Lookups](./16_developer_and_diagnostics.md) | [18. Class Talent Specs](./18_class_talent_specs.md) | *(Standalone Manual)* | [15. Dungeon Clear AI](./15_dungeon_clear_module.md) |
 
 ---
 
@@ -130,7 +136,7 @@ Live reloads AI bot combat settings and heuristics without dropping world connec
 
 ## 2. Complete `.bot` Command Directory
 
-Verified against CMaNGOS playerbot engine handlers (`src/modules/PlayerBots/playerbot/PlayerbotMgr.cpp:247-3025`):
+Verified against CMaNGOS playerbot engine handlers (`src/modules/PlayerBots/playerbot/PlayerbotMgr.cpp`):
 
 ### Target Scope Specifiers
 
@@ -153,7 +159,7 @@ Verified in `PlayerbotMgr.cpp:2868`:
 | **`uncommon`** / **`green`** | `.bot gear * green` | Generates full randomized **Uncommon / Green** gear scaled to level. |
 | **`best`** | `.bot gear * best` | Equips the absolute highest stat Best-in-Slot items for current level. |
 | **`upgrade`** | `.bot gear * upgrade` | Replaces only outdated gear slots with upgrades matching master/current level. |
-| **`partial`** | `.bot gear * partial` | Upgrades a randomized selection of weak item slots. |
+| **`sync`** | `.bot gear * sync` | Synchronizes bot item levels to master level. |
 | *(default)* | `.bot gear *` | Equips standard level-appropriate randomized gear. |
 
 ---
@@ -170,7 +176,7 @@ Verified in `PlayerbotMgr.cpp:3013`:
 
 ### 🧪 Level-Scaled Consumables & Reagents
 
-Verified in `PlayerbotMgr.cpp:2930-2968`:
+Verified in `PlayerbotMgr.cpp`:
 
 - `.bot consumes <target>` / `.bot consumes *`
   - **What it does**: Generates flasks, elixirs, bandages, and scrolls scaled to character level.

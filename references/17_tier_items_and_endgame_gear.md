@@ -4,15 +4,15 @@
 
 ---
 
-### 📚 Complete Module Reference Library
+## 📚 Complete 19-Module Reference Library
 
-| Self & Accounts | Server & World | Gameplay & Progression | Bots & Automation |
+| Security & Server | World & Characters | Gameplay & Items | Bots & Modules |
 | :--- | :--- | :--- | :--- |
-| [00. Self & Player Commands](./00_self_and_player_commands.md) | [02. Server & Reloads](./02_server_and_reloads.md) | [05. Combat & Spells](./05_combat_spells_and_skills.md) | [11. Playerbot Suite](./11_playerbot_suite.md) |
-| [01. Security & Accounts](./01_security_and_account.md) | [03. Teleports & Movement](./03_teleports_and_movement.md) | [06. Quests & Instances](./06_quests_instances_and_events.md) | [12. RandomBot Manager](./12_randombot_manager.md) |
-| [04. Stats & Visuals](./04_character_stats_and_visuals.md) | [08. Spawning & Editing](./08_spawning_and_world_editing.md) | [07. Items & Economy](./07_items_economy_and_mail.md) | [13. Bot Whispers & Macros](./13_bot_whispers_and_macros.md) |
-| [09. Moderation & Anticheat](./09_moderation_tickets_and_anticheat.md) | [16. Diagnostics & Lookups](./16_developer_and_diagnostics.md) | **[17. Tier Sets & Endgame Gear](./17_tier_items_and_endgame_gear.md)** | [14. Bot Strategies & Tactics](./14_bot_strategies_and_tactics.md) |
-| [10. Turtle Custom](./10_turtle_custom_features.md) | [15. Dungeon Clear AI](./15_dungeon_clear_module.md) | **[18. Class Talent Specs](./18_class_talent_specs.md)** | [13. Macro Book](./13_bot_whispers_and_macros.md) |
+| [00. Self & Own Character](./00_self_and_player_commands.md) | [03. Teleports & Movement](./03_teleports_and_movement.md) | [06. Quests & Instances](./06_quests_instances_and_events.md) | [11. Playerbot Suite](./11_playerbot_suite.md) |
+| [01. Security & Accounts](./01_security_and_account.md) | [04. Stats & Visuals](./04_character_stats_and_visuals.md) | [07. Items & Economy](./07_items_economy_and_mail.md) | [12. RandomBot Manager](./12_randombot_manager.md) |
+| [02. Server & Reloads](./02_server_and_reloads.md) | [05. Combat & Spells](./05_combat_spells_and_skills.md) | [08. Spawning & Editing](./08_spawning_and_world_editing.md) | [13. Bot Whispers & Macros](./13_bot_whispers_and_macros.md) |
+| [09. Moderation & Anticheat](./09_moderation_tickets_and_anticheat.md) | [10. Turtle Custom](./10_turtle_custom_features.md) | **[17. Tier Sets & Gear](./17_tier_items_and_endgame_gear.md)** | [14. Bot Strategies & Tactics](./14_bot_strategies_and_tactics.md) |
+| [16. Diagnostics & Lookups](./16_developer_and_diagnostics.md) | [18. Class Talent Specs](./18_class_talent_specs.md) | *(Standalone Manual)* | [15. Dungeon Clear AI](./15_dungeon_clear_module.md) |
 
 ---
 
@@ -21,7 +21,9 @@
 Copy and paste these macros directly into your World of Warcraft **Macro UI** (`/m`) or chat box to instantly equip or populate your bags with the definitive Best-in-Slot endgame setup for your class/spec:
 
 ### 🛡️ Protection Warrior (Main Tank BiS)
+
 Full 9-piece Dreadnaught, Thunderfury, The Face of Death shield, Drake Fang Talisman, Styleen's Impeding Scarab, Band of Accuria, and Prestor's Talisman:
+
 ```lua
 .additem 22416 1
 .additem 22417 1
@@ -42,7 +44,9 @@ Full 9-piece Dreadnaught, Thunderfury, The Face of Death shield, Drake Fang Tali
 ```
 
 ### ⚔️ Dual-Wield Fury/Prot Tank Warrior (Max Threat BiS)
+
 Thunderfury (MH), The Hungering Cold (OH), Drake Fang Talisman, Kiss of the Spider, Band of Accuria, Ring of the Fallen God, and Prestor's Talisman:
+
 ```lua
 .additem 22416 1
 .additem 22418 1
@@ -60,7 +64,9 @@ Thunderfury (MH), The Hungering Cold (OH), Drake Fang Talisman, Kiss of the Spid
 ```
 
 ### ⚔️ Fury Warrior (Dual-Wield Melee DPS BiS)
+
 Gressil (Kel'Thuzad MH), The Hungering Cold (Kel'Thuzad OH), Kiss of the Spider, Drake Fang Talisman, Band of Accuria, Ring of the Fallen God, and Prestor's Talisman:
+
 ```lua
 .additem 22418 1
 .additem 22419 1
@@ -77,7 +83,9 @@ Gressil (Kel'Thuzad MH), The Hungering Cold (Kel'Thuzad OH), Kiss of the Spider,
 ```
 
 ### 🔨 2-Handed Arms / Slam Warrior (Two-Handed Physical DPS BiS)
+
 Might of Menethil (2H Mace), Dreadnaught gear, Kiss of the Spider, Drake Fang Talisman, Band of Accuria, Ring of the Fallen God, Prestor's Talisman, and Soulstring:
+
 ```lua
 .additem 22416 1
 .additem 22417 1
@@ -96,7 +104,9 @@ Might of Menethil (2H Mace), Dreadnaught gear, Kiss of the Spider, Drake Fang Ta
 ```
 
 ### 🗡️ Combat / Daggers Rogue (Physical DPS BiS)
+
 Full 9-piece Bonescythe, Kingsfall (Kel'Thuzad Dagger), Harbinger of Doom, Kiss of the Spider, Badge of the Swarmguard, Band of Accuria, and Nerubian Slavemaker:
+
 ```lua
 .additem 22476 1
 .additem 22477 1
@@ -116,7 +126,9 @@ Full 9-piece Bonescythe, Kingsfall (Kel'Thuzad Dagger), Harbinger of Doom, Kiss 
 ```
 
 ### 🏹 Marksmanship Hunter (Ranged DPS BiS)
+
 Full 9-piece Cryptstalker, Nerubian Slavemaker, The Eye of Nerub (2H Polearm), Kiss of the Spider, Drake Fang Talisman, Band of Accuria, and Ring of the Fallen God:
+
 ```lua
 .additem 22436 1
 .additem 22437 1
@@ -136,7 +148,9 @@ Full 9-piece Cryptstalker, Nerubian Slavemaker, The Eye of Nerub (2H Polearm), K
 ```
 
 ### 🔥 Fire / Frost Mage (Caster DPS BiS)
+
 Full 9-piece Frostfire, Atiesh Greatstaff of the Guardian (Mage), Neltharion's Tear, Restrained Essence of Sapphiron, Band of Unnatural Forces, Ring of the Fallen God, Gem of Trapped Innocents, and Wand of the Whispering Dead:
+
 ```lua
 .additem 22496 1
 .additem 22497 1
@@ -158,7 +172,9 @@ Full 9-piece Frostfire, Atiesh Greatstaff of the Guardian (Mage), Neltharion's T
 ```
 
 ### 💀 Affliction / Destruction Warlock (Shadow DPS BiS)
+
 Full 9-piece Plagueheart, Atiesh Greatstaff of the Guardian (Warlock), Neltharion's Tear, Restrained Essence of Sapphiron, Band of Unnatural Forces, Gem of Trapped Innocents, and Wand of the Whispering Dead:
+
 ```lua
 .additem 22504 1
 .additem 22505 1
@@ -179,7 +195,9 @@ Full 9-piece Plagueheart, Atiesh Greatstaff of the Guardian (Warlock), Nelthario
 ```
 
 ### ✝️ Holy Priest (Raid Healer BiS)
+
 Full 9-piece Vestments of Faith, Atiesh Greatstaff of the Guardian (Priest), Eye of the Dead, Rejuvenating Gem, Ring of Faith, Gem of Trapped Innocents, and Wand of the Whispering Dead:
+
 ```lua
 .additem 22512 1
 .additem 22513 1
@@ -199,7 +217,9 @@ Full 9-piece Vestments of Faith, Atiesh Greatstaff of the Guardian (Priest), Eye
 ```
 
 ### 🔨 Holy / Retribution Paladin (Support & Healer BiS)
+
 Full 9-piece Redemption Armor, The End of Dreams (Kel'Thuzad 1H Mace), Shield of Condemnation, Eye of the Dead, Rejuvenating Gem, and Ring of Redemption:
+
 ```lua
 .additem 22424 1
 .additem 22425 1
@@ -218,7 +238,9 @@ Full 9-piece Redemption Armor, The End of Dreams (Kel'Thuzad 1H Mace), Shield of
 ```
 
 ### ⚡ Restoration / Elemental Shaman (Healer & Caster BiS)
+
 Full 9-piece The Earthshatterer, The End of Dreams, Shield of Condemnation, Eye of the Dead, Neltharion's Tear, and Ring of the Earthshatterer:
+
 ```lua
 .additem 22464 1
 .additem 22465 1
@@ -237,7 +259,9 @@ Full 9-piece The Earthshatterer, The End of Dreams, Shield of Condemnation, Eye 
 ```
 
 ### 🐾 Restoration / Feral Druid (Healer & Tank BiS)
+
 Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye of the Dead, Rejuvenating Gem, Ring of the Dreamwalker, and Shroud of Dominion:
+
 ```lua
 .additem 22488 1
 .additem 22489 1
@@ -278,6 +302,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ## 3. Complete Naxxramas Tier 3 Armor Sets (9 Pieces)
 
 ### 🛡️ Warrior: Dreadnaught Battlegear
+
 - **`22416`** : Dreadnaught Breastplate (Chest)
 - **`22417`** : Dreadnaught Legplates (Legs)
 - **`22418`** : Dreadnaught Helmet (Head)
@@ -289,6 +314,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`23059`** : Ring of the Dreadnaught (Finger)
 
 ### 🔨 Paladin: Redemption Armor
+
 - **`22428`** : Redemption Helm (Head)
 - **`22429`** : Redemption Spaulders (Shoulders)
 - **`22425`** : Redemption Tunic (Chest)
@@ -300,6 +326,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`23066`** : Ring of Redemption (Finger)
 
 ### 🏹 Hunter: Cryptstalker Armor
+
 - **`22438`** : Cryptstalker Headpiece (Head)
 - **`22439`** : Cryptstalker Spaulders (Shoulders)
 - **`22436`** : Cryptstalker Tunic (Chest)
@@ -311,6 +338,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`23067`** : Ring of the Cryptstalker (Finger)
 
 ### 🗡️ Rogue: Bonescythe Armor
+
 - **`22478`** : Bonescythe Helmet (Head)
 - **`22479`** : Bonescythe Pauldrons (Shoulders)
 - **`22476`** : Bonescythe Breastplate (Chest)
@@ -322,6 +350,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`23060`** : Bonescythe Ring (Finger)
 
 ### ✝️ Priest: Vestments of Faith
+
 - **`22514`** : Circlet of Faith (Head)
 - **`22515`** : Mantle of Faith (Shoulders)
 - **`22512`** : Robe of Faith (Chest)
@@ -333,6 +362,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`23061`** : Ring of Faith (Finger)
 
 ### ⚡ Shaman: The Earthshatterer
+
 - **`22466`** : Earthshatter Headpiece (Head)
 - **`22467`** : Earthshatter Spaulders (Shoulders)
 - **`22464`** : Earthshatter Tunic (Chest)
@@ -344,6 +374,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`23065`** : Ring of the Earthshatterer (Finger)
 
 ### 🔥 Mage: Frostfire Regalia
+
 - **`22498`** : Frostfire Circlet (Head)
 - **`22499`** : Frostfire Shoulderpads (Shoulders)
 - **`22496`** : Frostfire Robe (Chest)
@@ -355,6 +386,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`23062`** : Frostfire Ring (Finger)
 
 ### 💀 Warlock: Plagueheart Raiment
+
 - **`22506`** : Plagueheart Circlet (Head)
 - **`22507`** : Plagueheart Shoulderpads (Shoulders)
 - **`22504`** : Plagueheart Robe (Chest)
@@ -366,6 +398,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`23063`** : Plagueheart Ring (Finger)
 
 ### 🐾 Druid: Dreamwalker Raiment
+
 - **`22490`** : Dreamwalker Headpiece (Head)
 - **`22491`** : Dreamwalker Spaulders (Shoulders)
 - **`22488`** : Dreamwalker Tunic (Chest)
@@ -381,6 +414,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ## 4. Temple of Ahn'Qiraj Tier 2.5 Armor Sets (5 Pieces)
 
 ### 🛡️ Warrior: Conqueror's Battlegear
+
 - **`21329`** : Conqueror's Crown (Head)
 - **`21330`** : Conqueror's Spaulders (Shoulders)
 - **`21331`** : Conqueror's Breastplate (Chest)
@@ -388,6 +422,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`21333`** : Conqueror's Greaves (Feet)
 
 ### 🔨 Paladin: Avenger's Battlegear
+
 - **`21387`** : Avenger's Crown (Head)
 - **`21391`** : Avenger's Pauldrons (Shoulders)
 - **`21389`** : Avenger's Chestplate (Chest)
@@ -395,6 +430,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`21388`** : Avenger's Sabatons (Feet)
 
 ### 🏹 Hunter: Striker's Garb
+
 - **`21366`** : Striker's Diadem (Head)
 - **`21367`** : Striker's Pauldrons (Shoulders)
 - **`21370`** : Striker's Hauberk (Chest)
@@ -402,6 +438,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`21365`** : Striker's Footguards (Feet)
 
 ### 🗡️ Rogue: Deathdealer's Embrace
+
 - **`21360`** : Deathdealer's Helm (Head)
 - **`21361`** : Deathdealer's Spaulders (Shoulders)
 - **`21364`** : Deathdealer's Vest (Chest)
@@ -409,6 +446,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`21359`** : Deathdealer's Boots (Feet)
 
 ### ✝️ Priest: Garments of the Oracle
+
 - **`21348`** : Coronet of the Oracle (Head)
 - **`21350`** : Mantle of the Oracle (Shoulders)
 - **`21351`** : Raiments of the Oracle (Chest/Robe)
@@ -416,6 +454,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`21349`** : Footwraps of the Oracle (Feet)
 
 ### ⚡ Shaman: Stormcaller's Garb
+
 - **`21372`** : Stormcaller's Diadem (Head)
 - **`21376`** : Stormcaller's Epaulets (Shoulders)
 - **`21374`** : Stormcaller's Hauberk (Chest)
@@ -423,6 +462,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`21373`** : Stormcaller's Greaves (Feet)
 
 ### 🔥 Mage: Enigma Regalia
+
 - **`21347`** : Enigma Circlet (Head)
 - **`21345`** : Enigma Shoulderpads (Shoulders)
 - **`21343`** : Enigma Robes (Chest/Robe)
@@ -430,6 +470,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`21344`** : Enigma Boots (Feet)
 
 ### 💀 Warlock: Doomcaller's Attire
+
 - **`21337`** : Doomcaller's Circlet (Head)
 - **`21335`** : Doomcaller's Mantle (Shoulders)
 - **`21334`** : Doomcaller's Robes (Chest/Robe)
@@ -437,6 +478,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`21338`** : Doomcaller's Footwraps (Feet)
 
 ### 🐾 Druid: Genesis Raiment
+
 - **`21353`** : Genesis Circlet (Head)
 - **`21354`** : Genesis Mantle (Shoulders)
 - **`21357`** : Genesis Vest (Chest)
@@ -448,6 +490,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ## 5. Blackwing Lair & Molten Core Tier 2 Armor Sets (8 Pieces)
 
 ### 🛡️ Warrior: Battlegear of Wrath
+
 - **`16963`** : Helm of Wrath (Head - Onyxia)
 - **`16961`** : Pauldrons of Wrath (Shoulders)
 - **`16966`** : Breastplate of Wrath (Chest - Nefarian)
@@ -458,6 +501,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`16965`** : Sabatons of Wrath (Feet)
 
 ### 🔨 Paladin: Judgement Armor
+
 - **`16955`** : Judgement Helm (Head - Onyxia)
 - **`16953`** : Judgement Spaulders (Shoulders)
 - **`16958`** : Judgement Breastplate (Chest - Nefarian)
@@ -468,6 +512,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`16957`** : Judgement Boots (Feet)
 
 ### 🏹 Hunter: Dragonstalker Armor
+
 - **`16939`** : Dragonstalker's Helm (Head - Onyxia)
 - **`16937`** : Dragonstalker's Spaulders (Shoulders)
 - **`16942`** : Dragonstalker's Breastplate (Chest - Nefarian)
@@ -478,6 +523,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`16941`** : Dragonstalker's Greaves (Feet)
 
 ### 🗡️ Rogue: Bloodfang Armor
+
 - **`16908`** : Bloodfang Hood (Head - Onyxia)
 - **`16832`** : Bloodfang Spaulders (Shoulders)
 - **`16905`** : Bloodfang Chestpiece (Chest - Nefarian)
@@ -488,6 +534,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`16910`** : Bloodfang Bracers (Wrists)
 
 ### ✝️ Priest: Vestments of Transcendence
+
 - **`16922`** : Halo of Transcendence (Head - Onyxia)
 - **`16924`** : Pauldrons of Transcendence (Shoulders)
 - **`16923`** : Robes of Transcendence (Chest - Nefarian)
@@ -498,6 +545,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`16919`** : Boots of Transcendence (Feet)
 
 ### ⚡ Shaman: The Ten Storms
+
 - **`16947`** : Visor of Ten Storms (Head - Onyxia)
 - **`16945`** : Epaulets of Ten Storms (Shoulders)
 - **`16950`** : Raiments of Ten Storms (Chest - Nefarian)
@@ -508,6 +556,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`16949`** : Greaves of Ten Storms (Feet)
 
 ### 🔥 Mage: Netherwind Regalia
+
 - **`16914`** : Netherwind Pants (Legs - Ragnaros)
 - **`16915`** : Netherwind Robes (Chest - Nefarian)
 - **`16916`** : Netherwind Mantle (Shoulders)
@@ -518,6 +567,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`16913`** : Netherwind Crown (Head - Onyxia)
 
 ### 💀 Warlock: Nemesis Raiment
+
 - **`16930`** : Nemesis Skullcap (Head - Onyxia)
 - **`16932`** : Nemesis Spaulders (Shoulders)
 - **`16931`** : Nemesis Robes (Chest - Nefarian)
@@ -528,6 +578,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`16927`** : Nemesis Boots (Feet)
 
 ### 🐾 Druid: Stormrage Raiment
+
 - **`16900`** : Stormrage Cover (Head - Onyxia)
 - **`16902`** : Stormrage Pauldrons (Shoulders)
 - **`16903`** : Stormrage Chestguard (Chest - Nefarian)
@@ -590,6 +641,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ## 9. Dungeon Sets 1 & 2 (Tier 0 & Tier 0.5 Upgrades)
 
 ### Dungeon Set 2 (Tier 0.5 Epic Upgrade)
+
 - **Warrior (Battlegear of Heroism)**: Helm `21999`, Shoulders `22001`, Chest `21997`, Wrists `21996`, Gloves `21998`, Belt `21994`, Legs `22000`, Boots `21995`
 - **Paladin (Soulforge Armor)**: Helm `22091`, Shoulders `22093`, Chest `22089`, Wrists `22088`, Gloves `22090`, Belt `22086`, Legs `22092`, Boots `22087`
 - **Hunter (Beastmaster Armor)**: Helm `22013`, Shoulders `22016`, Chest `22060`, Wrists `22011`, Gloves `22015`, Belt `22010`, Legs `22017`, Boots `22061`
@@ -605,6 +657,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ## 10. PvP Grand Marshal & High Warlord Equipment (Rank 14)
 
 ### ⚔️ Rank 14 Epic Weapons
+
 - **`18876`** : **Veteran's Claymore** (Alliance 2H Sword - 83.2 DPS, 3.80 speed)
 - **`18877`** : **Veteran's Greatsword** (Horde 2H Sword - 83.2 DPS, 3.80 speed)
 - **`18830`** : **Veteran's Sunderer** (Alliance/Horde 2H Axe - 83.2 DPS, 3.80 speed)
@@ -633,6 +686,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`18826`** : **Veteran's Shield Wall** (Horde Shield - 3106 Armor, 59 Block)
 
 ### 🛡️ Rank 12–13 Field Marshal / Warlord Epic Armor
+
 - **Warrior Plate Set**: Helm `16542`, Shoulders `16544`, Chest `16541`, Gloves `16543`, Legs `16545`, Boots `16548`
 - **Paladin Plate Set**: Helm `16474`, Shoulders `16476`, Chest `16471`, Gloves `16472`, Legs `16475`, Boots `16473`
 - **Hunter Mail Set**: Helm `16565`, Shoulders `16567`, Chest `16566`, Gloves `16568`, Legs `16571`, Boots `16569`
@@ -647,6 +701,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ## 11. World Boss Epic Drops (Azuregos, Kazzak, Nightmare Dragons)
 
 ### 🐉 Azuregos (Azshara)
+
 - **`18202`** : **Eskhandar's Left Claw** (1H Fist Weapon Off-Hand - 1.50 speed, Slow & Bleed proc)
 - **`18203`** : **Eskhandar's Right Claw** (1H Fist Weapon Main Hand - 1.50 speed, Attack Speed proc)
 - **`17070`** : **Fang of the Mystics** (1H Main Hand Mace - +40 Healing, +10 MP5)
@@ -656,6 +711,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`19131`** : **Snowblind Shoes** (Cloth Boots - +10 Sta, +10 Int, +32 Spell Damage)
 
 ### 👿 Lord Kazzak (Tainted Scar, Blasted Lands)
+
 - **`17112`** : **Empyrean Demolisher** (1H Mace - 2.80 speed, Chance on Hit: +20% Attack Speed)
 - **`17113`** : **Amberseal Keeper** (2H Staff - +44 Spell Damage, +20 Intellect, +5 MP5)
 - **`19134`** : **Flayed Doomguard Belt** (Leather Belt - +14 Str, +13 Sta, +12 Agi, +1% Crit)
@@ -664,6 +720,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`18546`** : **Infernal Headcage** (Mail Helm - +20 Str, +15 Sta, +15 Agi, +1% Crit)
 
 ### 🌲 Dragons of Nightmare (Taerar, Ysondre, Lethon, Emeriss)
+
 - **`20577`** : **Nightmare Blade** (1H Sword - 2.70 speed, +70 Armor, +32 Attack Power)
 - **`20581`** : **Staff of Rampant Growth** (2H Staff - +15 Int, +15 Sta, +40 Healing, +11 MP5)
 - **`20580`** : **Hammer of Bestial Fury** (2H Mace - +65 Feral Attack Power, +13 Str, +12 Sta)
@@ -680,6 +737,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ## 12. BiS Weapons Directory (Organized by Weapon Type)
 
 ### 🔨 Two-Handed Weapons (Swords, Maces, Axes & Polearms)
+
 | Item ID | Item Name | Type | Boss / Source | Speed | DPS | Stats & Effects |
 | :---: | :--- | :---: | :--- | :---: | :---: | :--- |
 | **`22798`** | **Might of Menethil** | 2H Mace | Kel'Thuzad (Naxx) | 3.80 | 95.3 | +20 Strength, +46 Stamina, Equip: +2% Crit. (Highest 2H Physical DPS in Vanilla) |
@@ -724,6 +782,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ---
 
 ### ⚔️ One-Handed Swords
+
 | Item ID | Item Name | Boss / Source | Speed | DPS | Stats & Effects |
 | :---: | :--- | :--- | :---: | :---: | :--- |
 | **`23054`** | **Gressil, Dawn of Ruin** | Kel'Thuzad (Naxx) | 2.70 | 73.1 | +15 Stamina, +14 Attack Power, Equip: +1% Crit. |
@@ -738,13 +797,14 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 | **`19866`** | **Warblade of the Hakkari (Off)** | Bloodlord Mandokir (ZG) | 1.70 | 40.9 | +40 Attack Power, Equip: +1% Crit. |
 | **`21520`** | **Ravencrest's Legacy** | AQ Scepter Quest | 2.80 | 58.4 | +13 Str, +9 Agi, +14 Sta. |
 | **`18348`** | **Quel'Serrar** | Onyxia / Foror's Compendium | 2.00 | 52.5 | +12 Stamina, Chance on Hit: +300 Armor & +13 Defense. Legendary tank 1H sword. |
-| **`1728`**  | **Teebu's Blazing Longsword** | World Drop (BoE) | 2.90 | 44.8 | Chance on Hit: 150–250 Fire burst damage. Glowing fiery blade. |
+| **`1728`** | **Teebu's Blazing Longsword** | World Drop (BoE) | 2.90 | 44.8 | Chance on Hit: 150–250 Fire burst damage. Glowing fiery blade. |
 | **`12584`** | **Veteran's Longsword** | Alliance Rank 14 PvP | 2.90 | 65.5 | +28 Strength, +7 Stamina, +1% Crit. (Grand Marshal 1H Sword) |
 | **`16345`** | **Veteran's Blade** | Horde Rank 14 PvP | 2.90 | 65.5 | +28 Strength, +7 Stamina, +1% Crit. (High Warlord 1H Sword) |
 
 ---
 
 ### 🗡️ Daggers
+
 | Item ID | Item Name | Boss / Source | Speed | DPS | Stats & Effects |
 | :---: | :--- | :--- | :---: | :---: | :--- |
 | **`22802`** | **Kingsfall** | Kel'Thuzad (Naxx) | 1.80 | 73.1 | +16 Agility, Equip: +1% Crit, +1% Hit, +28 Attack Power. |
@@ -763,6 +823,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ---
 
 ### 🏹 Ranged Weapons & Bows
+
 | Item ID | Item Name | Type | Boss / Source | Speed | DPS | Stats & Effects |
 | :---: | :--- | :---: | :--- | :---: | :---: | :--- |
 | **`22812`** | **Nerubian Slavemaker** | Crossbow | Kel'Thuzad (Naxx) | 3.20 | 56.6 | +24 Attack Power, +1% Crit. (Highest ranged physical DPS in Vanilla). |
@@ -786,6 +847,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ---
 
 ### 🔮 Staves, Caster 1H & Off-Hands
+
 | Item ID | Item Name | Slot | Boss / Source | Stats & Effects |
 | :---: | :--- | :---: | :--- | :--- |
 | **`22800`** | **Brimstone Staff** | 2H Staff | Naxxramas | +18 Stamina, +18 Intellect, +84 Spell Damage, +2% Spell Crit, +1% Spell Hit. |
@@ -808,6 +870,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ---
 
 ### 🛡️ Shields & Tank Off-Hands
+
 | Item ID | Item Name | Armor | Block | Boss / Source | Stats & Effects |
 | :---: | :--- | :---: | :---: | :--- | :--- |
 | **`23043`** | **The Face of Death** | 3494 | 66 | Sapphiron (Naxx) | +14 Strength, +24 Stamina, +7 Defense, +1% Block, +19 Block Value. |
@@ -831,6 +894,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ## 13. BiS Endgame Trinkets Directory
 
 ### ⚔️ Physical / Melee & Ranged Trinkets
+
 - **`22954`** : **Kiss of the Spider** (Maexxna - Naxx) : +1% Hit, On-Use: +20% Attack Speed for 15 seconds. (BiS Physical Trinket).
 - **`19406`** : **Drake Fang Talisman (DFT)** (Ebonroc - BWL) : +56 Attack Power, +2% Hit, +1% Dodge.
 - **`21670`** : **Badge of the Swarmguard** (Battleguard Sartura - AQ40) : On-Use: Each physical attack adds +200 Armor Penetration (stacks up to 6 times for 1,200 Armor reduction).
@@ -844,6 +908,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`11815`** : **Hand of Justice** (BRD Emperor) : +20 Attack Power, 2% Chance on melee hit to gain an extra attack.
 
 ### 🔮 Caster & Spell Damage Trinkets
+
 - **`19379`** : **Neltharion's Tear** (Nefarian - BWL) : +44 Spell Damage, +2% Spell Hit. (BiS Caster Trinket).
 - **`23046`** : **The Restrained Essence of Sapphiron** (Sapphiron - Naxx) : +40 Spell Damage, On-Use: +130 Spell Damage for 20 seconds.
 - **`23207`** : **Mark of the Champion (Caster)** (Kel'Thuzad Quest) : +85 Spell Damage against Undead and Demons.
@@ -852,6 +917,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`21625`** : **Scarab Brooch** (Viscidus - AQ40) : On-Use: Healing spells apply a shield for 15% of the amount healed for 30s.
 
 ### ✝️ Healer & MP5 Trinkets
+
 - **`23047`** : **Eye of the Dead** (Sapphiron - Naxx) : On-Use: Reduces mana cost of next 5 healing spells by 150 and increases healing done by 450.
 - **`23001`** : **Eye of Diminution** (Sapphiron - Naxx) : On-Use: Reduces threat caused by spells by 35% for 20 seconds.
 - **`19395`** : **Rejuvenating Gem** (Ebonroc/Firemaw/Flamegor - BWL) : +66 Healing, +9 MP5. (Universal BiS Healer Trinket).
@@ -859,6 +925,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`19288`** : **Darkmoon Card: Blue Dragon** (Beasts Deck) : 2% chance on cast to allow 100% mana regen to continue while casting for 15 sec.
 
 ### 🛡️ Tank Mitigation & Avoidance Trinkets
+
 - **`19431`** : **Styleen's Impeding Scarab** (Flamegor - BWL) : +13 Defense, +24 Block Value, +5% Chance to Block.
 - **`17064`** : **Shard of the Scale** (Onyxia) : +16 MP5 / Regen.
 - **`19947`** : **Nat Pagle's Broken Reel** (ZG Fishing) : On-Use: +10% Chance to Hit for 15s.
@@ -869,6 +936,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ## 14. BiS Rings, Amulets & Off-Set Equipment
 
 ### 💍 Rings & Bands
+
 - **`21709`** : **Ring of the Fallen God** (C'Thun Eye Quest) : +6 Strength, +5 Agility, +8 Stamina, +1% Hit, +1% Crit. (Universal BiS physical ring).
 - **`17063`** : **Band of Accuria** (Ragnaros - MC) : +16 Agility, +2% Hit, +1% Crit.
 - **`18821`** : **Quick Strike Ring** (Magmadar - MC) : +5 Strength, +8 Agility, +1% Crit, +30 Attack Power.
@@ -880,6 +948,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`19397`** : **Ring of Blackrock** (Firemaw - BWL) : +19 Stamina, +9 Defense.
 
 ### 📿 Amulets & Necklaces
+
 - **`19377`** : **Prestor's Talisman of Connivery** (Nefarian Head Quest) : +30 Agility, +1% Hit.
 - **`23053`** : **Stormrage's Talisman of Seething** (Kel'Thuzad - Naxx) : +12 Strength, +12 Agility, +12 Stamina, +26 Attack Power, +2% Crit.
 - **`23057`** : **Gem of Trapped Innocents** (Kel'Thuzad - Naxx) : +7 Stamina, +9 Intellect, +15 Spell Dmg, +2% Spell Crit.
@@ -890,6 +959,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`21712`** : **Amulet of the Fallen God** (C'Thun Eye Quest - Caster) : +11 Stamina, +6 Intellect, +18 Spell Damage, +1% Spell Crit, +1% Spell Hit.
 
 ### 🧣 Cloaks & Capes
+
 - **`23045`** : **Shroud of Dominion** (Sapphiron - Naxx) : +11 Stamina, +50 Attack Power, +1% Crit.
 - **`23050`** : **Cloak of the Necropolis** (Sapphiron - Naxx) : +8 Stamina, +7 Intellect, +27 Spell Dmg, +1% Spell Crit.
 - **`21710`** : **Cloak of the Fallen God** (C'Thun) : +11 Stamina, +37 Spell Damage, +1% Spell Penetration.
@@ -903,6 +973,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ## 15. Consumables, Flasks, Potions & World Buff Items Directory
 
 ### 🧪 Raid Flasks (Persistent Through Death)
+
 - **`13512`** : **Flask of Supreme Power** : +150 Spell Damage for 2 hours.
 - **`13510`** : **Flask of the Titans** : +1200 Maximum Health for 2 hours.
 - **`13511`** : **Flask of Distilled Wisdom** : +2000 Maximum Mana for 2 hours.
@@ -910,6 +981,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`13506`** : **Flask of Petrification** : Turns you to stone, protecting from all physical/spell damage for 1 min.
 
 ### 🍷 Combat Elixirs & Potions
+
 - **`13452`** : **Elixir of the Mongoose** : +25 Agility, +2% Crit for 1 hour.
 - **`13454`** : **Greater Arcane Elixir** : +35 Spell Damage for 1 hour.
 - **`9264`**  : **Elixir of Shadow Power** : +40 Shadow Spell Damage for 30 minutes.
@@ -933,6 +1005,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`9172`**  : **Invisibility Potion** : Grants full invisibility for 18 seconds.
 
 ### 🍖 Food Buffs, Juju & World Items
+
 - **`13928`** : **Grilled Squid** : +10 Agility for 10 minutes.
 - **`20452`** : **Smoked Desert Dumplings** : +20 Strength for 15 minutes.
 - **`13931`** : **Nightfin Soup** : +8 MP5 for 10 minutes.
@@ -954,6 +1027,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 ## 16. Permanent Weapon & Armor Enchantments Directory
 
 ### 🗡️ Weapon & Armor Enchant Formulas
+
 - **`16252`** : **Formula: Enchant Weapon - Crusader** (Chance on hit: +100 Strength & restores 75–125 HP).
 - **`18259`** : **Formula: Enchant Weapon - Spell Power** (+30 Spell Damage to 1H/2H Weapon).
 - **`18260`** : **Formula: Enchant Weapon - Healing Power** (+55 Healing to 1H/2H Weapon).
@@ -967,6 +1041,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 - **`20731`** : **Formula: Enchant Gloves - Superior Agility** (+15 Agility).
 
 ### 📜 Head & Leg Arcanums / ZG Class Enchants
+
 - **`18329`** : **Arcanum of Rapidity** (+1% Attack Speed to Head/Legs).
 - **`18330`** : **Arcanum of Focus** (+8 Spell Damage & Healing to Head/Legs).
 - **`18331`** : **Arcanum of Protection** (+1% Dodge to Head/Legs).
@@ -988,6 +1063,7 @@ Full 9-piece Dreamwalker Raiment, Atiesh Greatstaff of the Guardian (Druid), Eye
 When jumping into **Turtle-WoW's latest custom endgame raids and dungeons**, standard Vanilla BiS gearing strategies must be adapted for new mechanics, high armor values, and heavy elemental damage profiles:
 
 ### 🗺️ The Turtle-WoW Endgame Raid Hierarchy
+
 1. **Emerald Sanctum (Map ID `807` - 40-Man Raid)**: Heavy Nature damage, acid breaths, and dragonkin mechanics. Bosses like *Solnius* and *Erennius* hit hard and require rapid dispels and Nature Resistance.
 2. **Scarlet Citadel (Map ID `45` - 40-Man Raid)**: Intense Holy and Fire damage, high-density add pulls, and enrage mechanics.
 3. **Lower Karazhan Halls (Map ID `532` - 10-Man Raid)**: Shadow and Arcane mechanics requiring tight interrupts, high individual DPS checks, and crowd control.
@@ -997,12 +1073,14 @@ When jumping into **Turtle-WoW's latest custom endgame raids and dungeons**, sta
 
 ### 🛡️ 1. Tanking Strategy & Weapon Swapping in Custom Raids
 
-#### When to Run Dual-Wield Fury/Prot:
+#### When to Run Dual-Wield Fury/Prot
+
 - **Use for**: High-threat single-target boss pulls, threat-sensitive DPS phases, and speed runs.
 - **Loadout**: Thunderfury (`19019`) Main Hand + The Hungering Cold (`23577`) Off-Hand.
 - **Why**: The Hungering Cold gives **+6 Swords Skill**, raising your weapon skill above the critical **305 cap**. This reduces the glancing blow damage reduction on Level 63 raid bosses from 40% down to just 5%, ensuring maximum Rage generation and 1,200+ TPS.
 
-#### When to Shield Swap to Deep Prot / Dreadnaught:
+#### When to Shield Swap to Deep Prot / Dreadnaught
+
 - **Use for**: Boss enrages, heavy physical cleaves, and crushing blow phases (e.g. *Solnius* enrage, *Patchwerk* hateful strikes).
 - **Loadout**: Thunderfury (`19019`) + The Face of Death (`23043`) or Elementium Reinforced Bulwark (`19349`).
 - **Why**: Pushes crushing blows completely off the combat table using *Shield Block* and achieves 440+ Defense to become uncrittable.
@@ -1035,6 +1113,7 @@ When jumping into **Turtle-WoW's latest custom endgame raids and dungeons**, sta
 ### 🚀 4. Ready-to-Use Raid Preparation Lua Macros
 
 #### 🌿 Macro: 1-Click Nature Resistance Gear Swap (Emerald Sanctum)
+
 ```lua
 .additem 13458 5
 .additem 12457 20
@@ -1042,6 +1121,7 @@ When jumping into **Turtle-WoW's latest custom endgame raids and dungeons**, sta
 ```
 
 #### 🔥 Macro: 1-Click Fire Resistance Gear Swap (Scarlet Citadel)
+
 ```lua
 .additem 13457 5
 .additem 12455 20
@@ -1050,6 +1130,7 @@ When jumping into **Turtle-WoW's latest custom endgame raids and dungeons**, sta
 ```
 
 #### 📦 Macro: Complete 1-Click Raid Consumable Restock
+
 ```lua
 .additem 13512 2
 .additem 13510 2

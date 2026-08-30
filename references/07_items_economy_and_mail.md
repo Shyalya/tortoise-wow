@@ -4,7 +4,7 @@
 
 ---
 
-### 📚 Complete 19-Module Reference Library
+## 📚 Complete 19-Module Reference Library
 
 | Security & Server | World & Characters | Gameplay & Items | Bots & Modules |
 | :--- | :--- | :--- | :--- |
@@ -23,14 +23,18 @@ Copy and paste these macros directly into your World of Warcraft **Macro UI** (`
 ### Category A: Essential Gear, Bags & Currency (Top Priority)
 
 #### 💰 Macro 1: Grant 1,000 Gold & 4x 18-Slot Bottomless Bags
+
 Adds 1,000 Gold (10,000,000 copper) and four 18-slot Bottomless Bags directly to character inventory:
+
 ```lua
 .modify money 10000000
 .additem 14156 4
 ```
 
 #### 🛡️ Macro 2: Spawn Warrior Tier 3 (Dreadnaught) + Thunderfury
+
 Spawns complete 9-piece Dreadnaught armor set, Thunderfury, Elementium Reinforced Bulwark, and repairs all gear:
+
 ```lua
 .additemset 523
 .additem 19019 1
@@ -39,7 +43,9 @@ Spawns complete 9-piece Dreadnaught armor set, Thunderfury, Elementium Reinforce
 ```
 
 #### 🏦 Macro 3: Remote Bank, Mailbox & Full Gear Repair
+
 Opens your personal bank vault and mailbox anywhere in the world and restores 100% item durability:
+
 ```lua
 .bank
 .mailbox
@@ -47,7 +53,9 @@ Opens your personal bank vault and mailbox anywhere in the world and restores 10
 ```
 
 #### 🎲 Macro 4: Level-Scaled Random Gear, Enchants & Consumables
+
 Generates randomized Epic quality armor and weapons matching current level, enchants all slots, and stocks consumables/potions:
+
 ```lua
 .bot gear * epic
 .bot enchants *
@@ -61,13 +69,17 @@ Generates randomized Epic quality armor and weapons matching current level, ench
 ### Category B: Remote Mail Delivery to Players & Bots (Middle Priority)
 
 #### 📬 Macro 4: Remote Mail Gold to Player
+
 Sends 1,000 Gold directly to the recipient's in-game mailbox:
+
 ```lua
 .send money Sam "Raid Supplies" "Guild bank funding for consumables" 10000000
 ```
 
 #### 📦 Macro 5: Remote Mail Legendary Items
+
 Mails Thunderfury and Bindings of the Windseeker directly to player mailbox:
+
 ```lua
 .send items Sam "Raid Drop" "Congratulations on your raid drop" 19019:1 18563:1
 ```
@@ -77,7 +89,9 @@ Mails Thunderfury and Bindings of the Windseeker directly to player mailbox:
 ### Category C: Inventory Cleanup & Maintenance (Bottom Section)
 
 #### 🧹 Macro 6: Inventory Item Removal & Full Repair
+
 Removes a specific item entry from bags and repairs all gear:
+
 ```lua
 .deleteitem 19019 1
 .repairitems
@@ -87,9 +101,10 @@ Removes a specific item entry from bags and repairs all gear:
 
 ## 2. Items, Economy & Mail Commands Reference
 
-Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.cpp`):
+Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp`):
 
 ### 🎒 Item & Equipment Spawning (`.additem` / `.additemset`)
+
 - `.additem <item_id> [count]`
   - **Security**: Developer (3)
   - **What it does**: Adds specified item ID directly into character inventory bags.
@@ -123,6 +138,7 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
 ---
 
 ### 💵 Economy & Currency (`.modify money`)
+
 - `.modify money <copper_amount>`
   - **Security**: Developer (3)
   - **What it does**: Adds copper currency directly to character (`10000` = 1 Gold, `10000000` = 1,000 Gold).
@@ -130,7 +146,8 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
 
 ---
 
-### 📬 Remote Mail Delivery (`.send`)
+### 📬 Remote Mail Delivery & Audit (`.send` / `.character mail`)
+
 - `.send items <player> "<subject>" "<body>" <item_id[:count]> ...`
   - **Security**: Developer (3)
   - **What it does**: Delivers items via in-game mail with custom subject and letter body text.
@@ -145,6 +162,31 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp` & `Commands.
   - **Security**: Moderator (2)
   - **What it does**: Sends a standard text letter to player mailbox.
   - **Example**: `.send mail Sam "Notice" "Please check your Discord PM"`
+
+- `.character mail list <player_guid>`
+  - **Security**: Developer (3)
+  - **What it does**: Lists all pending mailbox letters and deliveries for character GUID.
+  - **Example**: `.character mail list 10045`
+
+- `.character mail delete <mail_id>`
+  - **Security**: Developer (3)
+  - **What it does**: Deletes specific mail delivery by mail ID.
+  - **Example**: `.character mail delete 501`
+
+- `.character hasitem <item_id>`
+  - **Security**: Developer (3)
+  - **What it does**: Checks if target character possesses the specified item ID in bags or bank.
+  - **Example**: `.character hasitem 19019`
+
+- `.gold remove <amount>`
+  - **Security**: Developer (3)
+  - **What it does**: Deducts gold from target player.
+  - **Example**: `.gold remove 1000000`
+
+- `.cleaninventory`
+  - **Security**: Developer (3)
+  - **What it does**: Removes junk and empty items from bags.
+  - **Example**: `.cleaninventory`
 
 ---
 

@@ -1,10 +1,12 @@
-# 15. Dungeon Clear AI Module
+# 15. Dungeon Clear AI Module (.dc)
 
+> **Target Core**: Turtle-WoW 1.18.1 (Build 7272) • CMaNGOS + PlayerBots Framework  
+> **Source Verification**: `modules/mod-dungeon-clear/src/DungeonClearCommand.cpp` & `DungeonClearModule.cpp`  
 > **Quick Navigation**: [🏠 Master Portal (gm_commands.md)](../gm_commands.md) • [📖 Project Readme](../README.md) • [🎯 Bot Macro Book (13_bot_whispers_and_macros.md)](./13_bot_whispers_and_macros.md) • [⚔️ Class Strategies (14_bot_strategies_and_tactics.md)](./14_bot_strategies_and_tactics.md) • [🗺️ Teleport Directory (03_teleports_and_movement.md)](./03_teleports_and_movement.md)
 
 ---
 
-## 📚 Complete 19-Module Reference Library
+## Complete 19-Module Reference Library
 
 | Security & Server | World & Characters | Gameplay & Items | Bots & Modules |
 | :--- | :--- | :--- | :--- |
@@ -12,68 +14,11 @@
 | [01. Security & Accounts](./01_security_and_account.md) | [04. Stats & Visuals](./04_character_stats_and_visuals.md) | [07. Items & Economy](./07_items_economy_and_mail.md) | [12. RandomBot Manager](./12_randombot_manager.md) |
 | [02. Server & Reloads](./02_server_and_reloads.md) | [05. Combat & Spells](./05_combat_spells_and_skills.md) | [08. Spawning & Editing](./08_spawning_and_world_editing.md) | [13. Bot Whispers & Macros](./13_bot_whispers_and_macros.md) |
 | [09. Moderation & Anticheat](./09_moderation_tickets_and_anticheat.md) | [10. Turtle Custom](./10_turtle_custom_features.md) | [17. Tier Sets & Gear](./17_tier_items_and_endgame_gear.md) | [14. Bot Strategies & Tactics](./14_bot_strategies_and_tactics.md) |
-| [16. Diagnostics & Lookups](./16_developer_and_diagnostics.md) | [18. Class Talent Specs](./18_class_talent_specs.md) | *(Standalone Manual)* | [15. Dungeon Clear AI](./15_dungeon_clear_module.md) |
+| [16. Diagnostics & Lookups](./16_developer_and_diagnostics.md) | [18. Class Talent Specs](./18_class_talent_specs.md) | *(Standalone Manual)* | **[15. Dungeon Clear AI](./15_dungeon_clear_module.md)** |
 
 ---
 
-## 1. Complete `.dc` Slash Command Directory
-
-Verified against `modules/mod-dungeon-clear/src/DungeonClearCommand.cpp`:
-
-### 🏰 In-Dungeon Tank Automation Commands (`.dc`)
-
-These commands dispatch directly to the party's leader tank bot:
-
-| Command | Arguments | Description |
-| :--- | :--- | :--- |
-| `.dc on` | *None* | Activates autonomous dungeon navigation, pulls, and boss strategies on party tank bot. |
-| `.dc off` | *None* | Disables autonomous dungeon clearing mode. |
-| `.dc status` | `[param]` | Displays live progression, current target boss, party readiness, and current phase. |
-| `.dc bosses` | `[param]` | Lists all bosses in the instance with alive, killed, or skipped status and encounter bitmask. |
-| `.dc skip` | *None* | Skips the current targeted mob pack or boss and routes to next objective. |
-| `.dc pause` | *None* | Pauses tank advance and pull progression. |
-| `.dc pull` | `[target]` | Orders tank bot to pull the next pack or targeted creature immediately. |
-| `.dc go` | `<targetBoss>` | Sets the target boss destination to route directly toward. |
-| `.dc config` | *None* | Dumps all live `DungeonClear.*` configuration variables and effective per-run addon overrides. |
-
----
-
-### 🎥 Spectator Camera Controls (`.dc spectate`)
-
-Free-flying or bot-riding spectator camera:
-
-| Command | Description |
-| :--- | :--- |
-| `.dc spectate` | Toggles free-flying spectator camera mode. |
-| `.dc spectate follow [name]` | Seats spectator camera on specified bot (or tank). Toggle again to turn off. |
-| `.dc spectate next` (or `.dc spectate n`) | Cycles spectator camera to the next party member. |
-| `.dc spectate prev` (or `.dc spectate p`) | Cycles spectator camera to the previous party member. |
-| `.dc spectate list` (or `.dc spectate who`) | Lists all watchable bots in the current instance. |
-
----
-
-### 🧪 Automated Test Harness & Headless Verification (`.dc test`)
-
-Allows Game Masters or Console to spawn, gear, and run full 5-bot automated dungeon runs without human players:
-
-| Command | Syntax / Example | Description |
-| :--- | :--- | :--- |
-| `.dc test list` | `.dc test list` | Lists all supported test dungeons, tokens (`deadmines`, `sm`, `strat`, etc.), map IDs, and levels. |
-| `.dc test gear` | `.dc test gear <dungeon> [heroic]` | Displays recommended item level (ilvl) ladders and gear ceilings for that dungeon. |
-| `.dc test start` | `.dc test start <dungeon> [heroic] [level=N] [seed=N] [ilvl=N\|none] [quality=rare\|epic]` | Spawns a full 5-bot party with random class comp and starts automated dungeon clear. |
-| `.dc test start` | `.dc test start <dungeon> party=Tank,Heal,D1,D2,D3 [heroic]` | Starts automated run using a hand-picked roster of real player characters. |
-| `.dc test status` | `.dc test status` | Shows live test run status, boss count, kill bitmask, party health, run duration, and watchdog logs. |
-| `.dc test watch` | `.dc test watch [selector]` | Teleports GM to instance entrance in GM invisible mode, binds to instance, and attaches camera to tank bot. |
-| `.dc test watch` | `.dc test watch next` | Tours the next active test run in a batch campaign. |
-| `.dc test watch` | `.dc test watch off` | Disengages camera, restores GM visibility, teleports GM back to world recall position, and drops locks. |
-| `.dc test stop` | `.dc test stop [selector\|all]` | Aborts single active run, specific run by ID/token, or `all` active test runs. |
-| `.dc test plan start` | `.dc test plan start <spec>` | Starts a batched test campaign plan across multiple runs/concurrency. |
-| `.dc test plan status` | `.dc test plan status` | Displays status of running batched test plans. |
-| `.dc test plan stop` | `.dc test plan stop [planId\|all]` | Stops active test campaign plans. |
-
----
-
-## 2. Categorized In-Game Lua Macros
+## 1. Categorized In-Game Lua Macros (Top Priority)
 
 Copy and paste these macros directly into your World of Warcraft **Macro UI** (`/m`) or run them directly in chat:
 
@@ -102,11 +47,56 @@ Forces all bots to immediately drop combat targets, sprint to player, and reset 
 .combatstop
 ```
 
+#### 🎯 Macro 3: Order Instant Tank Pull on Next Pack
+
+Orders the leader tank bot to initiate a controlled pull on the targeted enemy mob or next waypoint pack:
+
+```lua
+.dc pull
+```
+
+#### ⏩ Macro 4: Skip Current Trash Pack or Boss
+
+Instructs the tank routing solver to bypass the current encounter and advance to the next objective:
+
+```lua
+.dc skip
+```
+
 ---
 
-### Category B: Post-Combat Looting & Instance Breaches (Middle Priority)
+### Category B: Spectator Camera & Diagnostics (Middle Priority)
 
-#### 💰 Macro 3: Fast Post-Boss Loot & Consumable Recovery
+#### 🎥 Macro 5: Attach Spectator Camera to Party Tank Bot
+
+Switches player view to ride the lead tank bot during automated runs:
+
+```lua
+.dc spectate follow
+```
+
+#### 🔄 Macro 6: Cycle Spectator Camera to Next Party Member
+
+Cycles spectator viewpoint through all party members:
+
+```lua
+.dc spectate next
+```
+
+#### 📊 Macro 7: Instance Progress & Boss Bitmask Audit
+
+Displays live instance completion percentage, defeated bosses, skipped mobs, and wipe counters:
+
+```lua
+.dc status
+.dc bosses
+```
+
+---
+
+### Category C: Post-Combat Looting & Instance Breaches (Bottom Section)
+
+#### 💰 Macro 8: Fast Post-Boss Loot & Consumable Recovery
 
 Orders party to loot all boss/trash corpses, eat/drink for full mana, and rebuff:
 
@@ -116,7 +106,7 @@ Orders party to loot all boss/trash corpses, eat/drink for full mana, and rebuff
 /p @all buff
 ```
 
-#### 🚪 Macro 4: Breach & Interact with Nearest Door / Lever
+#### 🚪 Macro 9: Breach & Interact with Nearest Door / Lever
 
 Targets nearest locked door, gate, or lever and orders bots to interact:
 
@@ -124,6 +114,63 @@ Targets nearest locked door, gate, or lever and orders bots to interact:
 .gobject target
 /p @all talk
 ```
+
+---
+
+## 2. Complete `.dc` Slash Command Directory
+
+Verified against `modules/mod-dungeon-clear/src/DungeonClearCommand.cpp`:
+
+### 🏰 In-Dungeon Tank Automation Commands (`.dc`)
+
+These commands dispatch directly to the party's leader tank bot:
+
+| Command | Arguments | Description | Example Usage |
+| :--- | :--- | :--- | :--- |
+| `.dc on` | *None* | Activates autonomous dungeon navigation, pulls, and boss strategies on party tank bot. | `.dc on` |
+| `.dc off` | *None* | Disables autonomous dungeon clearing mode. | `.dc off` |
+| `.dc status` | `[param]` | Displays live progression, current target boss, party readiness, and current phase. | `.dc status` |
+| `.dc bosses` | `[param]` | Lists all bosses in the instance with alive, killed, or skipped status and encounter bitmask. | `.dc bosses` |
+| `.dc skip` | *None* | Skips the current targeted mob pack or boss and routes to next objective. | `.dc skip` |
+| `.dc pause` | *None* | Pauses tank advance and pull progression. | `.dc pause` |
+| `.dc pull` | `[target]` | Orders tank bot to pull the next pack or targeted creature immediately. | `.dc pull` |
+| `.dc go` | `<targetBoss>` | Sets the target boss destination to route directly toward. | `.dc go VanCleef` |
+| `.dc config` | *None* | Dumps all live `DungeonClear.*` configuration variables and effective per-run addon overrides. | `.dc config` |
+
+---
+
+### 🎥 Spectator Camera Controls (`.dc spectate`)
+
+Free-flying or bot-riding spectator camera:
+
+| Command | Description | Example Usage |
+| :--- | :--- | :--- |
+| `.dc spectate` | Toggles free-flying spectator camera mode. | `.dc spectate` |
+| `.dc spectate follow [name]` | Seats spectator camera on specified bot (or tank). Toggle again to turn off. | `.dc spectate follow Tankman` |
+| `.dc spectate next` (or `.dc spectate n`) | Cycles spectator camera to the next party member. | `.dc spectate next` |
+| `.dc spectate prev` (or `.dc spectate p`) | Cycles spectator camera to the previous party member. | `.dc spectate prev` |
+| `.dc spectate list` (or `.dc spectate who`) | Lists all watchable bots in the current instance. | `.dc spectate list` |
+
+---
+
+### 🧪 Automated Test Harness & Headless Verification (`.dc test`)
+
+Allows Game Masters or Console to spawn, gear, and run full 5-bot automated dungeon runs without human players:
+
+| Command | Syntax / Example | Description |
+| :--- | :--- | :--- |
+| `.dc test list` | `.dc test list` | Lists all supported test dungeons, tokens (`deadmines`, `sm`, `strat`, etc.), map IDs, and levels. |
+| `.dc test gear` | `.dc test gear <dungeon> [heroic]` | Displays recommended item level (ilvl) ladders and gear ceilings for that dungeon. |
+| `.dc test start` | `.dc test start <dungeon> [heroic] [level=N] [seed=N] [ilvl=N\|none] [quality=rare\|epic]` | Spawns a full 5-bot party with random class comp and starts automated dungeon clear. |
+| `.dc test start` | `.dc test start <dungeon> party=Tank,Heal,D1,D2,D3 [heroic]` | Starts automated run using a hand-picked roster of real player characters. |
+| `.dc test status` | `.dc test status` | Shows live test run status, boss count, kill bitmask, party health, run duration, and watchdog logs. |
+| `.dc test watch` | `.dc test watch [selector]` | Teleports GM to instance entrance in GM invisible mode, binds to instance, and attaches camera to tank bot. |
+| `.dc test watch` | `.dc test watch next` | Tours the next active test run in a batch campaign. |
+| `.dc test watch` | `.dc test watch off` | Disengages camera, restores GM visibility, teleports GM back to world recall position, and drops locks. |
+| `.dc test stop` | `.dc test stop [selector\|all]` | Aborts single active run, specific run by ID/token, or `all` active test runs. |
+| `.dc test plan start` | `.dc test plan start <spec>` | Starts a batched test campaign plan across multiple runs/concurrency. |
+| `.dc test plan status` | `.dc test plan status` | Displays status of running batched test plans. |
+| `.dc test plan stop` | `.dc test plan stop [planId\|all]` | Stops active test campaign plans. |
 
 ---
 

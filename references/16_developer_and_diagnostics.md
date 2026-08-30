@@ -4,7 +4,7 @@
 
 ---
 
-### 📚 Complete 19-Module Reference Library
+## 📚 Complete 19-Module Reference Library
 
 | Security & Server | World & Characters | Gameplay & Items | Bots & Modules |
 | :--- | :--- | :--- | :--- |
@@ -23,28 +23,36 @@ Copy and paste these macros directly into your World of Warcraft **Macro UI** (`
 ### Category A: Universal Database Lookups & Item Discovery (Top Priority)
 
 #### 🗡️ Macro 1: Lookup Legendary Items & Raid Itemsets
+
 Searches database tables and prints matching entry IDs for items and full gear sets:
+
 ```lua
 .lookup item Thunderfury
 .lookup itemset Dreadnaught
 ```
 
 #### 🐉 Macro 2: Lookup Boss Creature IDs & Spells
+
 Finds creature spawn entry IDs and spell IDs directly in-game:
+
 ```lua
 .lookup creature Onyxia
 .lookup spell Frostbolt
 ```
 
 #### 📜 Macro 3: Lookup Quest & Profession Skill IDs
+
 Queries quest IDs and profession skill entry numbers:
+
 ```lua
 .lookup quest Diplomat
 .lookup skill Blacksmithing
 ```
 
 #### 📏 Macro 4: Target GUID & Exact Distance Calculation
+
 Outputs target's low/high database GUID, exact 3D Euclidean distance in yards, and coordinates:
+
 ```lua
 .guid
 .distance
@@ -56,20 +64,26 @@ Outputs target's low/high database GUID, exact 3D Euclidean distance in yards, a
 ### Category B: Aura, Threat & Spawn Inspection (Middle Priority)
 
 #### ✨ Macro 5: Dump Active Buffs & Auras on Target
+
 Lists all applied aura spell IDs, duration remaining, and stack counts on target unit:
+
 ```lua
 .list auras
 ```
 
 #### ⚔️ Macro 6: Inspect Live Mob Threat Table & Aggro Refs
+
 Prints real-time threat values for all players and bots attacking the selected mob:
+
 ```lua
 .list threat
 .list hostilerefs
 ```
 
 #### 🗺️ Macro 7: Locate All Spawns of Creature / GameObject
+
 Lists map IDs and coordinates of every world spawn instance for the specified entry ID:
+
 ```lua
 .list creature 10182
 .list object 179501
@@ -80,7 +94,9 @@ Lists map IDs and coordinates of every world spawn instance for the specified en
 ### Category C: Engine Diagnostics & Network Telemetry (Bottom Section)
 
 #### 🔬 Macro 8: Low-Level Engine Diagnostics & Update Fields
+
 Dumps network opcode throughput, instance script memory, and unit update fields:
+
 ```lua
 .debug packetstats
 .debug instancedata
@@ -91,7 +107,7 @@ Dumps network opcode throughput, instance script memory, and unit update fields:
 
 ## 2. Universal Search Commands (`.lookup`)
 
-Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp:330` & `Commands.cpp`):
+Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp`):
 
 | Command | Security | Description | Usage / Example |
 | :--- | :--- | :--- | :--- |
@@ -112,7 +128,7 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp:330` & `Comma
 
 ## 3. World & Target Inspectors (`.list`)
 
-Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp:315` & `Commands.cpp`):
+Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp`):
 
 | Command | Security | Description | Usage / Example |
 | :--- | :--- | :--- | :--- |
@@ -128,7 +144,7 @@ Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp:315` & `Comma
 
 ## 4. Diagnostics & Debugging (`.debug`)
 
-Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp:160` & `Commands.cpp`):
+Verified against CMaNGOS command handlers (`src/game/Chat/Chat.cpp`):
 
 - `.debug instancedata`
   - **Security**: Developer (3)

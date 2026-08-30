@@ -1,6 +1,6 @@
-{"timestamp":"2026-08-24T08:55:00Z","goal_id":"init","event":"initialized","evidence":"Initialized multi-goal upstream sync and database migration workflow."}
-{"timestamp":"2026-08-24T08:56:15Z","goal_id":"goal-1","event":"completed","evidence":"Services confirmed inactive; local working tree stashed cleanly with message 'Local modifications before upstream sync'."}
-{"timestamp":"2026-08-24T08:56:36Z","goal_id":"goal-2","event":"completed","evidence":"Fast-forward merged 15 commits from origin/playerbots-integration-gh (39e3527..1f07e9b)."}
-{"timestamp":"2026-08-24T08:56:52Z","goal_id":"goal-3","event":"completed","evidence":"Successfully popped stash@{0} with 0 merge conflicts; restored all modified docs, rules, and configs."}
-{"timestamp":"2026-08-24T08:57:18Z","goal_id":"goal-4","event":"completed","evidence":"Applied incoming world database migrations 20260821154713_world.sql and 20260821203635_world.sql with --force, and tracked in tw_world.migrations."}
-{"timestamp":"2026-08-24T09:02:40Z","goal_id":"goal-5","event":"completed","evidence":"Built CMake target in Release mode (code 0), cleared systemd failed states, started turtle-mangosd and turtle-realmd, verified clean active runtime status."}
+{"timestamp":"2026-08-28T13:03:00Z","goal_id":"init","event":"initialized","evidence":"Initialized multi-goal upstream sync (cycle 5), migration and build pipeline."}
+{"timestamp":"2026-08-28T13:04:05Z","goal_id":"goal-1","event":"completed","evidence":"Services stopped cleanly; working tree modifications stashed."}
+{"timestamp":"2026-08-28T13:04:15Z","goal_id":"goal-2","event":"completed","evidence":"Pulled and rebased 31 upstream commits from origin/playerbots-integration-gh (49e07be); cleanly integrated."}
+{"timestamp":"2026-08-28T13:04:22Z","goal_id":"goal-3","event":"completed","evidence":"Popped stash@{0} cleanly with zero merge conflicts."}
+{"timestamp":"2026-08-28T13:04:35Z","goal_id":"goal-4","event":"completed","evidence":"Applied world migrations 20260611110845_world.sql and 20260817211652_world.sql with --force, and tracked in tw_world.migrations."}
+{"timestamp":"2026-08-28T13:13:21Z","goal_id":"goal-5","event":"completed","evidence":"CMake Release build completed with code 0 (1216 targets); services started; verified port 3724 and port 8090 listening."}

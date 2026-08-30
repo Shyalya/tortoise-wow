@@ -30,14 +30,18 @@ logs/bot_events.csv
 *logs/deaths.csv
 gm_commands.md
 tools/checkegglogs/obj/checkegglogs.csproj.nuget.dgspec.json
-.gitignore
 tools/checkegglogs/obj/checkegglogs.csproj.nuget.g.targets
-.gitignore
-.gitignore
-.gitignore
-
 tools/checkegglogs/obj/Debug/net8.0/checkegglogs.AssemblyInfo.cs
 tools/checkegglogs/obj/Debug/net8.0/checkegglogs.AssemblyInfo.cs
 tools/checkegglogs/obj/Debug/net8.0/checkegglogs.AssemblyInfo.cs
 tools/checkegglogs/obj/Debug/net8.0/checkegglogs.AssemblyInfo.cs
 tools/checkegglogs/obj/Debug/net8.0/checkegglogs.AssemblyInfoInputs.cache
+
+*.bak
+*.bak.*
+*.bak-*
+
+# Routen, die der Rekorder selbst verworfen hat (DcRouteRecorder::
+# DiscardRoute benennt .route/.cpp in .bad um, wenn die Stuck-Leiter auf
+# einer aufgezeichneten Route auslief). Ausschuss, kein Repo-Inhalt.
+*.bad
