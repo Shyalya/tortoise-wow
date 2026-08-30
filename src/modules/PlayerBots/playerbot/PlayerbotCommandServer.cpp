@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -15,7 +16,12 @@
 
 INSTANTIATE_SINGLETON_1(PlayerbotCommandServer);
 
-#include <boost/asio.hpp>
+#include <boost/asio/buffer.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/ip/address.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/write.hpp>
 
 using boost::asio::ip::tcp;
 
@@ -76,7 +82,7 @@ namespace
     private:
         void ArmReadTimeout()
         {
-            timer_.expires_from_now(boost::posix_time::seconds(readTimeout_));
+            timer_.expires_after(std::chrono::seconds(readTimeout_));
             std::shared_ptr<RemoteSession> self = shared_from_this();
             timer_.async_wait([self](boost::system::error_code const& error)
             {
@@ -224,15 +230,15 @@ namespace
                 return;
 
             closed_ = true;
+            timer_.cancel();
             boost::system::error_code ignored;
-            timer_.cancel(ignored);
             socket_->shutdown(tcp::socket::shutdown_both, ignored);
             socket_->close(ignored);
             activeClients_->fetch_sub(1, std::memory_order_relaxed);
         }
 
         std::shared_ptr<tcp::socket> socket_;
-        boost::asio::deadline_timer timer_;
+        boost::asio::steady_timer timer_;
         std::shared_ptr<std::atomic<uint32>> activeClients_;
         std::string secret_;
         std::string input_;
@@ -269,7 +275,7 @@ namespace
         }
 
         boost::system::error_code addressError;
-        boost::asio::ip::address bindAddress = boost::asio::ip::address::from_string(
+        boost::asio::ip::address bindAddress = boost::asio::ip::make_address(
             sPlayerbotAIConfig.commandServerAddress, addressError);
         if (addressError)
         {
