@@ -515,6 +515,7 @@ void ChatReplyAction::ChatReplyDo(Player* bot, uint32 type, uint32 guid1, uint32
         Player* player = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, guid1));
 
         PlayerbotAI* ai = bot->GetPlayerbotAI();
+        AiObjectContext* context = ai->GetAiObjectContext();
 
         if (!chanName.empty() && !ai->ChannelHasRealPlayer(chanName))
             player = nullptr;
