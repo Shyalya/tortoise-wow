@@ -4,11 +4,16 @@
 
 namespace ai
 {
-    class SpellCastUsefulValue : public BoolCalculatedValue, public Qualified
+    class SpellCastUsefulValue : public MillisecondCalculatedValue<bool>, public Qualified
 	{
 	public:
-        SpellCastUsefulValue(PlayerbotAI* ai, std::string name = "spell cast useful") : BoolCalculatedValue(ai, name), Qualified() {}
+        SpellCastUsefulValue(PlayerbotAI* ai, std::string name = "spell cast useful") : MillisecondCalculatedValue<bool>(ai, name), Qualified() {}
         virtual bool Calculate() override;
+
+        virtual std::string Format() override
+        {
+            return Calculate() ? "true" : "false";
+        }
     };
 
     class SpellReadyValue : public BoolCalculatedValue, public Qualified

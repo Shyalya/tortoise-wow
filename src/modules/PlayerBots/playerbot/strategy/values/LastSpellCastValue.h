@@ -6,10 +6,10 @@ namespace ai
     class LastSpellCast 
     {
     public:
-        LastSpellCast() : id(0),time(0) {}
+        LastSpellCast() : id(0), time(0) {}
 
     public:
-        void Set(uint32 id, ObjectGuid target, time_t time)
+        void Set(uint32 id, ObjectGuid target, uint32 time)
         {
             this->id = id;
             this->target = target;
@@ -25,7 +25,7 @@ namespace ai
     public:
         uint32 id;
         ObjectGuid target;
-        time_t time;
+        uint32 time;
     };
    
     class LastSpellCastValue : public ManualSetValue<LastSpellCast&>

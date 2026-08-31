@@ -515,7 +515,6 @@ void ChatReplyAction::ChatReplyDo(Player* bot, uint32 type, uint32 guid1, uint32
         Player* player = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, guid1));
 
         PlayerbotAI* ai = bot->GetPlayerbotAI();
-        AiObjectContext* context = ai->GetAiObjectContext();
 
         if (!chanName.empty() && !ai->ChannelHasRealPlayer(chanName))
             player = nullptr;
@@ -563,96 +562,15 @@ void ChatReplyAction::ChatReplyDo(Player* bot, uint32 type, uint32 guid1, uint32
 
                 std::string llmPromptCustom = AI_VALUE(std::string, "manual saved string::llmdefaultprompt");
 
-                std::map<std::string, std::string> jsonFill;
-                jsonFill["<pre prompt>"] = sPlayerbotAIConfig.llmPrePrompt + " " + llmPromptCustom;
-                jsonFill["<prompt>"] = sPlayerbotAIConfig.llmPrompt;
-                jsonFill["<post prompt>"] = sPlayerbotAIConfig.llmPostPrompt;
+                std::string llmPrePrompt = BOT_TEXT2(sPlayerbotAIConfig.llmPrePrompt + " " + llmPromptCustom, placeholders);
+                std::string llmPrompt = BOT_TEXT2(sPlayerbotAIConfig.llmPrompt, placeholders);
 
-                for (auto& prompt : jsonFill)
-                {
-                    prompt.second = BOT_TEXT2(prompt.second, placeholders);
-                }
-
-                uint32 currentLength = jsonFill["<pre prompt>"].size() + jsonFill["<context>"].size() + jsonFill["<prompt>"].size() + llmContext.size();
+                uint32 currentLength = llmPrePrompt.size() + llmPrompt.size() + llmContext.size();
                 PlayerbotLLMInterface::LimitContext(llmContext, currentLength);
-                jsonFill["<context>"] = llmContext;
 
-                llmContext += " " + jsonFill["<prompt>"];
-
-                for (auto& prompt : jsonFill)
-                {
-                    prompt.second = PlayerbotLLMInterface::SanitizeForJson(prompt.second);
-                }
-
-                for (auto& prompt : placeholders) //Sanitize now instead of earlier to prevent double Sanitation
-                {
-                    prompt.second = PlayerbotLLMInterface::SanitizeForJson(prompt.second);
-                }
-
-                std::string startPattern, endPattern, deletePattern, splitPattern;
-                startPattern = PlayerbotTextMgr::GetReplacePlaceholders(sPlayerbotAIConfig.llmResponseStartPattern, placeholders);
-                endPattern = PlayerbotTextMgr::GetReplacePlaceholders(sPlayerbotAIConfig.llmResponseEndPattern, placeholders);
-                deletePattern = PlayerbotTextMgr::GetReplacePlaceholders(sPlayerbotAIConfig.llmResponseDeletePattern, placeholders);
-                splitPattern = PlayerbotTextMgr::GetReplacePlaceholders(sPlayerbotAIConfig.llmResponseSplitPattern, placeholders);
-
-                std::string json = PlayerbotTextMgr::GetReplacePlaceholders(sPlayerbotAIConfig.llmApiJson, jsonFill);
-
-                json = PlayerbotTextMgr::GetReplacePlaceholders(json, placeholders);
-
-                uint32 type = CHAT_MSG_WHISPER;
-                std::string channelName;
-
-                switch (chatChannelSource)
-                {
-                case ChatChannelSource::SRC_WHISPER:
-                {
-                    type = CHAT_MSG_WHISPER;
-                    break;
-                }
-                case ChatChannelSource::SRC_SAY:
-                {
-                    type = CHAT_MSG_SAY;
-                    break;
-                }
-                case ChatChannelSource::SRC_YELL:
-                {
-                    type = CHAT_MSG_YELL;
-                    break;
-                }
-                case ChatChannelSource::SRC_PARTY:
-                {
-                    type = CHAT_MSG_PARTY;
-                    break;
-                }
-                case ChatChannelSource::SRC_GUILD:
-                {
-                    type = CHAT_MSG_GUILD;
-                    break;
-                }
-                case ChatChannelSource::SRC_WORLD:
-                case ChatChannelSource::SRC_GENERAL:
-                case ChatChannelSource::SRC_TRADE:
-                case ChatChannelSource::SRC_LOCAL_DEFENSE:
-                case ChatChannelSource::SRC_WORLD_DEFENSE:
-                case ChatChannelSource::SRC_LOOKING_FOR_GROUP:
-                case ChatChannelSource::SRC_GUILD_RECRUITMENT:
-                {
-                    type = CHAT_MSG_CHANNEL;
-                    channelName = chanName;
-                }
-                }
-
-                bool debug = bot->GetPlayerbotAI()->HasStrategy("debug llm", BotState::BOT_STATE_NON_COMBAT);
-
-                WorldSession* session = bot->GetSession();
-
-                WorldPacket chatTemplate = GetPacketTemplate(CMSG_MESSAGECHAT, type, bot, player, channelName);
-                WorldPacket emoteTemplate = (type == CHAT_MSG_SAY || type == CHAT_MSG_WHISPER) ? GetPacketTemplate(CMSG_MESSAGECHAT, CHAT_MSG_EMOTE, bot, player) : WorldPacket();
-                WorldPacket systemTemplate = GetPacketTemplate(CMSG_MESSAGECHAT, CHAT_MSG_WHISPER, bot, player);
-
-                futurePackets futPackets = std::async(std::launch::async, ChatReplyAction::GenerateResponsePackets, json, chatTemplate, emoteTemplate, systemTemplate, startPattern, endPattern, deletePattern, splitPattern, debug);
-
-                ai->SendDelayedPacket(session, std::move(futPackets));
+                llmContext += " " + llmPrompt;
+                // Generate() is disabled in this branch; retain context updates
+                // but deliberately produce no response packets.
             }
             else if (player != bot || sPlayerbotAIConfig.llmBotToBotChatChance)
             {

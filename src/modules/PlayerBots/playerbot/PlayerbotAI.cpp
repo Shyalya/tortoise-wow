@@ -69,6 +69,45 @@ std::set<std::string> PlayerbotAI::unsecuredCommands;
 
 namespace
 {
+    constexpr size_t MAX_PACKET_HANDLER_WORK_PER_UPDATE = 32;
+    constexpr size_t MAX_PACKET_QUEUE_SIZE = 256;
+    constexpr size_t MAX_CRITICAL_PACKET_QUEUE_SIZE = 64;
+    constexpr time_t PACKET_PRESSURE_LOG_INTERVAL = 60;
+
+    void ReportPacketQueuePressure(uint16 opcode, bool critical)
+    {
+        static std::mutex reportMutex;
+        static time_t nextReport = 0;
+        static uint64 droppedCount = 0;
+        static uint64 criticalDropCount = 0;
+        bool report = false;
+        uint64 dropped = 0;
+        uint64 criticalDropped = 0;
+        {
+            std::lock_guard<std::mutex> lock(reportMutex);
+            ++droppedCount;
+            if (critical)
+                ++criticalDropCount;
+
+            time_t now = time(nullptr);
+            if (!nextReport || now >= nextReport)
+            {
+                report = true;
+                dropped = droppedCount;
+                criticalDropped = criticalDropCount;
+                droppedCount = criticalDropCount = 0;
+                nextReport = now + PACKET_PRESSURE_LOG_INTERVAL;
+            }
+        }
+
+        if (report)
+        {
+            sLog.outError("Playerbot packet queue pressure: dropped=%llu critical=%llu latestOpcode=%u",
+                static_cast<unsigned long long>(dropped), static_cast<unsigned long long>(criticalDropped),
+                opcode);
+        }
+    }
+
     enum class PlayerbotSpellStartFailure
     {
         Unknown,
@@ -119,31 +158,107 @@ uint32 PlayerbotChatHandler::extractQuestId(std::string str)
     return cId ? atol(cId) : 0;
 }
 
-void PacketHandlingHelper::AddHandler(uint16 opcode, std::string handler, bool shouldDelay)
+void PacketHandlingHelper::AddHandler(uint16 opcode, std::string handler, bool shouldDelay,
+                                      bool isCritical)
 {
     handlers[opcode] = handler;
     delay[opcode] = shouldDelay;
+    critical[opcode] = isCritical;
 }
 
-void PacketHandlingHelper::Handle(ExternalEventHelper &helper)
+void PacketHandlingHelper::Handle(ExternalEventHelper &helper, size_t& remainingWork, size_t maxWork)
 {
-    if (!m_botPacketMutex.try_lock()) //Packets do not have to be handled now. Handle them later.
+    // A bounded batch keeps packet-triggered work from delaying combat. The
+    // four lanes are drained round-robin under the lock, while handlers run
+    // without it.
+    std::vector<std::unique_ptr<WorldPacket>> batch;
+    size_t workLimit = std::min(remainingWork, maxWork);
+    batch.reserve(workLimit);
+
+    if (!remainingWork || !maxWork)
         return;
 
-    // queue holds unique_ptr<WorldPacket> due to Penqle's move-only WorldPacket.
-    std::stack<std::unique_ptr<WorldPacket>> delayed;
+    std::unique_lock<std::mutex> lock(m_botPacketMutex, std::try_to_lock);
+    if (!lock.owns_lock()) // Packets do not have to be handled now. Handle them later.
+        return;
 
-    while (!queue.empty())
+    for (size_t work = 0; work < workLimit; ++work)
     {
-        if (!helper.HandlePacket(handlers, *queue.top()))
-            if (delay[queue.top()->GetOpcode()])
-                delayed.push(std::move(queue.top()));
-        queue.pop();
+        bool moved = false;
+        for (size_t laneOffset = 0; laneOffset < 4; ++laneOffset)
+        {
+            size_t lane = (queueRoundRobinCursor + laneOffset) % 4;
+            std::deque<std::unique_ptr<WorldPacket>>* packets = nullptr;
+            switch (lane)
+            {
+            case 0:
+                packets = &criticalQueue;
+                break;
+            case 1:
+                packets = &queue;
+                break;
+            case 2:
+                packets = &criticalRetryQueue;
+                break;
+            case 3:
+                packets = &retryQueue;
+                break;
+            }
+
+            if (packets && !packets->empty())
+            {
+                batch.push_back(std::move(packets->back()));
+                packets->pop_back();
+                queueRoundRobinCursor = (lane + 1) % 4;
+                moved = true;
+                break;
+            }
+        }
+
+        if (!moved)
+            break;
+    }
+    remainingWork -= batch.size();
+    lock.unlock();
+
+    struct RetryPacket
+    {
+        std::unique_ptr<WorldPacket> packet;
+        bool critical;
+    };
+    std::vector<RetryPacket> retries;
+    retries.reserve(batch.size());
+
+    for (std::vector<std::unique_ptr<WorldPacket>>::iterator packet = batch.begin(); packet != batch.end(); ++packet)
+    {
+        if (!*packet)
+            continue;
+
+        uint16 opcode = (*packet)->GetOpcode();
+        std::map<uint16, bool>::const_iterator delayIt = delay.find(opcode);
+        if (!helper.HandlePacket(handlers, **packet) && delayIt != delay.end() && delayIt->second)
+        {
+            std::map<uint16, bool>::const_iterator criticalIt = critical.find(opcode);
+            retries.push_back(RetryPacket { std::move(*packet),
+                criticalIt != critical.end() && criticalIt->second });
+        }
     }
 
-    queue = std::move(delayed);
+    std::vector<std::pair<uint16, bool>> dropped;
+    lock.lock();
+    for (std::vector<RetryPacket>::iterator retry = retries.begin(); retry != retries.end(); ++retry)
+    {
+        std::deque<std::unique_ptr<WorldPacket>>& target = retry->critical ? criticalRetryQueue : retryQueue;
+        size_t capacity = retry->critical ? MAX_CRITICAL_PACKET_QUEUE_SIZE : MAX_PACKET_QUEUE_SIZE;
+        if (target.size() < capacity)
+            target.push_back(std::move(retry->packet));
+        else
+            dropped.push_back(std::make_pair(retry->packet->GetOpcode(), retry->critical));
+    }
+    lock.unlock();
 
-    m_botPacketMutex.unlock();
+    for (std::vector<std::pair<uint16, bool>>::const_iterator drop = dropped.begin(); drop != dropped.end(); ++drop)
+        ReportPacketQueuePressure(drop->first, drop->second);
 }
 
 void PacketHandlingHelper::AddPacket(const WorldPacket& packet)
@@ -151,12 +266,27 @@ void PacketHandlingHelper::AddPacket(const WorldPacket& packet)
     if (packet.empty() && packet.GetOpcode() != MSG_RAID_READY_CHECK)
         return;
 
-    m_botPacketMutex.lock(); //We are going to add packets. Stop any new handling and add them.
+    bool dropped = false;
+    bool isCritical = false;
+    {
+        std::lock_guard<std::mutex> lock(m_botPacketMutex); // Stop handling while adding the packet.
 
-	if (handlers.find(packet.GetOpcode()) != handlers.end())
-        queue.push(std::make_unique<WorldPacket>(packet));
+        uint16 opcode = packet.GetOpcode();
+        if (handlers.find(opcode) == handlers.end())
+            return;
 
-    m_botPacketMutex.unlock();
+        isCritical = critical[opcode];
+        std::deque<std::unique_ptr<WorldPacket>>& target = isCritical ? criticalQueue : queue;
+        size_t capacity = isCritical ? MAX_CRITICAL_PACKET_QUEUE_SIZE : MAX_PACKET_QUEUE_SIZE;
+
+        if (target.size() < capacity)
+            target.push_back(std::make_unique<WorldPacket>(packet));
+        else
+            dropped = true;
+    }
+
+    if (dropped)
+        ReportPacketQueuePressure(packet.GetOpcode(), isCritical);
 }
 
 PlayerbotAI::PlayerbotAI() : PlayerbotAIBase(), bot(NULL), aiObjectContext(NULL),
@@ -210,38 +340,38 @@ PlayerbotAI::PlayerbotAI(Player* bot) :
 
     masterIncomingPacketHandlers.AddHandler(CMSG_GAMEOBJ_USE, "use game object");
     masterIncomingPacketHandlers.AddHandler(CMSG_AREATRIGGER, "area trigger");
-    masterIncomingPacketHandlers.AddHandler(CMSG_LOOT_ROLL, "loot roll", true);
-    masterIncomingPacketHandlers.AddHandler(CMSG_GOSSIP_HELLO, "gossip hello");
-    masterIncomingPacketHandlers.AddHandler(CMSG_QUESTGIVER_HELLO, "gossip hello");
-    masterIncomingPacketHandlers.AddHandler(CMSG_QUESTGIVER_COMPLETE_QUEST, "complete quest");
-    masterIncomingPacketHandlers.AddHandler(CMSG_QUESTGIVER_ACCEPT_QUEST, "accept quest");
-    masterIncomingPacketHandlers.AddHandler(CMSG_QUEST_CONFIRM_ACCEPT, "confirm quest");
-    masterIncomingPacketHandlers.AddHandler(CMSG_ACTIVATETAXI, "activate taxi");
-    masterIncomingPacketHandlers.AddHandler(CMSG_ACTIVATETAXIEXPRESS, "activate taxi");
-    masterIncomingPacketHandlers.AddHandler(CMSG_TAXICLEARALLNODES, "taxi done");
-    masterIncomingPacketHandlers.AddHandler(CMSG_TAXICLEARNODE, "taxi done");
-    masterIncomingPacketHandlers.AddHandler(CMSG_GROUP_UNINVITE, "uninvite");
-    masterIncomingPacketHandlers.AddHandler(CMSG_GROUP_UNINVITE_GUID, "uninvite guid");
-    masterIncomingPacketHandlers.AddHandler(CMSG_PUSHQUESTTOPARTY, "quest share");
+    masterIncomingPacketHandlers.AddHandler(CMSG_LOOT_ROLL, "loot roll", true, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_GOSSIP_HELLO, "gossip hello", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_QUESTGIVER_HELLO, "gossip hello", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_QUESTGIVER_COMPLETE_QUEST, "complete quest", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_QUESTGIVER_ACCEPT_QUEST, "accept quest", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_QUEST_CONFIRM_ACCEPT, "confirm quest", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_ACTIVATETAXI, "activate taxi", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_ACTIVATETAXIEXPRESS, "activate taxi", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_TAXICLEARALLNODES, "taxi done", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_TAXICLEARNODE, "taxi done", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_GROUP_UNINVITE, "uninvite", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_GROUP_UNINVITE_GUID, "uninvite guid", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_PUSHQUESTTOPARTY, "quest share", false, true);
     masterIncomingPacketHandlers.AddHandler(CMSG_CAST_SPELL, "see spell");
-    masterIncomingPacketHandlers.AddHandler(CMSG_REPOP_REQUEST, "release spirit");
-    masterIncomingPacketHandlers.AddHandler(CMSG_RECLAIM_CORPSE, "revive from corpse");
+    masterIncomingPacketHandlers.AddHandler(CMSG_REPOP_REQUEST, "release spirit", false, true);
+    masterIncomingPacketHandlers.AddHandler(CMSG_RECLAIM_CORPSE, "revive from corpse", false, true);
 
 #ifdef MANGOSBOT_TWO
-    masterIncomingPacketHandlers.AddHandler(CMSG_LFG_TELEPORT, "lfg teleport");
+    masterIncomingPacketHandlers.AddHandler(CMSG_LFG_TELEPORT, "lfg teleport", false, true);
 #endif
 
     botOutgoingPacketHandlers.AddHandler(SMSG_PETITION_SHOW_SIGNATURES, "petition offer");
-    botOutgoingPacketHandlers.AddHandler(SMSG_BATTLEFIELD_STATUS, "bg status");
-    botOutgoingPacketHandlers.AddHandler(SMSG_GROUP_INVITE, "group invite");
-    botOutgoingPacketHandlers.AddHandler(SMSG_GUILD_INVITE, "guild accept");
+    botOutgoingPacketHandlers.AddHandler(SMSG_BATTLEFIELD_STATUS, "bg status", false, true);
+    botOutgoingPacketHandlers.AddHandler(SMSG_GROUP_INVITE, "group invite", false, true);
+    botOutgoingPacketHandlers.AddHandler(SMSG_GUILD_INVITE, "guild accept", false, true);
     botOutgoingPacketHandlers.AddHandler(BUY_ERR_NOT_ENOUGHT_MONEY, "not enough money");
     botOutgoingPacketHandlers.AddHandler(BUY_ERR_REPUTATION_REQUIRE, "not enough reputation");
-    botOutgoingPacketHandlers.AddHandler(SMSG_GROUP_SET_LEADER, "group set leader");
-    botOutgoingPacketHandlers.AddHandler(SMSG_FORCE_RUN_SPEED_CHANGE, "check mount state");
-    botOutgoingPacketHandlers.AddHandler(SMSG_RESURRECT_REQUEST, "resurrect request");
+    botOutgoingPacketHandlers.AddHandler(SMSG_GROUP_SET_LEADER, "group set leader", false, true);
+    botOutgoingPacketHandlers.AddHandler(SMSG_FORCE_RUN_SPEED_CHANGE, "check mount state", false, true);
+    botOutgoingPacketHandlers.AddHandler(SMSG_RESURRECT_REQUEST, "resurrect request", false, true);
     botOutgoingPacketHandlers.AddHandler(SMSG_INVENTORY_CHANGE_FAILURE, "cannot equip");
-    botOutgoingPacketHandlers.AddHandler(SMSG_TRADE_STATUS, "trade status");
+    botOutgoingPacketHandlers.AddHandler(SMSG_TRADE_STATUS, "trade status", false, true);
     botOutgoingPacketHandlers.AddHandler(SMSG_LOOT_RESPONSE, "loot response", true);
     botOutgoingPacketHandlers.AddHandler(SMSG_QUESTUPDATE_ADD_KILL, "quest update add kill", true);
 #ifndef MANGOSBOT_TWO
@@ -259,27 +389,27 @@ PlayerbotAI::PlayerbotAI(Player* bot) :
     botOutgoingPacketHandlers.AddHandler(SMSG_PVP_CREDIT, "honorgain", true);
     botOutgoingPacketHandlers.AddHandler(SMSG_TEXT_EMOTE, "receive text emote");
     botOutgoingPacketHandlers.AddHandler(SMSG_EMOTE, "receive emote");
-    botOutgoingPacketHandlers.AddHandler(SMSG_LOOT_START_ROLL, "loot start roll", true);
-    botOutgoingPacketHandlers.AddHandler(SMSG_SUMMON_REQUEST, "summon request");
-    botOutgoingPacketHandlers.AddHandler(MSG_RAID_READY_CHECK, "ready check");
-    botOutgoingPacketHandlers.AddHandler(SMSG_QUEST_CONFIRM_ACCEPT, "confirm quest");
-    botOutgoingPacketHandlers.AddHandler(SMSG_QUESTGIVER_QUEST_DETAILS, "quest details");   
+    botOutgoingPacketHandlers.AddHandler(SMSG_LOOT_START_ROLL, "loot start roll", true, true);
+    botOutgoingPacketHandlers.AddHandler(SMSG_SUMMON_REQUEST, "summon request", false, true);
+    botOutgoingPacketHandlers.AddHandler(MSG_RAID_READY_CHECK, "ready check", false, true);
+    botOutgoingPacketHandlers.AddHandler(SMSG_QUEST_CONFIRM_ACCEPT, "confirm quest", false, true);
+    botOutgoingPacketHandlers.AddHandler(SMSG_QUESTGIVER_QUEST_DETAILS, "quest details", false, true);
 
 #ifndef MANGOSBOT_ZERO
-    botOutgoingPacketHandlers.AddHandler(SMSG_ARENA_TEAM_INVITE, "arena team invite");
+    botOutgoingPacketHandlers.AddHandler(SMSG_ARENA_TEAM_INVITE, "arena team invite", false, true);
 #endif
 #ifdef MANGOSBOT_TWO
-    botOutgoingPacketHandlers.AddHandler(SMSG_LFG_ROLE_CHECK_UPDATE, "lfg role check");
-    botOutgoingPacketHandlers.AddHandler(SMSG_LFG_PROPOSAL_UPDATE, "lfg proposal");
+    botOutgoingPacketHandlers.AddHandler(SMSG_LFG_ROLE_CHECK_UPDATE, "lfg role check", false, true);
+    botOutgoingPacketHandlers.AddHandler(SMSG_LFG_PROPOSAL_UPDATE, "lfg proposal", false, true);
 #endif
 
     botOutgoingPacketHandlers.AddHandler(SMSG_CAST_RESULT, "cast failed");
-    botOutgoingPacketHandlers.AddHandler(SMSG_DUEL_REQUESTED, "duel requested");
+    botOutgoingPacketHandlers.AddHandler(SMSG_DUEL_REQUESTED, "duel requested", false, true);
     botOutgoingPacketHandlers.AddHandler(SMSG_INVENTORY_CHANGE_FAILURE, "inventory change failure");
 
-    masterOutgoingPacketHandlers.AddHandler(SMSG_PARTY_COMMAND_RESULT, "party command");
+    masterOutgoingPacketHandlers.AddHandler(SMSG_PARTY_COMMAND_RESULT, "party command", false, true);
 #ifndef MANGOSBOT_ZERO
-    masterOutgoingPacketHandlers.AddHandler(MSG_RAID_READY_CHECK_FINISHED, "ready check finished");
+    masterOutgoingPacketHandlers.AddHandler(MSG_RAID_READY_CHECK_FINISHED, "ready check finished", false, true);
 #endif
 
     if (!HasRealPlayerMaster() && bot->GetFreeTalentPoints() > 0)
@@ -1529,12 +1659,38 @@ void PlayerbotAI::UpdateAIInternal(uint32 elapsed, bool minimal)
         return;
     }
 
-    SC_PHASE("UpdateAIInternal.botOutgoingPackets", bot ? bot->GetName() : "(null)");
-    botOutgoingPacketHandlers.Handle(helper);
-    SC_PHASE("UpdateAIInternal.masterIncomingPackets", bot ? bot->GetName() : "(null)");
-    masterIncomingPacketHandlers.Handle(helper);
-    SC_PHASE("UpdateAIInternal.masterOutgoingPackets", bot ? bot->GetName() : "(null)");
-    masterOutgoingPacketHandlers.Handle(helper);
+    // One aggregate budget is shared across all helper queues. A round-robin
+    // slice per helper preserves progress for later helpers when the first
+    // queue is saturated; each helper retains LIFO order within its lanes.
+    size_t packetWorkBudget = MAX_PACKET_HANDLER_WORK_PER_UPDATE;
+    PacketHandlingHelper* packetHelpers[] = {
+        &botOutgoingPacketHandlers, &masterIncomingPacketHandlers, &masterOutgoingPacketHandlers
+    };
+    size_t nextPacketHelper = packetHelperRoundRobinCursor % 3;
+    while (packetWorkBudget)
+    {
+        size_t startHelper = nextPacketHelper;
+        size_t handledThisRound = 0;
+        for (size_t offset = 0; offset < 3 && packetWorkBudget; ++offset)
+        {
+            size_t helperIndex = (startHelper + offset) % 3;
+            size_t before = packetWorkBudget;
+            SC_PHASE(helperIndex == 0 ? "UpdateAIInternal.botOutgoingPackets" :
+                     helperIndex == 1 ? "UpdateAIInternal.masterIncomingPackets" :
+                                        "UpdateAIInternal.masterOutgoingPackets",
+                     bot ? bot->GetName() : "(null)");
+            packetHelpers[helperIndex]->Handle(helper, packetWorkBudget, 1);
+            if (packetWorkBudget < before)
+            {
+                handledThisRound += before - packetWorkBudget;
+                nextPacketHelper = (helperIndex + 1) % 3;
+            }
+        }
+
+        if (!handledThisRound)
+            break;
+    }
+    packetHelperRoundRobinCursor = nextPacketHelper;
 
     SC_PHASE("UpdateAIInternal.DoNextAction", bot ? bot->GetName() : "(null)");
 	DoNextAction(minimal);
@@ -1609,9 +1765,7 @@ void PlayerbotAI::Reset(bool full)
         strategy->OnPullEnded();
 
     RESET_AI_VALUE(Unit*,"old target");
-    // CurrentTargetValue keeps a private selection GUID, so reset it through
-    // its setter rather than only clearing the cached base value.
-    SET_AI_VALUE(Unit*,"current target", nullptr);
+    RESET_AI_VALUE(Unit*,"current target");
     RESET_AI_VALUE(Unit*,"pull target");
     RESET_AI_VALUE(ObjectGuid,"attack target");
     RESET_AI_VALUE(GuidPosition,"rpg target");
@@ -2320,18 +2474,14 @@ void PlayerbotAI::SpellInterrupted(uint32 spellid)
     if (!spellid || lastSpell.id != spellid)
         return;
 
-    time_t now = time(0);
-    if (now <= lastSpell.time)
-        return;
-
-    uint32 castTimeSpent = 1000 * (now - lastSpell.time);
+    uint32 castTimeSpent = WorldTimer::getMSTimeDiff(lastSpell.time, WorldTimer::getMSTime());
     uint32 globalCooldown = CalculateGlobalCooldown(lastSpell.id);
     if (castTimeSpent < globalCooldown)
         SetAIInternalUpdateDelay(globalCooldown - castTimeSpent);
     else
         SetAIInternalUpdateDelay(sPlayerbotAIConfig.reactDelay);
 
-    lastSpell.id = 0;
+    lastSpell.Reset();
 }
 
 int32 PlayerbotAI::CalculateGlobalCooldown(uint32 spellid)
@@ -5334,7 +5484,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget, bool
     }
 
     if (spell->GetCastTime() || (IsChanneledSpell(pSpellInfo) && GetSpellDuration(pSpellInfo) > 0))
-        aiObjectContext->GetValue<LastSpellCast&>("last spell cast")->Get().Set(spellId, target->GetObjectGuid(), time(0));
+        aiObjectContext->GetValue<LastSpellCast&>("last spell cast")->Get().Set(spellId, target->GetObjectGuid(), WorldTimer::getMSTime());
 
     aiObjectContext->GetValue<ai::PositionMap&>("position")->Get()["random"].Reset();
 
@@ -5477,7 +5627,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, GameObject* goTarget, Item* itemTarg
     }
 
     if (spell->GetCastTime() || (IsChanneledSpell(pSpellInfo) && GetSpellDuration(pSpellInfo) > 0))
-        aiObjectContext->GetValue<LastSpellCast&>("last spell cast")->Get().Set(spellId, goTarget->GetObjectGuid(), time(0));
+        aiObjectContext->GetValue<LastSpellCast&>("last spell cast")->Get().Set(spellId, goTarget->GetObjectGuid(), WorldTimer::getMSTime());
 
     aiObjectContext->GetValue<ai::PositionMap&>("position")->Get()["random"].Reset();
 
@@ -5632,7 +5782,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, float x, float y, float z, Item* ite
         *outSpellDuration = GetSpellCastDuration(spell);
     }
 
-    aiObjectContext->GetValue<LastSpellCast&>("last spell cast")->Get().Set(spellId, bot->GetObjectGuid(), time(0));
+    aiObjectContext->GetValue<LastSpellCast&>("last spell cast")->Get().Set(spellId, bot->GetObjectGuid(), WorldTimer::getMSTime());
     aiObjectContext->GetValue<ai::PositionMap&>("position")->Get()["random"].Reset();
 
     if (oldSel)
@@ -5925,7 +6075,7 @@ bool PlayerbotAI::CastVehicleSpell(uint32 spellId, Unit* target, float projectil
 
     WaitForSpellCast(spell);
 
-    //aiObjectContext->GetValue<LastSpellCast&>("last spell cast")->Get().Set(spellId, target->GetObjectGuid(), time(0));
+    //aiObjectContext->GetValue<LastSpellCast&>("last spell cast")->Get().Set(spellId, target->GetObjectGuid(), WorldTimer::getMSTime());
     //aiObjectContext->GetValue<ai::PositionMap&>("position")->Get()["random"].Reset();
 
     if (HasStrategy("debug spell", BotState::BOT_STATE_NON_COMBAT))
@@ -8392,37 +8542,6 @@ std::list<Unit*> PlayerbotAI::GetAllHostileNPCNonPetUnitsAroundWO(WorldObject* w
     }
 
     return hostileUnitsNonPlayers;
-}
-
-void PlayerbotAI::SendDelayedPacket(WorldSession* session, futurePackets futPackets)
-{
-    std::thread t([session, futPacket = std::move(futPackets)]() mutable {
-        for (auto& delayedPacket : futPacket.get())
-        {
-            if (delayedPacket.second)
-                std::this_thread::sleep_for(std::chrono::milliseconds(delayedPacket.second));
-
-            std::unique_ptr<WorldPacket> packetPtr(new WorldPacket(delayedPacket.first));
-            session->QueuePacket(std::move(packetPtr));
-        }
-    });
-
-    t.detach();
-}
-
-void PlayerbotAI::ReceiveDelayedPacket(futurePackets futPackets)
-{
-    PacketHandlingHelper* handler = &botOutgoingPacketHandlers;
-    std::thread t([handler, futPackets = std::move(futPackets)]() mutable {
-        for (auto& delayedPacket : futPackets.get())
-        {            
-            handler->AddPacket(delayedPacket.first);
-            if(delayedPacket.second)
-                std::this_thread::sleep_for(std::chrono::milliseconds(delayedPacket.second));
-        }
-        });
-
-    t.detach();
 }
 
 PlayerbotHolder* PlayerbotAI::GetHolder() const

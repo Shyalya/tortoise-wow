@@ -6,6 +6,31 @@
 
 using namespace ai;
 
+namespace
+{
+    uint32 CountEquippedOutfitItems(Player* bot, ItemIds const& outfit)
+    {
+        uint32 count = 0;
+        for (uint32 itemId : outfit)
+            if (bot->HasItemWithIdEquipped(itemId))
+                ++count;
+
+        return count;
+    }
+
+    bool HasExtraEquippedItems(Player* bot, ItemIds const& outfit)
+    {
+        for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+        {
+            Item* item = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+            if (item && outfit.find(item->GetProto()->ItemId) == outfit.end())
+                return true;
+        }
+
+        return false;
+    }
+}
+
 bool OutfitAction::Execute(Event& event)
 {
     Player* requester = event.getOwner() ? event.getOwner() : GetMaster();
@@ -40,23 +65,52 @@ bool OutfitAction::Execute(Event& event)
         name = param.substr(0, space);
         ItemIds outfit = ai->InventoryFindOutfitItems(name);
         std::string command = param.substr(space + 1);
+        if ((command == "equip" || command == "replace") && outfit.empty())
+        {
+            ai->TellError(requester, "Outfit " + name + " is empty or does not exist");
+            return false;
+        }
+
         if (command == "equip")
         {
-            std::ostringstream out;
-            out << "Equipping outfit " << name;
-            ai->TellPlayer(requester, out);
             EquipItems(requester, outfit);
-            return true;
+            uint32 equippedCount = CountEquippedOutfitItems(bot, outfit);
+            std::ostringstream out;
+            if (equippedCount == outfit.size())
+            {
+                out << "Equipped outfit " << name;
+                ai->TellPlayer(requester, out);
+                return true;
+            }
+
+            if (equippedCount > 0)
+                out << "Partially equipped outfit " << name << " (" << equippedCount << "/" << outfit.size() << " items)";
+            else
+                out << "Could not equip outfit " << name;
+
+            ai->TellError(requester, out.str());
+            return false;
         }
         else if (command == "replace")
         {
-            std::ostringstream out;
-            out << "Replacing current equip with outfit " << name;
-            ai->TellPlayer(requester, out);
+            EquipItems(requester, outfit);
+            uint32 equippedCount = CountEquippedOutfitItems(bot, outfit);
+            if (equippedCount != outfit.size())
+            {
+                std::ostringstream out;
+                if (equippedCount > 0)
+                    out << "Partially equipped outfit " << name << " (" << equippedCount << "/" << outfit.size() << " items)";
+                else
+                    out << "Could not equip outfit " << name;
+                out << "; current gear was not removed";
+                ai->TellError(requester, out.str());
+                return false;
+            }
+
             for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; slot++)
             {
                 Item* const pItem = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
-                if (!pItem)
+                if (!pItem || outfit.find(pItem->GetProto()->ItemId) != outfit.end())
                     continue;
 
                 uint8 bagIndex = pItem->GetBagSlot();
@@ -66,8 +120,16 @@ bool OutfitAction::Execute(Event& event)
                 packet << bagIndex << slot << dstBag;
                 bot->GetSession()->HandleAutoStoreBagItemOpcode(packet);
             }
-            EquipItems(requester, outfit);
-            return true;
+
+            bool fullyReplaced = !HasExtraEquippedItems(bot, outfit);
+            std::ostringstream out;
+            out << (fullyReplaced ? "Replaced current equip with outfit " : "Partially replaced current equip with outfit ") << name;
+            if (fullyReplaced)
+                ai->TellPlayer(requester, out);
+            else
+                ai->TellError(requester, out.str());
+
+            return fullyReplaced;
         }
         else if (command == "reset")
         {
