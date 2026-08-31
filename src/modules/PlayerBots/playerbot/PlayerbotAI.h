@@ -784,6 +784,10 @@ public:
 private:
     bool UpdateAIReaction(uint32 elapsed, bool minimal, bool isStunned);
     void UpdateFaceTarget(uint32 elapsed, bool minimal);
+    void ObserveCombatTargetChanges();
+    bool CanWakeCombatDecision() const;
+    void HandleSpellStartFailure(SpellCastResult result, bool hasUnitTarget, bool waitForSpell);
+    void ScheduleSpellRetry(bool waitForSpell, uint32* outSpellDuration);
 
 protected:
 	Player* bot;
@@ -816,6 +820,8 @@ protected:
     bool inCombat = false;
     bool isMoving = false;
     bool isWaiting = false;
+    ObjectGuid lastObservedSelection;
+    ObjectGuid lastObservedCombatTarget;
     BotCheatMask cheatMask = BotCheatMask::none;
     WorldPosition jumpDestination;
     uint32 jumpTime;

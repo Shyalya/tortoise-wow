@@ -3,10 +3,10 @@
 
 namespace ai
 {
-    class ActiveSpellValue : public CalculatedValue<uint32>
+    class ActiveSpellValue : public MillisecondCalculatedValue<uint32>
 	{
 	public:
-        ActiveSpellValue(PlayerbotAI* ai, std::string name = "active spell") : CalculatedValue<uint32>(ai, name) {}
+        ActiveSpellValue(PlayerbotAI* ai, std::string name = "active spell") : MillisecondCalculatedValue<uint32>(ai, name, 100) {}
 
         virtual uint32 Calculate() override;
 

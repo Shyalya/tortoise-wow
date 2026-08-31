@@ -27,6 +27,7 @@ namespace ai
         virtual Trigger* GetTrigger(const std::string& name) { return triggerContexts.GetObject(name, ai); }
         virtual Action* GetAction(const std::string& name) { return actionContexts.GetObject(name, ai); }
         virtual UntypedValue* GetUntypedValue(const std::string& name) { return valueContexts.GetObject(name, ai); }
+        UntypedValue* FindUntypedValue(const std::string& name) { return valueContexts.FindObject(name); }
 
         template<class T>
         Value<T>* GetValue(const std::string& name)
@@ -45,6 +46,12 @@ namespace ai
         {
         	std::ostringstream out; out << param;
             return GetValue<T>(name, out.str());
+        }
+
+        template<class T>
+        Value<T>* FindValue(const std::string& name)
+        {
+            return dynamic_cast<Value<T>*>(FindUntypedValue(name));
         }
 
         bool HasValue(const std::string& name)
@@ -90,6 +97,13 @@ namespace ai
         }
 
         void ClearValues(std::string findName = "");
+
+        // Reset an existing value without invoking its factory.
+        bool InvalidateValue(const std::string& name);
+
+        // Reset only already-created, target-qualified combat values. This
+        // must not create values or reset the manually selected target.
+        void InvalidateCombatTargetValues();
 
         void ClearExpiredValues(std::string findName = "", uint32 interval = 0);
 
