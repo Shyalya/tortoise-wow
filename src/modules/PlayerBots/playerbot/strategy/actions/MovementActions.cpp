@@ -3051,7 +3051,8 @@ bool MovementAction::MoveAway(Unit* target, float distance)
     if (!target || !ai->CanMove())
         return false;
 
-    float angle = target->GetAngle(bot) + M_PI_F;
+    // Use the bot as the angle origin so the destination moves away from the target.
+    float angle = bot->GetAngle(target) + M_PI_F;
     float x = bot->GetPositionX() + cos(angle) * distance;
     float y = bot->GetPositionY() + sin(angle) * distance;
     float z = bot->GetPositionZ();
@@ -4674,4 +4675,3 @@ WorldPosition JumpAction::GetPossibleJumpStartForInRange(const WorldPosition& sr
     sLog.outDetail("%s: GetPossibleJumpStartFor Failed to find jump point!", jumper->GetName());
     return WorldPosition();
 }
-

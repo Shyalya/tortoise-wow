@@ -1,6 +1,5 @@
 
 #include "playerbot/playerbot.h"
-#include <memory>
 #include "StatsValues.h"
 
 #include "playerbot/ServerFacade.h"
@@ -26,23 +25,17 @@ bool IsDeadValue::Calculate()
 
 bool PetIsDeadValue::Calculate()
 {
-#ifdef MANGOSBOT_ZERO
-#ifdef MANGOS
-    PetDatabaseStatus status = Pet::GetStatusFromDB(bot);
-    if (status == PET_DB_DEAD)
-#endif
-#endif
-    if (!bot->GetPet())
-    {
-        uint32 ownerid = bot->GetGUIDLow();
-        auto result = CharacterDatabase.PQuery("SELECT id FROM character_pet WHERE owner = '%u'", ownerid);
-        std::unique_ptr<QueryResult> result_guard(result);
-        return result != nullptr;
-    }
-    if (bot->GetPetGuid() && !bot->GetPet())
-        return true;
+    Pet* pet = bot->GetPet();
+    if (pet)
+        return sServerFacade.GetDeathState(pet) != ALIVE;
 
-    return bot->GetPet() && sServerFacade.GetDeathState(bot->GetPet()) != ALIVE;
+    // character_pet has no persisted death flag. Its slot only identifies the
+    // current, unavailable, or stable slot, and Pet::SavePetToDB clamps
+    // curhealth below 1 to 1. Therefore a saved dead pet cannot be reliably
+    // distinguished from a living unavailable/stabled pet once it is no
+    // longer spawned. Treat an absent pet as not dead; the live Pet state above
+    // remains authoritative for an active dead pet.
+    return false;
 }
 
 bool PetIsHappyValue::Calculate()
@@ -267,4 +260,3 @@ uint8 SpeedValue::Calculate()
 
     return (uint8) (100.0f * target->GetSpeedRate(MOVE_RUN));
 }
-

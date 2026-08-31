@@ -124,8 +124,9 @@ bool FishAction::Execute(Event& event)
     uint8 bagIndex = pole->GetBagSlot();
     uint8 slot = pole->GetSlot();
 
-    if (slot != EQUIPMENT_SLOT_MAINHAND)
-        EquipAction::EquipItem(ai, GetMaster(), pole);
+    if ((bagIndex != INVENTORY_SLOT_BAG_0 || slot != EQUIPMENT_SLOT_MAINHAND) &&
+        !EquipAction::EquipItem(ai, GetMaster(), pole))
+        return false;
 
     Event fishCastEvent = Event("fish", "7731 " + chat->formatWorldobject(bot));
     bool didCast = CastCustomSpellAction::Execute(fishCastEvent);

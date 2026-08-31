@@ -155,10 +155,10 @@ namespace ai
         }
     };
 
-    class RepopAction : public SpiritHealerAction
+    class RepopAction : public SpiritHealerAction, public Qualified
     {
     public:
-        RepopAction(PlayerbotAI* ai, std::string name = "repop") : SpiritHealerAction(ai, name) {}
+        RepopAction(PlayerbotAI* ai, std::string name = "repop") : SpiritHealerAction(ai, name), Qualified() {}
 
     public:
         virtual bool Execute(Event& event) override
@@ -234,9 +234,32 @@ namespace ai
                 return false;
 
             if (ai->HasActivePlayerMaster())
-                return false;
+            {
+                // Normal repop remains unavailable with an active player master. The qualified
+                // form is only used after FindCorpseAction has exhausted its bounded attempts to
+                // reach the corpse tracked by the player, including the interval before the ghost
+                // flag is set.
+                return IsUnreachableCorpseRecovery();
+            }
 
             return true;
+        }
+
+        virtual bool isPossible() override
+        {
+            // A dead player cannot necessarily pass MovementAction::isPossible before becoming a
+            // ghost. This recovery does not move, so permit only the same tightly scoped form.
+            if (IsUnreachableCorpseRecovery())
+                return true;
+
+            return SpiritHealerAction::isPossible();
+        }
+
+    private:
+        bool IsUnreachableCorpseRecovery()
+        {
+            return ai->HasActivePlayerMaster() && getQualifier() == "unreachable corpse" &&
+                !sServerFacade.IsAlive(bot) && bot->GetCorpse();
         }
     };
 
