@@ -113,3 +113,34 @@ order 90 7079 1      # Viscous Fallout        122yd
 order 90 6235 2      # Electrocutioner 6000   555yd
 order 90 6229 3      # Crowd Pummeler 9-60    677yd
 order 90 7800 4      # Mekgineer Thermaplugg  723yd
+
+# --- Dragonmaw Retreat (map 816) ------------------------------------------
+# The roster held nine of the eleven and sent the party to Elder Hollowblood
+# FIRST - 727yd out, past the ~296yd a single path query can cover, on a map
+# with no anchor route at all. Two hours of that: 67 stalled_timeout, not one
+# boss down, the log repeating "Can't path to Elder Hollowblood: path didn't
+# make forward progress" and "Stuck near Elder Hollowblood and no reachable
+# mobs left".
+#
+# The order below is the OWNER'S, walked on foot. My straight-line sort would
+# have been wrong: two of these sit at z=73 against an entrance at z=242, so
+# map distance says nothing about ground distance here.
+#
+# NOTE the drop between 2 and 3 - reaching Cavernweb Broodmother means letting
+# yourself fall. A roster file cannot express that; anchor flags live in the
+# route. The first party through has to survive it on the recorder's own drop
+# handling, and the route it then records carries the leg for everyone after.
+# Also from the owner: coming in through the far entrance reverses the whole
+# order, so this holds for the near one.
+credit 62066 62068
+order 816 62056 1     # Bogpaw Truthsay        - same spot as Gowlfang
+order 816 62057 2     # Gowlfang
+order 816 62066 3     # Cavernweb Broodmother  - after the drop
+order 816 62067 4     # Web Master Torkon
+order 816 62071 5     # Garlok Flamekeeper
+order 816 62068 6     # Slagfist Destroyer
+order 816 62069 7     # Halgan Redbrand
+order 816 62070 8     # Overlord Blackheart
+order 816 62038 9     # Elder Hollowblood
+order 816 62072 10    # Searistrasz
+order 816 62037 11    # Zuluhed the Whacked

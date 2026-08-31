@@ -3,7 +3,6 @@
 #include "XpGainAction.h"
 #include "playerbot/LootObjectStack.h"
 #ifdef MANGOS
-#include "luaEngine.h"
 #endif
 
 
@@ -96,10 +95,13 @@ void XpGainAction::GiveXP(int32 xp, Unit* victim)
 
     uint32 level = bot->GetLevel();
 
-    // Used by Eluna
-#ifdef ENABLE_ELUNA
-    sEluna->OnGiveXP(bot, xp, victim);
-#endif /* ENABLE_ELUNA */
+    // No Eluna OnGiveXP hook here. This block came from the cmangos playerbots
+    // port and sat dead for months because nothing defined ENABLE_ELUNA; the
+    // Eluna merge defines it PUBLIC on `shared`, which woke it up. It cannot
+    // compile as written: `sEluna` is a global from the older Eluna, and this
+    // one keeps per-map states behind sElunaMgr instead. Removed rather than
+    // ported - it never ran, and the hook belongs with the others if it is
+    // wanted at all.
 
     // XP to money conversion processed in Player::RewardQuest
     if (level >= sWorld.getConfig(CONFIG_UINT32_MAX_PLAYER_LEVEL))

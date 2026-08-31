@@ -225,7 +225,17 @@ target_include_directories(${LIBRARY_NAME}
   PRIVATE ${CMAKE_SOURCE_DIR}/src/game/MapNodes
   PRIVATE ${CMAKE_SOURCE_DIR}/dep/recastnavigation
   PRIVATE ${CMAKE_SOURCE_DIR}/src/framework/Network
+  # Eluna reaches into core headers (Object.h includes LuaValue.h), and this
+  # module pulls those in through its precompiled header. The game target has
+  # the path; this one is separate and needs it too.
+  PRIVATE ${CMAKE_SOURCE_DIR}/src/modules/Eluna
 )
+
+# Eluna's headers include lua.h in turn, so the lua headers have to come along
+# or the build fails one line further on.
+if(TARGET lualib)
+  target_link_libraries(${LIBRARY_NAME} PUBLIC lualib)
+endif()
 
 # Install config files
 #
