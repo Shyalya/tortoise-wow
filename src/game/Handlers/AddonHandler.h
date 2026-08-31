@@ -26,6 +26,24 @@
 #include "Policies/Singleton.h"
 #include "WorldPacket.h"
 
+#include <string>
+
+namespace AddonInfoLimits
+{
+enum
+{
+    MAX_UNCOMPRESSED_SIZE = 256 * 1024,
+    MAX_COMPRESSED_SIZE = 256 * 1024,
+    MAX_COMPRESSION_RATIO = 100,
+    MAX_RECORDS = 1024,
+    MAX_NAME_LENGTH = 128
+};
+}
+
+// Shared validation for the auth-session and legacy addon decoders.
+bool DecompressAddonInfo(WorldPacket const& source, uint32 expectedSize, ByteBuffer& output);
+bool ReadAddonName(ByteBuffer& data, std::string& name);
+
 class AddonHandler
 {
     public:

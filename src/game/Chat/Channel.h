@@ -82,6 +82,13 @@ enum ChannelId
     CHANNEL_ID_WORLD                = 27
 };
 
+enum ChannelResourceLimits
+{
+    CHANNEL_MAX_NAME_LENGTH              = 64,
+    CHANNEL_MAX_CUSTOM_CHANNELS          = 256,
+    CHANNEL_MAX_CUSTOM_CHANNELS_PER_PLAYER = 10
+};
+
 inline bool IsDefenseChannel(uint32 channelId)
 {
     switch (channelId)
@@ -160,7 +167,7 @@ class Channel
             if(state) flags |= MEMBER_FLAG_OWNER;
             else flags &= ~MEMBER_FLAG_OWNER;
         }
-        bool IsModerator() { return flags & MEMBER_FLAG_MODERATOR; }
+        bool IsModerator() const { return flags & MEMBER_FLAG_MODERATOR; }
         void SetModerator(bool state)
         {
             if(state) flags |= MEMBER_FLAG_MODERATOR;
@@ -190,10 +197,11 @@ class Channel
         void SetSecurityLevel(uint8 sec) { m_securityLevel = sec; }
         uint8 GetSecurityLevel() const { return m_securityLevel; }
         Team GetTeam() const { return m_Team;}
+        bool IsMember(ObjectGuid guid) const { return IsOn(guid); }
 
-        void Join(ObjectGuid guid, const char *password, bool checkPassword = true);
+        bool Join(ObjectGuid guid, const char *password, bool checkPassword = true);
         // Player* overload.
-        void Join(Player const* player, const char* password = "");
+        bool Join(Player const* player, const char* password = "");
         void Leave(ObjectGuid guid, bool send = true);
         void KickOrBan(ObjectGuid guid, const char *targetName, bool ban);
         void Kick(ObjectGuid guid, const char *targetName) { KickOrBan(guid, targetName, false); }

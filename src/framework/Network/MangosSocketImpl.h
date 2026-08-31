@@ -18,9 +18,40 @@
 #include "Database/DatabaseEnv.h"
 #include "Auth/BigNumber.h"
 #include "Auth/Sha1.h"
+#include "World.h"
 #include "WorldSession.h"
 #include "Log.h"
 #include "DBCStores.h"
+
+#include <chrono>
+#include <mutex>
+
+namespace mangos_socket_detail
+{
+    struct MalformedHeaderLogLimiter
+    {
+        std::mutex lock;
+        std::chrono::steady_clock::time_point nextReport;
+        uint32 suppressed = 0;
+    };
+
+    inline bool AllowMalformedHeaderLog(uint32& suppressed)
+    {
+        static MalformedHeaderLogLimiter limiter;
+        std::lock_guard<std::mutex> guard(limiter.lock);
+        auto const now = std::chrono::steady_clock::now();
+        if (limiter.nextReport.time_since_epoch().count() == 0 || now >= limiter.nextReport)
+        {
+            suppressed = limiter.suppressed;
+            limiter.suppressed = 0;
+            limiter.nextReport = now + std::chrono::seconds(60);
+            return true;
+        }
+
+        ++limiter.suppressed;
+        return false;
+    }
+}
 
 
 template <typename SessionType, typename SocketName, typename Crypt>
@@ -34,6 +65,10 @@ MangosSocket<SessionType, SocketName, Crypt>::MangosSocket() :
     m_Header(sizeof(ClientPktHeader)),
     m_OutBuffer(0),
     m_OutBufferSize(65536),
+    m_PacketQueuePackets(0),
+    m_PacketQueueBytes(0),
+    m_PacketQueueMaxPackets(DEFAULT_OUTBOUND_QUEUE_MAX_PACKETS),
+    m_PacketQueueMaxBytes(DEFAULT_OUTBOUND_QUEUE_MAX_BYTES),
     m_OutActive(false),
     m_Seed(static_cast<uint32>(rand32())),
     m_isServerSocket(true)
@@ -56,6 +91,8 @@ MangosSocket<SessionType, SocketName, Crypt>::~MangosSocket(void)
     WorldPacket* pct;
     while (m_PacketQueue.dequeue_head(pct) == 0)
         delete pct;
+    m_PacketQueuePackets = 0;
+    m_PacketQueueBytes = 0;
 }
 
 template <typename SessionType, typename SocketName, typename Crypt>
@@ -69,6 +106,12 @@ void MangosSocket<SessionType, SocketName, Crypt>::CloseSocket(void)
 
         closing_ = true;
         peer().close_writer();
+
+        WorldPacket* pct;
+        while (m_PacketQueue.dequeue_head(pct) == 0)
+            delete pct;
+        m_PacketQueuePackets = 0;
+        m_PacketQueueBytes = 0;
     }
 
     {
@@ -88,18 +131,29 @@ int MangosSocket<SessionType, SocketName, Crypt>::SendPacket(const WorldPacket& 
 
     if (((SocketName*)this)->iSendPacket(pct) == -1)
     {
+        const uint32 packetBytes = static_cast<uint32>(pct.size() + sizeof(ServerPktHeader));
+        if (m_PacketQueuePackets >= m_PacketQueueMaxPackets ||
+            packetBytes > m_PacketQueueMaxBytes ||
+            m_PacketQueueBytes > m_PacketQueueMaxBytes - packetBytes)
+        {
+            sLog.outError("MangosSocket<SessionType, SocketName, Crypt>::SendPacket: outbound queue limit exceeded (%u packets, " SIZEFMTD " bytes)",
+                          m_PacketQueuePackets, static_cast<size_t>(m_PacketQueueBytes));
+            return -1;
+        }
+
         WorldPacket* npct;
 
         ACE_NEW_RETURN(npct, WorldPacket(pct), -1);
 
-        // NOTE maybe check of the size of the queue can be good ?
-        // to make it bounded instead of unbounded
         if (m_PacketQueue.enqueue_tail(npct) == -1)
         {
             delete npct;
             sLog.outError("MangosSocket<SessionType, SocketName, Crypt>::SendPacket: m_PacketQueue.enqueue_tail failed");
             return -1;
         }
+
+        ++m_PacketQueuePackets;
+        m_PacketQueueBytes += packetBytes;
     }
 
     return 0;
@@ -113,6 +167,13 @@ int MangosSocket<SessionType, SocketName, Crypt>::open(void *a)
     // Prevent double call to this func.
     if (m_OutBuffer)
         return -1;
+
+    const uint32 configuredMaxPackets = sWorld.getConfig(CONFIG_UINT32_NETWORK_SOCKET_OUTBOUND_QUEUE_MAX_PACKETS);
+    const uint32 configuredMaxBytes = sWorld.getConfig(CONFIG_UINT32_NETWORK_SOCKET_OUTBOUND_QUEUE_MAX_BYTES);
+    if (configuredMaxPackets != 0)
+        m_PacketQueueMaxPackets = configuredMaxPackets;
+    if (configuredMaxBytes != 0)
+        m_PacketQueueMaxBytes = configuredMaxBytes;
 
     // This will also prevent the socket from being Updated
     // while we are initializing it.
@@ -309,8 +370,10 @@ int MangosSocket<SessionType, SocketName, Crypt>::handle_input_header(void)
 
     if ((header.size < 4) || (header.size > 10240) || (header.cmd  > 10240))
     {
-        sLog.outError("WorldSocket::handle_input_header: client %s sent malformed packet size = %d , cmd = %d",
-                    GetRemoteAddress().c_str(), header.size, header.cmd);
+        uint32 suppressed = 0;
+        if (mangos_socket_detail::AllowMalformedHeaderLog(suppressed))
+            sLog.outError("WorldSocket::handle_input_header: malformed packet from %s (size = %d, cmd = %d; suppressed %u similar headers in the last minute)",
+                          GetRemoteAddress().c_str(), header.size, header.cmd, suppressed);
 
         errno = EINVAL;
         return -1;
@@ -524,6 +587,9 @@ bool MangosSocket<SessionType, SocketName, Crypt>::iFlushPacketQueue()
 
     while (m_PacketQueue.dequeue_head(pct) == 0)
     {
+        --m_PacketQueuePackets;
+        m_PacketQueueBytes -= static_cast<uint32>(pct->size() + sizeof(ServerPktHeader));
+
         if (((SocketName*)this)->iSendPacket(*pct) == -1)
         {
             if (m_PacketQueue.enqueue_head(pct) == -1)
@@ -532,6 +598,9 @@ bool MangosSocket<SessionType, SocketName, Crypt>::iFlushPacketQueue()
                 sLog.outError("MangosSocket<SessionType, SocketName, Crypt>::iFlushPacketQueue m_PacketQueue->enqueue_head");
                 return false;
             }
+
+            ++m_PacketQueuePackets;
+            m_PacketQueueBytes += static_cast<uint32>(pct->size() + sizeof(ServerPktHeader));
 
             break;
         }

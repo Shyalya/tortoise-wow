@@ -30,18 +30,32 @@
 #include <ace/INET_Addr.h>
 #include <ace/SString.h>
 
+#include <cstdint>
+
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
 
+namespace
+{
+    char const SessionTimerTag = 0;
+    char const PreAuthTimerTag = 0;
+}
+
 BufferedSocket::BufferedSocket(void):
     input_buffer_(4096),
-    remote_address_("<unknown>")
+    remote_address_("<unknown>"),
+    peer_address_("<unknown>"),
+    session_timer_id_(-1),
+    preauth_timer_id_(-1),
+    close_notified_(false),
+    handoff_pending_(false)
 {
 }
 
 /*virtual*/ BufferedSocket::~BufferedSocket(void)
 {
+    cancel_timers();
 }
 
 /*virtual*/ int BufferedSocket::open(void * arg)
@@ -52,7 +66,13 @@ BufferedSocket::BufferedSocket(void):
     if (time_t timer = sConfig.GetIntDefault("MaxSessionDuration", 300))
     {
         ACE_Time_Value interval(timer);
-        Base::reactor_timer_interface()->schedule_timer(this, NULL, interval);
+        session_timer_id_ = Base::reactor_timer_interface()->schedule_timer(this, &SessionTimerTag, interval);
+    }
+
+    if (time_t timer = sConfig.GetIntDefault("Auth.PreAuthTimeout", 15))
+    {
+        ACE_Time_Value interval(timer);
+        preauth_timer_id_ = Base::reactor_timer_interface()->schedule_timer(this, &PreAuthTimerTag, interval);
     }
 
     ACE_INET_Addr addr;
@@ -64,7 +84,8 @@ BufferedSocket::BufferedSocket(void):
 
     addr.get_host_addr(address, 1024);
 
-    this->remote_address_ = address;
+    this->peer_address_ = address;
+    this->remote_address_ = this->peer_address_;
 
     this->OnAccept();
 
@@ -74,6 +95,25 @@ BufferedSocket::BufferedSocket(void):
 const std::string& BufferedSocket::get_remote_address(void) const
 {
     return this->remote_address_;
+}
+
+const std::string& BufferedSocket::get_peer_address(void) const
+{
+    return this->peer_address_;
+}
+
+ACE_HANDLE BufferedSocket::detach_handle(void)
+{
+    cancel_timers();
+
+    ACE_HANDLE handle = get_handle();
+    if (reactor())
+        reactor()->remove_handler(this, ACE_Event_Handler::DONT_CALL | ACE_Event_Handler::ALL_EVENTS_MASK);
+
+    set_handle(ACE_INVALID_HANDLE);
+    handoff_pending_ = true;
+    notify_close();
+    return handle;
 }
 
 size_t BufferedSocket::recv_len(void) const
@@ -248,6 +288,15 @@ bool BufferedSocket::send(const char *buf, size_t len)
 
     this->OnRead();
 
+    if (handoff_pending_)
+    {
+        // OnRead may transfer the socket to another owner. Destroy this
+        // handler only after the callback has returned and before touching
+        // any more members.
+        this->handle_close();
+        return 0;
+    }
+
     // move data in the buffer to the beginning of the buffer
     this->input_buffer_.crunch();
 
@@ -257,7 +306,8 @@ bool BufferedSocket::send(const char *buf, size_t len)
 
 int BufferedSocket::handle_close(ACE_HANDLE /*h*/, ACE_Reactor_Mask /*m*/)
 {
-    this->OnClose();
+    cancel_timers();
+    notify_close();
 
     Base::handle_close();
 
@@ -266,9 +316,15 @@ int BufferedSocket::handle_close(ACE_HANDLE /*h*/, ACE_Reactor_Mask /*m*/)
 
 int BufferedSocket::handle_timeout(const ACE_Time_Value& current_time, const void* act)
 {
-    this->close_connection();
+    ACE_UNUSED_ARG(current_time);
 
-    this->OnClose();
+    if (act == &PreAuthTimerTag)
+        preauth_timer_id_ = -1;
+    else if (act == &SessionTimerTag || act == nullptr)
+        session_timer_id_ = -1;
+
+    this->close_connection();
+    notify_close();
 
     Base::handle_close();
 
@@ -277,8 +333,46 @@ int BufferedSocket::handle_timeout(const ACE_Time_Value& current_time, const voi
 
 void BufferedSocket::close_connection(void)
 {
+    cancel_timers();
     this->peer().close_reader();
     this->peer().close_writer();
 
     reactor()->remove_handler(this, ACE_Event_Handler::DONT_CALL | ACE_Event_Handler::ALL_EVENTS_MASK);
+    notify_close();
+}
+
+void BufferedSocket::complete_preauth(void)
+{
+    if (reactor() && preauth_timer_id_ != -1)
+    {
+        reactor()->cancel_timer(this, preauth_timer_id_);
+        preauth_timer_id_ = -1;
+    }
+}
+
+void BufferedSocket::cancel_timers(void)
+{
+    if (!reactor())
+        return;
+
+    if (session_timer_id_ != -1)
+    {
+        reactor()->cancel_timer(this, session_timer_id_);
+        session_timer_id_ = -1;
+    }
+
+    if (preauth_timer_id_ != -1)
+    {
+        reactor()->cancel_timer(this, preauth_timer_id_);
+        preauth_timer_id_ = -1;
+    }
+}
+
+void BufferedSocket::notify_close(void)
+{
+    if (!close_notified_)
+    {
+        close_notified_ = true;
+        this->OnClose();
+    }
 }

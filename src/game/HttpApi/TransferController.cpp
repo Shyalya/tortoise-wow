@@ -7,10 +7,66 @@
 #include "Mail.h"
 #include "AccountMgr.h"
 
+#include <algorithm>
+#include <cctype>
+
 using namespace httplib;
 
 namespace HttpApi
 {
+    namespace
+    {
+        constexpr std::size_t MaxTransferPayloadLength = 16 * 1024 * 1024;
+
+        void SetClientError(Response& resp, int status, const char* message)
+        {
+            resp.status = status;
+            resp.set_content(message, "text/plain");
+        }
+
+        bool IsJsonRequest(const Request& req)
+        {
+            if (!req.has_header("Content-Type"))
+                return false;
+
+            std::string contentType = req.get_header_value("Content-Type");
+            const auto parameters = contentType.find(';');
+            if (parameters != std::string::npos)
+                contentType.resize(parameters);
+
+            while (!contentType.empty() && std::isspace(static_cast<unsigned char>(contentType.back())))
+                contentType.pop_back();
+
+            auto first = contentType.begin();
+            while (first != contentType.end() && std::isspace(static_cast<unsigned char>(*first)))
+                ++first;
+            contentType.erase(contentType.begin(), first);
+
+            std::transform(contentType.begin(), contentType.end(), contentType.begin(),
+                [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+
+            return contentType == "application/json";
+        }
+
+        bool ReadPayload(const ContentReader& reader, std::string& body, bool& payloadTooLarge)
+        {
+            return reader([&body, &payloadTooLarge](const char* data, size_t dataLength)
+            {
+                if (payloadTooLarge || body.size() > MaxTransferPayloadLength ||
+                    dataLength > MaxTransferPayloadLength - body.size())
+                {
+                    payloadTooLarge = true;
+                    // Keep consuming the entity so a keep-alive connection cannot
+                    // interpret the remainder as the next HTTP request.
+                    return true;
+                }
+
+                body.append(data, dataLength);
+                return true;
+            });
+        }
+    }
+
     TransferController::TransferController(std::string key)
     {
         _authorizer = std::make_unique<ApiKeyAuthorizer>(key.c_str());
@@ -37,35 +93,40 @@ namespace HttpApi
     //This is part 1 of transfer procedure, will EXTRACT char data.
     void InitTransferAction(const Request& req, Response& resp, const ContentReader& reader)
     {
-        if (!req.has_header("Content-Type"))
-            return;
-
-        if (req.get_header_value("Content-Type") != "application/json")
-            return;
-
-
         std::string body;
-        reader([&](const char* data, size_t data_length) {
-            body.append(data, data_length);
-            return true;
-            });
+        bool payloadTooLarge = false;
+        bool const readSucceeded = ReadPayload(reader, body, payloadTooLarge);
+        if (payloadTooLarge || !readSucceeded)
+        {
+            const bool tooLarge = payloadTooLarge || resp.status == 413;
+            SetClientError(resp, tooLarge ? 413 : 400, tooLarge ? "Payload too large." : "Invalid request.");
+            if (!readSucceeded)
+                resp.set_header("Connection", "close");
+            return;
+        }
+
+        if (!IsJsonRequest(req))
+        {
+            SetClientError(resp, 415, "Content-Type must be application/json.");
+            return;
+        }
 
         sLog.out(LOG_API, "Init transfer started.");
 
         rapidjson::Document d;
-        d.Parse(body.c_str());
+        d.Parse(body.data(), body.size());
 
         if (d.HasParseError())
         {
-            resp.set_content("Bad JSON.", "text/plain");
-            sLog.out(LOG_API, "Bad JSON for init Transfer.\nData:%s\nIP:%s", body.c_str(), req.remote_addr.c_str());
+            SetClientError(resp, 400, "Bad JSON.");
+            sLog.out(LOG_API, "Bad JSON for init transfer from %s.", req.remote_addr.c_str());
             return;
         }
 
-        if (!d.IsObject() || !d.HasMember("lowGuid"))
+        if (!d.IsObject() || !d.HasMember("lowGuid") || !d["lowGuid"].IsUint())
         {
-            resp.set_content("Bad JSON.", "text/plain");
-            sLog.out(LOG_API, "Bad JSON for init Transfer.\nData:%s\nIP:%s", body.c_str(), req.remote_addr.c_str());
+            SetClientError(resp, 400, "Bad JSON.");
+            sLog.out(LOG_API, "Invalid init transfer request from %s.", req.remote_addr.c_str());
             return;
         }
 
@@ -73,7 +134,7 @@ namespace HttpApi
 
         if (!sObjectMgr.GetPlayerDataByGUID(lowGuid))
         {
-            resp.set_content("Bad Account.", "text/plain");
+            SetClientError(resp, 404, "Not found.");
             sLog.out(LOG_API, "Init transfer could not find player by supplied GUID %u, aborting.", lowGuid);
             return;
         }
@@ -85,7 +146,7 @@ namespace HttpApi
 
         if (!accountData)
         {
-            resp.set_content("Bad Account.", "text/plain");
+            SetClientError(resp, 404, "Not found.");
             sLog.out(LOG_API, "Init transfer could not find player account by supplied GUID %u , acc ID %u, aborting.", lowGuid, playerData->uiAccount);
             return;
         }
@@ -95,7 +156,7 @@ namespace HttpApi
 
         if (accountData->CreatedAt > CreationCutoffTimestamp)
         {
-            resp.set_content("Account too new.", "text/plain");
+            SetClientError(resp, 403, "Transfer not permitted.");
             return;
         }
 
@@ -171,41 +232,47 @@ namespace HttpApi
     //This should be done on the world thread on the OTHER server where extractions take place to do a successful transfer.
     void ProceedTransferAction(const Request& req, Response& resp, const ContentReader& reader)
     {
-        if (!req.has_header("Content-Type"))
-            return;
-
-        if (req.get_header_value("Content-Type") != "application/json")
-            return;
-
-
         std::string body;
-        reader([&](const char* data, size_t data_length) {
-            body.append(data, data_length);
-        return true;
-            });
+        bool payloadTooLarge = false;
+        bool const readSucceeded = ReadPayload(reader, body, payloadTooLarge);
+        if (payloadTooLarge || !readSucceeded)
+        {
+            const bool tooLarge = payloadTooLarge || resp.status == 413;
+            SetClientError(resp, tooLarge ? 413 : 400, tooLarge ? "Payload too large." : "Invalid request.");
+            if (!readSucceeded)
+                resp.set_header("Connection", "close");
+            return;
+        }
+
+        if (!IsJsonRequest(req))
+        {
+            SetClientError(resp, 415, "Content-Type must be application/json.");
+            return;
+        }
 
         rapidjson::Document d;
-        d.Parse(body.c_str());
+        d.Parse(body.data(), body.size());
 
 
         if (d.HasParseError())
         {
-            resp.set_content("Bad JSON.", "text/plain");
-            sLog.out(LOG_API, "Bad JSON for Proceed Transfer.\nData:%s\nIP:%s", body.c_str(), req.remote_addr.c_str());
+            SetClientError(resp, 400, "Bad JSON.");
+            sLog.out(LOG_API, "Bad JSON for proceed transfer from %s.", req.remote_addr.c_str());
             return;
         }
 
         if (!d.IsObject())
         {
-            resp.set_content("Bad JSON.", "text/plain");
-            sLog.out(LOG_API, "Bad JSON for Proceed Transfer.\nData:%s\nIP:%s", body.c_str(), req.remote_addr.c_str());
+            SetClientError(resp, 400, "Bad JSON.");
+            sLog.out(LOG_API, "Proceed transfer request was not an object from %s.", req.remote_addr.c_str());
             return;
         }
 
-        if (!d.HasMember("data") || !d.HasMember("targetAccountId") || !d.HasMember("source_guid"))
+        if (!d.HasMember("data") || !d.HasMember("targetAccountId") || !d.HasMember("source_guid") ||
+            !d["data"].IsString() || !d["targetAccountId"].IsUint() || !d["source_guid"].IsUint())
         {
-            resp.set_content("Bad JSON.", "text/plain");
-            sLog.out(LOG_API, "Bad JSON for Proceed Transfer.\nData:%s\nIP:%s", body.c_str(), req.remote_addr.c_str());
+            SetClientError(resp, 400, "Bad JSON.");
+            sLog.out(LOG_API, "Invalid proceed transfer request from %s.", req.remote_addr.c_str());
             return;
         }
 
@@ -214,7 +281,7 @@ namespace HttpApi
         uint32 oldGuidLow = d["source_guid"].GetUint();
 
 
-        sLog.out(LOG_API, "Accepting transfer for targetAccount:%u\nData:%s", accountId, body.c_str());
+        sLog.out(LOG_API, "Accepting transfer for target account %u.", accountId);
 
         uint32 guid = 0;
         std::string charName = "";

@@ -35,6 +35,7 @@
 #include <ace/Message_Block.h>
 #include <map>
 #include <atomic>
+#include <string>
 
 #include <openssl/bn.h>
 #include <openssl/md5.h>
@@ -76,24 +77,29 @@ class PatchCache
 
 };
 
+class PatchTransferPool;
+
 class PatchHandler: public ACE_Svc_Handler<ACE_SOCK_STREAM, ACE_NULL_SYNCH>
 {
     protected:
         typedef ACE_Svc_Handler<ACE_SOCK_STREAM, ACE_NULL_SYNCH> Base;
 
     public:
-        PatchHandler(ACE_HANDLE socket, ACE_HANDLE patch);
+        PatchHandler(ACE_HANDLE socket, ACE_HANDLE patch, std::string peerAddress);
         virtual ~PatchHandler();
 
         int open(void* = 0);
+
+        static void ShutdownPool();
 
     protected:
         virtual int svc(void);
 
     private:
+        friend class PatchTransferPool;
+
         ACE_HANDLE patch_fd_;
-		int32 SecondLimitBytes = 0;
-		uint32 LastUpdateMs = 0;
+        std::string peer_address_;
 };
 
 #endif /* _BK_PATCHHANDLER_H__ */

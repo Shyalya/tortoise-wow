@@ -8,70 +8,78 @@ using namespace httplib;
 
 namespace HttpApi
 {
+    namespace
+    {
+        constexpr std::size_t MaxPayloadLength = 16 * 1024 * 1024;
+        constexpr std::size_t MaxKeepAliveRequests = 100;
+        constexpr time_t KeepAliveTimeoutSeconds = 15;
+        constexpr time_t ReadTimeoutSeconds = 15;
+        constexpr time_t WriteTimeoutSeconds = 30;
+    }
+
     void ApiServer::Start(const std::string& address, int port)
     {
         std::string certPath = sConfig.GetStringDefault("Api.CertificatePath", "turtle.cer");
         std::string privateKeyPath = sConfig.GetStringDefault("ApiPrivateKeyPath", "turtle.pkey");
 
-        sLog.out(LOG_API, string_format("Starting HTTP Api Server with cert path {} and pKeypath {}.", certPath, privateKeyPath).c_str());
+        sLog.out(LOG_API, string_format("Starting HTTP API server on {}:{}.", address, port).c_str());
 
         _server = std::make_unique<SSLServer>(certPath.c_str(), privateKeyPath.c_str());
 
+        _server->set_payload_max_length(MaxPayloadLength);
+        _server->set_read_timeout(ReadTimeoutSeconds);
+        _server->set_write_timeout(WriteTimeoutSeconds);
+        _server->set_keep_alive_max_count(MaxKeepAliveRequests);
+        _server->set_keep_alive_timeout(KeepAliveTimeoutSeconds);
+        _server->set_default_headers({
+            { "Cache-Control", "no-store" },
+            { "X-Content-Type-Options", "nosniff" }
+        });
 
         _server->set_error_handler([](const auto& req, auto& res) {
-            auto fmt = "<p>Error Status: <span style='color:red;'>%d</span></p>";
-            char buf[BUFSIZ];
-            snprintf(buf, sizeof(buf), fmt, res.status);
-            res.set_content(buf, "text/html");
+            (void)req;
+            if (res.status < 400)
+                res.status = 500;
+
+            res.set_content("Request failed.", "text/plain");
         });
 
         _server->set_exception_handler([](const auto& req, auto& res, std::exception_ptr ep) {
-            auto fmt = "<h1>Error 500</h1><p>%s</p>";
-            char buf[BUFSIZ];
-            try 
-            {
-                std::rethrow_exception(ep);
-            }
-            catch (std::exception& e) 
-            {
-                snprintf(buf, sizeof(buf), fmt, e.what());
-            }
-            catch (...) 
-            { 
-                snprintf(buf, sizeof(buf), fmt, "Unknown Exception");
-            }
-
-            sLog.out(LOG_API, "API Exception: %s", buf);
-            res.set_content(buf, "text/html");
+            (void)ep;
+            sLog.out(LOG_API, "HTTP API request handler failed for %s %s.", req.remote_addr.c_str(), req.path.c_str());
             res.status = 500;
+            res.set_content("Internal server error.", "text/plain");
         });
 
         _server->set_logger([](const Request& req, const Response& res) {
-            sLog.out(LOG_API, "Handling request from %s.\nRoute:%s\nBody:%s", req.remote_addr.c_str(), req.path.c_str(), req.body.c_str());
+            sLog.out(LOG_API, "HTTP API request from %s: %s %s -> %d.",
+                req.remote_addr.c_str(), req.method.c_str(), req.path.c_str(), res.status);
         });
 
         BaseController::RegisterAll(_server.get());
-       
+
+        _running = true;
         _listenThread = std::thread([this, address, port]()
         {
                 mysql_thread_init(); // not really good but eh
-                _running = true;
                 while (_running)
                 {
-                    _server->listen(address, port);
+                    if (!_server->listen(address, port))
+                    {
+                        _running = false;
+                        break;
+                    }
                     std::this_thread::sleep_for(std::chrono::milliseconds(33)); // 30 FPS
                 }
                 mysql_thread_end();
         });
-        
+
     }
 
     void ApiServer::Stop()
     {
+        _running = false;
         if (_server && _server->is_running())
-        {
-            _running = false;
             _server->stop();
-        }
     }
 }

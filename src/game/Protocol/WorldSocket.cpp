@@ -22,6 +22,7 @@
 
 #include "Auth/AuthCrypt.h"
 
+#include "Config/Config.h"
 #include "World.h"
 #include "AccountMgr.h"
 #include "SharedDefines.h"
@@ -35,9 +36,228 @@
 #include "Opcodes.h"
 #include "MangosSocketImpl.h"
 
+#include <ace/INET_Addr.h>
+
+#include <chrono>
+#include <deque>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
+
+namespace
+{
+    char const WorldPreAuthTimerTag = 0;
+
+    struct WorldAuthLimiter
+    {
+        std::mutex lock;
+        std::unordered_map<std::string, uint32> preauthConnections;
+        uint32 totalPreauthConnections = 0;
+        std::deque<std::chrono::steady_clock::time_point> authAttempts;
+        std::unordered_map<std::string, std::deque<std::chrono::steady_clock::time_point>> authAttemptsByPeer;
+    };
+
+    WorldAuthLimiter& GetWorldAuthLimiter()
+    {
+        static WorldAuthLimiter* limiter = new WorldAuthLimiter();
+        return *limiter;
+    }
+
+    using AttemptQueue = std::deque<std::chrono::steady_clock::time_point>;
+
+    uint32 GetNonNegativeWorldConfig(char const* name, uint32 defaultValue)
+    {
+        int32 const value = sConfig.GetIntDefault(name, static_cast<int32>(defaultValue));
+        return value < 0 ? defaultValue : static_cast<uint32>(value);
+    }
+
+    void PruneWorldAuthAttempts(AttemptQueue& attempts, std::chrono::steady_clock::time_point now,
+        std::chrono::seconds window)
+    {
+        while (!attempts.empty() && now - attempts.front() >= window)
+            attempts.pop_front();
+    }
+
+    void CleanupWorldAuthAttempts(WorldAuthLimiter& limiter, std::chrono::steady_clock::time_point now,
+        std::chrono::seconds window)
+    {
+        PruneWorldAuthAttempts(limiter.authAttempts, now, window);
+        for (auto itr = limiter.authAttemptsByPeer.begin(); itr != limiter.authAttemptsByPeer.end();)
+        {
+            PruneWorldAuthAttempts(itr->second, now, window);
+            if (itr->second.empty())
+                itr = limiter.authAttemptsByPeer.erase(itr);
+            else
+                ++itr;
+        }
+    }
+
+    bool AcquireWorldPreAuthConnection(std::string const& peerAddress)
+    {
+        WorldAuthLimiter& limiter = GetWorldAuthLimiter();
+        std::lock_guard<std::mutex> guard(limiter.lock);
+
+        uint32 const perIpLimit = GetNonNegativeWorldConfig("Network.MaxPreAuthConnectionsPerIp", 8);
+        uint32 const processLimit = GetNonNegativeWorldConfig("Network.MaxPreAuthConnections", 256);
+        auto const itr = limiter.preauthConnections.find(peerAddress);
+        uint32 const perIpConnections = itr == limiter.preauthConnections.end() ? 0 : itr->second;
+
+        if ((perIpLimit && perIpConnections >= perIpLimit) ||
+            (processLimit && limiter.totalPreauthConnections >= processLimit))
+            return false;
+
+        ++limiter.preauthConnections[peerAddress];
+        ++limiter.totalPreauthConnections;
+        return true;
+    }
+
+    void ReleaseWorldPreAuthConnection(std::string const& peerAddress)
+    {
+        WorldAuthLimiter& limiter = GetWorldAuthLimiter();
+        std::lock_guard<std::mutex> guard(limiter.lock);
+
+        auto itr = limiter.preauthConnections.find(peerAddress);
+        if (itr != limiter.preauthConnections.end())
+        {
+            if (itr->second > 1)
+                --itr->second;
+            else
+                limiter.preauthConnections.erase(itr);
+        }
+
+        if (limiter.totalPreauthConnections > 0)
+            --limiter.totalPreauthConnections;
+    }
+
+    bool BeginWorldAuthAttempt(std::string const& peerAddress)
+    {
+        WorldAuthLimiter& limiter = GetWorldAuthLimiter();
+        std::lock_guard<std::mutex> guard(limiter.lock);
+        auto const now = std::chrono::steady_clock::now();
+        auto const window = std::chrono::seconds(GetNonNegativeWorldConfig("Network.AuthAttemptWindow", 300));
+        CleanupWorldAuthAttempts(limiter, now, window);
+
+        auto peerItr = limiter.authAttemptsByPeer.find(peerAddress);
+        if (peerItr != limiter.authAttemptsByPeer.end())
+            PruneWorldAuthAttempts(peerItr->second, now, window);
+
+        size_t const peerAttemptCount = peerItr == limiter.authAttemptsByPeer.end() ? 0 : peerItr->second.size();
+
+        uint32 const processAttemptLimit = GetNonNegativeWorldConfig("Network.MaxAuthAttempts", 4096);
+        uint32 const perIpAttemptLimit = GetNonNegativeWorldConfig("Network.MaxAuthAttemptsPerIp", 15);
+        if ((processAttemptLimit && limiter.authAttempts.size() >= processAttemptLimit) ||
+            (perIpAttemptLimit && peerAttemptCount >= perIpAttemptLimit))
+            return false;
+
+        limiter.authAttempts.push_back(now);
+        if (peerItr == limiter.authAttemptsByPeer.end())
+            peerItr = limiter.authAttemptsByPeer.emplace(peerAddress, AttemptQueue()).first;
+        peerItr->second.push_back(now);
+        return true;
+    }
+
+    void LogWorldAuthRejection(std::string const& peerAddress, char const* reason)
+    {
+        WorldAuthLimiter& limiter = GetWorldAuthLimiter();
+        std::lock_guard<std::mutex> guard(limiter.lock);
+        static std::chrono::steady_clock::time_point nextReport;
+        static uint32 suppressed = 0;
+        auto const now = std::chrono::steady_clock::now();
+        if (nextReport.time_since_epoch().count() == 0 || now >= nextReport)
+        {
+            BASIC_LOG("World authentication rejection from '%s': %s (suppressed %u similar rejections in the last minute)",
+                      peerAddress.c_str(), reason, suppressed);
+            suppressed = 0;
+            nextReport = now + std::chrono::seconds(60);
+        }
+        else
+            ++suppressed;
+    }
+}
 
 template class MangosSocket<WorldSession, WorldSocket, AuthCrypt>;
+
+int WorldSocket::open(void* arg)
+{
+    ACE_INET_Addr addr;
+    if (peer().get_remote_addr(addr) == -1)
+        return -1;
+
+    char address[1024];
+    addr.get_host_addr(address, sizeof(address));
+    _peerAddress = address;
+
+    if (!AcquireWorldPreAuthConnection(_peerAddress))
+    {
+        LogWorldAuthRejection(_peerAddress, "authentication capacity reached");
+        return -1;
+    }
+
+    _preAuthConnectionTracked = true;
+    if (Base::open(arg) == -1)
+    {
+        ReleasePreAuthConnection();
+        return -1;
+    }
+
+    uint32 const timeout = GetNonNegativeWorldConfig("Network.PreAuthTimeout", 15);
+    if (timeout)
+        _preAuthTimerId = reactor()->schedule_timer(this, &WorldPreAuthTimerTag, ACE_Time_Value(timeout));
+
+    return 0;
+}
+
+WorldSocket::~WorldSocket()
+{
+    CancelPreAuthTimeout();
+    ReleasePreAuthConnection();
+}
+
+void WorldSocket::ReleasePreAuthConnection()
+{
+    if (_preAuthConnectionTracked)
+    {
+        ReleaseWorldPreAuthConnection(_peerAddress);
+        _preAuthConnectionTracked = false;
+    }
+}
+
+void WorldSocket::CancelPreAuthTimeout()
+{
+    if (reactor() && _preAuthTimerId != -1)
+    {
+        reactor()->cancel_timer(this, _preAuthTimerId);
+        _preAuthTimerId = -1;
+    }
+}
+
+void WorldSocket::CompleteAuthentication()
+{
+    CancelPreAuthTimeout();
+    ReleasePreAuthConnection();
+}
+
+int WorldSocket::handle_close(ACE_HANDLE handle, ACE_Reactor_Mask mask)
+{
+    CancelPreAuthTimeout();
+    ReleasePreAuthConnection();
+    return Base::handle_close(handle, mask);
+}
+
+int WorldSocket::handle_timeout(const ACE_Time_Value&, const void* act)
+{
+    if (act == &WorldPreAuthTimerTag)
+    {
+        _preAuthTimerId = -1;
+        ReleasePreAuthConnection();
+        CloseSocket();
+        // CloseSocket() detaches the session and stops output, but the ACE
+        // handler must also be deregistered when the peer remains silent.
+        shutdown();
+    }
+
+    return 0;
+}
 
 
 
@@ -96,7 +316,7 @@ int WorldSocket::ProcessIncoming(WorldPacket* new_pct)
                 }
                 else
                 {
-                    sLog.outError("WorldSocket::ProcessIncoming: Client not authed opcode = %u", uint32(opcode));
+                    LogWorldAuthRejection(_peerAddress, "opcode received before authentication");
                     return -1;
                 }
             }
@@ -104,9 +324,15 @@ int WorldSocket::ProcessIncoming(WorldPacket* new_pct)
     }
     catch (ByteBufferException &)
     {
-        sLog.outError("WorldSocket::ProcessIncoming ByteBufferException occured while parsing an instant handled packet (opcode: %u) from client %s, accountid=%i.",
-                      opcode, GetRemoteAddress().c_str(), m_Session ? m_Session->GetAccountId() : -1);
-        if (sLog.HasLogLevelOrHigher(LOG_LVL_DEBUG))
+        if (!m_Session)
+            LogWorldAuthRejection(_peerAddress, "malformed pre-auth packet");
+        else
+            sLog.outError("WorldSocket::ProcessIncoming ByteBufferException occured while parsing an instant handled packet (opcode: %u) from client %s, accountid=%i.",
+                          opcode, GetRemoteAddress().c_str(), m_Session ? m_Session->GetAccountId() : -1);
+        // Never hex-dump unauthenticated input: even with debug logging
+        // enabled, that would turn a malformed-packet flood into synchronous
+        // disk I/O proportional to the attacker-controlled payload.
+        if (m_Session && sLog.HasLogLevelOrHigher(LOG_LVL_DEBUG))
         {
             DEBUG_LOG("Dumping error-causing packet:");
             new_pct->hexlike();
@@ -139,6 +365,15 @@ int WorldSocket::HandleAuthSession(WorldPacket& recvPacket)
     BigNumber v, s, g, N, K;
     WorldPacket packet, SendAddonPacked;
 
+    if (!BeginWorldAuthAttempt(_peerAddress))
+    {
+        packet.Initialize(SMSG_AUTH_RESPONSE, 1);
+        packet << uint8(AUTH_FAILED);
+        SendPacket(packet);
+        LogWorldAuthRejection(_peerAddress, "authentication attempt limit reached");
+        return -1;
+    }
+
     // Read the content of the packet
     recvPacket >> BuiltNumberClient;
     recvPacket >> serverId;
@@ -161,7 +396,7 @@ int WorldSocket::HandleAuthSession(WorldPacket& recvPacket)
 
         SendPacket(packet);
 
-        sLog.outError("WorldSocket::HandleAuthSession: Sent Auth Response (version mismatch).");
+        LogWorldAuthRejection(_peerAddress, "client version mismatch");
         return -1;
     }
 
@@ -182,7 +417,7 @@ int WorldSocket::HandleAuthSession(WorldPacket& recvPacket)
 
         SendPacket(packet);
 
-        sLog.outError("WorldSocket::HandleAuthSession: Sent Auth Response (unknown account).");
+        LogWorldAuthRejection(_peerAddress, "unknown account");
         return -1;
     }
 
@@ -264,7 +499,7 @@ int WorldSocket::HandleAuthSession(WorldPacket& recvPacket)
         packet << uint8(AUTH_BANNED);
         SendPacket(packet);
 
-        sLog.outError("WorldSocket::HandleAuthSession: Sent Auth Response (Account banned).");
+        LogWorldAuthRejection(_peerAddress, "banned account or address");
         return -1;
     }
 
@@ -278,7 +513,7 @@ int WorldSocket::HandleAuthSession(WorldPacket& recvPacket)
 
         SendPacket(packet);
 
-        BASIC_LOG("WorldSocket::HandleAuthSession: User tries to login but his security level is not enough");
+        LogWorldAuthRejection(_peerAddress, "account security level is not permitted");
         return -1;
     }
 
@@ -302,7 +537,7 @@ int WorldSocket::HandleAuthSession(WorldPacket& recvPacket)
 
         SendPacket(packet);
 
-        sLog.outError("WorldSocket::HandleAuthSession: Sent Auth Response (authentification failed).");
+        LogWorldAuthRejection(_peerAddress, "authentication proof failed");
         return -1;
     }
 
@@ -319,7 +554,7 @@ int WorldSocket::HandleAuthSession(WorldPacket& recvPacket)
         clientOs = CLIENT_OS_MAC;
     else
     {
-        sLog.outError("WorldSocket::HandleAuthSession: Unrecognized OS '%s' for account '%s' from %s", os.c_str(), account.c_str(), address.c_str());
+        LogWorldAuthRejection(_peerAddress, "unrecognized client operating system");
         return -1;
     }
 
@@ -330,7 +565,7 @@ int WorldSocket::HandleAuthSession(WorldPacket& recvPacket)
         clientPlatform = CLIENT_PLATFORM_PPC;
     else
     {
-        sLog.outError("WorldSocket::HandleAuthSession: Unrecognized Platform '%s' for account '%s' from %s", platform.c_str(), account.c_str(), address.c_str());
+        LogWorldAuthRejection(_peerAddress, "unrecognized client platform");
         return -1;
     }
 
@@ -388,6 +623,8 @@ int WorldSocket::HandleAuthSession(WorldPacket& recvPacket)
     if (addonPacket.wpos())
         SendPacket(addonPacket);
 
+    CompleteAuthentication();
+
     return 0;
 }
 
@@ -441,10 +678,7 @@ int WorldSocket::HandlePing(WorldPacket& recvPacket)
             m_Session->SetLatency(latency);
         else
         {
-            sLog.outError("WorldSocket::HandlePing: peer sent CMSG_PING, "
-                          "but is not authenticated or got recently kicked,"
-                          " address = %s",
-                          GetRemoteAddress().c_str());
+            LogWorldAuthRejection(_peerAddress, "ping received before authentication");
             return -1;
         }
     }

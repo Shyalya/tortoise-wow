@@ -91,6 +91,7 @@
 #include "Logging/DatabaseLogger.hpp"
 #include "SuspiciousStatisticMgr.h"
 #include "HttpApi/ApiServer.hpp"
+#include "HttpApi/Authorizers/ApiKeyAuthorizer.hpp"
 #include "SocialMgr.h"
 #include "Shop/ShopMgr.h"
 #include "ChannelBroadcaster.h"
@@ -139,6 +140,33 @@ float  World::m_relocation_lower_limit_sq = 10.f * 10.f;
 uint32 World::m_relocation_ai_notify_delay = 1000u;
 
 using namespace std::literals::chrono_literals;
+
+namespace
+{
+    struct WorldAdmissionLogLimiter
+    {
+        std::mutex lock;
+        std::chrono::steady_clock::time_point nextReport;
+        uint32 suppressed = 0;
+    };
+
+    bool AllowWorldAdmissionLog(uint32& suppressed)
+    {
+        static WorldAdmissionLogLimiter limiter;
+        std::lock_guard<std::mutex> guard(limiter.lock);
+        auto const now = std::chrono::steady_clock::now();
+        if (limiter.nextReport.time_since_epoch().count() == 0 || now >= limiter.nextReport)
+        {
+            suppressed = limiter.suppressed;
+            limiter.suppressed = 0;
+            limiter.nextReport = now + 60s;
+            return true;
+        }
+
+        ++limiter.suppressed;
+        return false;
+    }
+}
 
 void LoadGameObjectModelList();
 
@@ -338,7 +366,10 @@ void World::AddSession_(WorldSession* s)
             if (RemoveQueuedSession(old->second))
                 decrease_session = false;
             if (!old->second->ForcePlayerLogoutDelay())
+            {
+                DecrementIpConnection(old->second->GetBinaryAddress());
                 delete old->second;
+            }
         }
     }
 
@@ -371,7 +402,30 @@ void World::AddSession_(WorldSession* s)
     uint32 currentPop = s->sessionDbcLocaleRaw == LOCALE_zhCN ? currentNonRegionalPop : currentRegionalPop;
     uint32 maxPop = s->sessionDbcLocaleRaw == LOCALE_zhCN ? maxNonRegionalPop : maxRegionalPop;
 
-    if ((currentPop >= maxPop || GetActiveSessionCount() >= hardPlayerLimit) && !CanSkipQueue(s))
+    bool const shouldQueue = (currentPop >= maxPop || GetActiveSessionCount() >= hardPlayerLimit) && !CanSkipQueue(s);
+    if (shouldQueue && !CanAddQueuedSession(s))
+    {
+        // The session has already been included in m_sessions/m_Ipconnections
+        // above, so undo both counters before releasing it. This keeps active
+        // and per-IP accounting identical to the normal disconnect path.
+        WorldPacket packet(SMSG_AUTH_RESPONSE, 1);
+        packet << uint8(AUTH_UNAVAILABLE);
+        s->SendPacket(&packet);
+        s->KickPlayer();
+
+        m_sessions.erase(s->GetAccountId());
+        DecrementIpConnection(s->GetBinaryAddress());
+
+        uint32 suppressed = 0;
+        if (AllowWorldAdmissionLog(suppressed))
+            BASIC_LOG("PlayerQueue: rejecting authenticated session from %s because the login queue is full or its per-IP limit was reached (suppressed %u similar rejections in the last minute)",
+                      s->GetRemoteAddress().c_str(), suppressed);
+
+        delete s;
+        return;
+    }
+
+    if (shouldQueue)
     {
         AddQueuedSession(s);
         UpdateMaxSessionCounters();
@@ -439,6 +493,34 @@ uint32 World::GetConnectionCountByIp(uint32 ip) const
     if (itr != m_Ipconnections.end())
         return itr->second;
     return 0;
+}
+
+bool World::CanAddQueuedSession(WorldSession const* session) const
+{
+    uint32 const maxQueuedSessions = getConfig(CONFIG_UINT32_NETWORK_LOGIN_QUEUE_MAX_SESSIONS);
+    if (maxQueuedSessions && GetQueuedSessionCount() >= maxQueuedSessions)
+        return false;
+
+    uint32 const maxQueuedSessionsPerIp = getConfig(CONFIG_UINT32_NETWORK_LOGIN_QUEUE_MAX_SESSIONS_PER_IP);
+    if (!maxQueuedSessionsPerIp)
+        return true;
+
+    uint32 queuedForIp = 0;
+    if (getConfig(CONFIG_BOOL_ENABLE_PRIORITY_QUEUE))
+    {
+        for (uint32 index = 0; index < 2; ++index)
+            for (auto const& entry : m_priorityQueue[index])
+                if (entry.second->GetBinaryAddress() == session->GetBinaryAddress())
+                    ++queuedForIp;
+    }
+    else
+    {
+        for (WorldSession* queuedSession : m_QueuedSessions)
+            if (queuedSession->GetBinaryAddress() == session->GetBinaryAddress())
+                ++queuedForIp;
+    }
+
+    return queuedForIp < maxQueuedSessionsPerIp;
 }
 
 bool World::IsAprilFools() const
@@ -1362,12 +1444,26 @@ void World::LoadConfigSettingsFromFile(bool reload)
     setConfig(CONFIG_UINT32_MAILSPAM_EXPIRE_SECS, "MailSpam.ExpireSecs", 0);
     setConfig(CONFIG_UINT32_MAILSPAM_MAX_MAILS, "MailSpam.MaxMails", 2);
 	setConfig(CONFIG_UINT32_MAILSPAM_LEVEL, "MailSpam.Level", 1);
-	setConfig(CONFIG_UINT32_MAILSPAM_ACCOUNT_LEVEL, "MailSpam.AccountCharLevel", 1);
+    setConfig(CONFIG_UINT32_MAILSPAM_ACCOUNT_LEVEL, "MailSpam.AccountCharLevel", 1);
     setConfig(CONFIG_UINT32_MAILSPAM_MONEY, "MailSpam.Money", 0);
     setConfig(CONFIG_BOOL_MAILSPAM_ITEM, "MailSpam.Item", false);
     setConfig(CONFIG_UINT32_COD_FORCE_TAG_MAX_LEVEL, "Mails.COD.ForceTag.MaxLevel", 0);
 
+    setConfigMinMax(CONFIG_UINT32_NETWORK_SESSION_INBOUND_QUEUE_MAX_PACKETS,
+                    "Network.Session.InboundQueue.MaxPackets", 512, 1, 100000);
+    setConfigMinMax(CONFIG_UINT32_NETWORK_SESSION_INBOUND_QUEUE_MAX_BYTES,
+                    "Network.Session.InboundQueue.MaxBytes", 4 * 1024 * 1024, 64 * 1024, 64 * 1024 * 1024);
+    setConfigMinMax(CONFIG_UINT32_NETWORK_SOCKET_OUTBOUND_QUEUE_MAX_PACKETS,
+                    "Network.Socket.OutboundQueue.MaxPackets", 1024, 1, 100000);
+    setConfigMinMax(CONFIG_UINT32_NETWORK_SOCKET_OUTBOUND_QUEUE_MAX_BYTES,
+                    "Network.Socket.OutboundQueue.MaxBytes", 8 * 1024 * 1024, 64 * 1024, 64 * 1024 * 1024);
+    setConfigMinMax(CONFIG_UINT32_NETWORK_LOGIN_QUEUE_MAX_SESSIONS,
+                    "Network.LoginQueue.MaxSessions", 1024, 0, 100000);
+    setConfigMinMax(CONFIG_UINT32_NETWORK_LOGIN_QUEUE_MAX_SESSIONS_PER_IP,
+                    "Network.LoginQueue.MaxSessionsPerIp", 4, 0, 100000);
+
     setConfigMinMax(CONFIG_UINT32_ASYNC_TASKS_THREADS_COUNT,       "AsyncTasks.Threads", 1, 1, 20);
+    setConfigMinMax(CONFIG_UINT32_ASYNC_TASKS_MAX_QUEUE,            "AsyncTasks.MaxQueue", 4096, 0, 100000);
     setConfig(CONFIG_BOOL_KICK_PLAYER_ON_BAD_PACKET,               "Network.KickOnBadPacket", false);
     setConfig(CONFIG_UINT32_PACKET_BCAST_THREADS,                  "Network.PacketBroadcast.Threads", 0);
     setConfig(CONFIG_UINT32_PACKET_BCAST_FREQUENCY,                "Network.PacketBroadcast.Frequency", 50);
@@ -1864,8 +1960,9 @@ void LoadPlayerEggLoot();
     /// Initialize the World
     void World::SetInitialWorldSettings()
     {
-        const bool enableHttpApi = sConfig.GetIntDefault("HttpApi.Enable", 1) != 0;
-        if (enableHttpApi)
+        const bool enableHttpApi = sConfig.GetIntDefault("HttpApi.Enable", 0) != 0;
+        const std::string transferKey = sConfig.GetStringDefault("HttpApi.TransferKey", "");
+        if (enableHttpApi && HttpApi::ApiKeyAuthorizer::IsStrongKey(transferKey))
         {
             //Have to do it like this to get proper thread handling in the threadpool of the HTTPS api backend to allow querying on any post or get handlers.
             HttpApi::ApiServer::SetInitThreadCallback([]() { mysql_thread_init(); });
@@ -1875,6 +1972,8 @@ void LoadPlayerEggLoot();
             HttpApi::RegisterControllers();
             _server->Start(sConfig.GetStringDefault("HttpApi.BindIP", "127.0.0.1"), sConfig.GetIntDefault("HttpApi.BindPort", 50000));
         }
+        else if (enableHttpApi)
+            sLog.out(LOG_API, "HTTP API server disabled: HttpApi.TransferKey must be a strong key of at least 32 printable characters.");
         else
             sLog.outString("HTTP API server disabled by config.");
 ///- Initialize the random number generator
@@ -3735,26 +3834,38 @@ void World::UpdateSessions(uint32 diff)
     ///- Then send an update signal to remaining ones
     time_t time_now = time(nullptr);
 
-    for (SessionMap::iterator itr = m_sessions.begin(); itr != m_sessions.end(); )
-    {
-		WorldSession* pSession = itr->second;
-		WorldSessionFilter updater(pSession);
+    // WorldSession::Update may move the current session to
+    // m_disconnectedSessions (for example after a socket-side queue
+    // overflow). Iterating m_sessions directly would then leave an invalid
+    // iterator and the following increment could crash the world thread.
+    std::vector<WorldSession*> sessionsToUpdate;
+    sessionsToUpdate.reserve(m_sessions.size());
+    for (auto const& entry : m_sessions)
+        sessionsToUpdate.push_back(entry.second);
 
-		pSession->AddActiveTime(diff);
+    for (WorldSession* pSession : sessionsToUpdate)
+    {
+        SessionMap::iterator current = m_sessions.find(pSession->GetAccountId());
+        if (current == m_sessions.end() || current->second != pSession)
+            continue;
+
+        WorldSessionFilter updater(pSession);
+
+        pSession->AddActiveTime(diff);
         if (!pSession->Update(updater))
         {
-			if (pSession->PlayerLoading())
-				sLog.outInfo("[CRASH] World::UpdateSession attempt to delete session %u loading a player.", pSession->GetAccountId());
-			if (!RemoveQueuedSession(pSession) && pSession->HadQueue())
-				m_accountsLastLogout[pSession->GetAccountId()] = time_now;
-            itr = m_sessions.erase(itr);
-			m_Ipconnections[pSession->GetBinaryAddress()]--;
+            current = m_sessions.find(pSession->GetAccountId());
+            if (current == m_sessions.end() || current->second != pSession)
+                continue;
 
-			delete pSession;
-        }
-        else
-        {
-            itr++;
+            if (pSession->PlayerLoading())
+                sLog.outInfo("[CRASH] World::UpdateSession attempt to delete session %u loading a player.", pSession->GetAccountId());
+            if (!RemoveQueuedSession(pSession) && pSession->HadQueue())
+                m_accountsLastLogout[pSession->GetAccountId()] = time_now;
+            m_sessions.erase(current);
+            DecrementIpConnection(pSession->GetBinaryAddress());
+
+            delete pSession;
         }
     }
 
@@ -4785,18 +4896,72 @@ void World::SendUpdateMultipleItems(const std::vector<uint32>& items, WorldSessi
 void World::SetSessionDisconnected(WorldSession* sess)
 {
     SessionMap::iterator itr = m_sessions.find(sess->GetAccountId());
-    ASSERT(itr != m_sessions.end());
+    if (itr == m_sessions.end() || itr->second != sess)
+        return;
     if (sess->HadQueue())
         m_accountsLastLogout[sess->GetAccountId()] = time(nullptr);
 
+    DecrementIpConnection(sess->GetBinaryAddress());
     m_sessions.erase(itr);
     m_disconnectedSessions.insert(sess);
 }
 
+void World::DecrementIpConnection(uint32 ip)
+{
+    auto itr = m_Ipconnections.find(ip);
+    if (itr == m_Ipconnections.end())
+        return;
+
+    if (itr->second > 1)
+        --itr->second;
+    else
+        m_Ipconnections.erase(itr);
+}
+
 void World::AddAsyncTask(std::function<void()> task)
 {
+    if (!task)
+        return;
+
+    // Internal/critical callbacks must not be shed. Optional remote query
+    // handlers use TryAddAsyncTask below when they can recover cleanly from
+    // admission failure.
     std::lock_guard<std::mutex> lock(m_asyncTaskQueueMutex);
-    _asyncTasks.push_back(task);
+    _asyncTasks.emplace_back(std::move(task));
+}
+
+bool World::TryAddAsyncTask(std::function<void()> task)
+{
+    if (!task)
+        return false;
+
+    bool accepted = true;
+    bool reportDrop = false;
+    uint32 dropped = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_asyncTaskQueueMutex);
+        uint32 const maxQueuedTasks = getConfig(CONFIG_UINT32_ASYNC_TASKS_MAX_QUEUE);
+        if (maxQueuedTasks && _asyncTasks.size() >= maxQueuedTasks)
+        {
+            accepted = false;
+            ++m_asyncTaskDropsSinceLog;
+            time_t const now = time(nullptr);
+            if (!m_asyncTaskDropLogTime || now - m_asyncTaskDropLogTime >= 60)
+            {
+                m_asyncTaskDropLogTime = now;
+                dropped = m_asyncTaskDropsSinceLog;
+                m_asyncTaskDropsSinceLog = 0;
+                reportDrop = true;
+            }
+        }
+        else
+            _asyncTasks.emplace_back(std::move(task));
+    }
+
+    if (reportDrop)
+        BASIC_LOG("World optional async task queue is full; rejected %u remote query task(s) in the last reporting interval", dropped);
+
+    return accepted;
 }
 
 void World::StopDiscordBot()

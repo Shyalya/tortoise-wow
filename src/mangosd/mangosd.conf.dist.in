@@ -86,9 +86,26 @@ WorldServerPort = 8090
 
 BindIP = "0.0.0.0"
 
-# HttpApi.Enable - Enables or disables http api used for character transfers
+# HttpApi.Enable - Enables or disables HTTP API used for character transfers.
+# Disabled by default. The API will also remain disabled unless TransferKey is
+# configured with a strong, printable key of at least 32 characters.
 
 HttpApi.Enable = 0
+
+# HttpApi.TransferKey - Secret sent in the X-API-Key header.
+# Do not use a shared/default value. Generate a unique key with at least 32
+# printable characters and keep it out of source control.
+
+HttpApi.TransferKey = ""
+
+# HttpApi.BindIP - Address on which the HTTP API listens. Keep loopback unless
+# the API is intentionally exposed through a protected network boundary.
+
+HttpApi.BindIP = "127.0.0.1"
+
+# HttpApi.BindPort - TCP port on which the HTTP API listens.
+
+HttpApi.BindPort = 50000
 
 # UseProcessors. Used processors mask for multi-processors system. (Used only at Windows)
 
@@ -323,6 +340,9 @@ Continents.MotionUpdate.Threads = 1
 # AsyncTasks.Threads | AsyncQueriesTickTimeout. Number of threads for async tasks. (/who, list AH items ...)
 
 AsyncTasks.Threads = 2
+# Maximum queued optional remote-query tasks (WHO/AH). Critical callbacks sent
+# through AddAsyncTask remain lossless. Zero disables this optional-task guard.
+AsyncTasks.MaxQueue = 4096
 AsyncQueriesTickTimeout = 15000
 
 # Movement.RelocationVmapsCheckDelay
@@ -2010,6 +2030,22 @@ Network.TcpNodelay = 1
 
 Network.KickOnBadPacket = 0
 
+# Network.Session.InboundQueue.MaxPackets. Maximum queued client packets per session before disconnecting.
+
+Network.Session.InboundQueue.MaxPackets = 512
+
+# Network.Session.InboundQueue.MaxBytes. Maximum queued client payload bytes per session before disconnecting.
+
+Network.Session.InboundQueue.MaxBytes = 4194304
+
+# Network.Socket.OutboundQueue.MaxPackets. Maximum queued server packets per socket before disconnecting.
+
+Network.Socket.OutboundQueue.MaxPackets = 1024
+
+# Network.Socket.OutboundQueue.MaxBytes. Maximum queued server payload bytes per socket before disconnecting.
+
+Network.Socket.OutboundQueue.MaxBytes = 8388608
+
 # Network.PacketBroadcast.Threads. Number of threads for packets broadcasting.
 
 Network.PacketBroadcast.Threads = 0
@@ -2021,6 +2057,29 @@ Network.PacketBroadcast.Frequency = 20
 # Network.Interval. How often ACE will transmit the client's outbound packet buffer.
 
 Network.Interval = 35
+
+# Network.PreAuthTimeout. Seconds allowed for a client to complete world auth.
+
+Network.PreAuthTimeout = 15
+
+# Maximum simultaneous unauthenticated world sockets. Zero disables that limit.
+
+Network.MaxPreAuthConnections = 256
+Network.MaxPreAuthConnectionsPerIp = 8
+
+# Maximum authenticated sessions waiting for a world login slot. Zero disables
+# the corresponding limit, but leaving these bounded prevents queue memory use
+# from tracking an attacker-controlled number of authenticated accounts.
+
+Network.LoginQueue.MaxSessions = 1024
+Network.LoginQueue.MaxSessionsPerIp = 4
+
+# Maximum world-auth packets handled by this process and by one peer during the
+# rolling window.
+
+Network.MaxAuthAttempts = 4096
+Network.MaxAuthAttemptsPerIp = 15
+Network.AuthAttemptWindow = 300
 
 # Network.PacketBroadcast.ReduceVisDistance.DiffAbove
 

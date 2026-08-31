@@ -59,11 +59,14 @@ class AuthSocket: public BufferedSocket
         AuthSocket();
         ~AuthSocket();
 
+        int open(void *) override;
+
 
         bool ReadProxyHeader();
 
         void OnAccept();
         void OnRead();
+        void OnClose() override;
         void SendProof(Sha1Hash sha);
         void LoadRealmlist(ByteBuffer &pkt);
         bool VerifyPinData(uint32 pin, const PINData& clientData);
@@ -105,6 +108,8 @@ class AuthSocket: public BufferedSocket
         };
 
         bool VerifyVersion(uint8 const* a, int32 aLength, uint8 const* versionProof, bool isReconnect);
+        bool IsTrustedProxyPeer() const;
+        void CompleteAuthentication();
 
         BigNumber N, s, g, v;
         BigNumber b, B;
@@ -138,6 +143,8 @@ class AuthSocket: public BufferedSocket
         uint32 _platform;
         uint32 _accountId;
         uint32 _lastRealmListRequest;
+        std::string _peerAddress;
+        bool _preAuthConnectionTracked = false;
 
         // Since GetLocaleByName() is _NOT_ bijective, we have to store the locale as a string. Otherwise we can't differ
         // between enUS and enGB, which is important for the patch system

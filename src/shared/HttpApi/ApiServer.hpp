@@ -17,11 +17,7 @@ namespace HttpApi
         ApiServer() {}
         ~ApiServer()
         {
-            if (_running && _server->is_running())
-            {
-                _running = false;
-                _server->stop();
-            }
+            Stop();
 
             if (_listenThread.joinable())
                 _listenThread.join();

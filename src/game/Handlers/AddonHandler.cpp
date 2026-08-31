@@ -31,7 +31,75 @@
 #include "zlib.h"
 #endif
 
+#include <limits>
+#include <vector>
+
 AddonHandler sAddOnHandler;
+
+bool DecompressAddonInfo(WorldPacket const& source, uint32 expectedSize, ByteBuffer& output)
+{
+    size_t const compressedPosition = source.rpos();
+    if (!expectedSize || expectedSize > AddonInfoLimits::MAX_UNCOMPRESSED_SIZE ||
+        compressedPosition >= source.size())
+        return false;
+
+    size_t const compressedSize = source.size() - compressedPosition;
+    if (compressedSize > AddonInfoLimits::MAX_COMPRESSED_SIZE || compressedSize > std::numeric_limits<uInt>::max())
+        return false;
+
+    if (compressedSize <= AddonInfoLimits::MAX_UNCOMPRESSED_SIZE / AddonInfoLimits::MAX_COMPRESSION_RATIO &&
+        expectedSize > compressedSize * AddonInfoLimits::MAX_COMPRESSION_RATIO)
+        return false;
+
+    output.resize(expectedSize);
+
+    z_stream stream = {};
+    stream.next_in = const_cast<Bytef*>(source.contents() + compressedPosition);
+    stream.avail_in = static_cast<uInt>(compressedSize);
+    stream.next_out = const_cast<Bytef*>(output.contents());
+    stream.avail_out = expectedSize;
+
+    if (inflateInit(&stream) != Z_OK)
+    {
+        output.clear();
+        return false;
+    }
+
+    int const result = inflate(&stream, Z_FINISH);
+    bool const exactOutput = result == Z_STREAM_END && stream.total_out == expectedSize &&
+        stream.avail_out == 0 && stream.avail_in == 0;
+    inflateEnd(&stream);
+
+    if (!exactOutput)
+    {
+        output.clear();
+        return false;
+    }
+
+    return true;
+}
+
+bool ReadAddonName(ByteBuffer& data, std::string& name)
+{
+    size_t const start = data.rpos();
+    if (start >= data.size())
+        return false;
+
+    size_t end = start;
+    while (end < data.size() && data[end] != '\0')
+    {
+        if (end - start >= AddonInfoLimits::MAX_NAME_LENGTH)
+            return false;
+        ++end;
+    }
+
+    if (end >= data.size() || end == start || data.size() - end - 1 < sizeof(uint8) + sizeof(uint32) + sizeof(uint32))
+        return false;
+
+    name.assign(reinterpret_cast<char const*>(data.contents() + start), end - start);
+    data.rpos(end + 1);
+    return true;
+}
 
 AddonHandler::AddonHandler()
 {
@@ -51,12 +119,13 @@ static bool IsTurtleSignedAddon(std::string const& addonName)
 bool AddonHandler::BuildAddonPacket(WorldPacket *Source, WorldPacket *Target)
 {
     ByteBuffer AddOnPacked;
-    uLongf AddonRealSize;
-    uint32 CurrentPosition;
     uint32 TempValue;
 
+    if (!Source || !Target)
+        return false;
+
     // broken addon packet, can't be received from real client
-    if (Source->rpos() + 4 > Source->size())
+    if (Source->rpos() > Source->size() || Source->size() - Source->rpos() < sizeof(uint32))
         return false;
 
     *Source >> TempValue;                                   // get real size of the packed structure
@@ -65,21 +134,42 @@ bool AddonHandler::BuildAddonPacket(WorldPacket *Source, WorldPacket *Target)
     if (!TempValue)
         return false;
 
-    if (TempValue > 0xFFFFF)
+    if (TempValue > AddonInfoLimits::MAX_UNCOMPRESSED_SIZE)
     {
         sLog.outError("WorldSession::ReadAddonsInfo addon info too big, size %u", TempValue);
         return false;
     }
 
-    AddonRealSize = TempValue;                              // temp value because ZLIB only excepts uLongf
-
-    CurrentPosition = Source->rpos();                       // get the position of the pointer in the structure
-
-    AddOnPacked.resize(AddonRealSize);                      // resize target for zlib action
-
-    if (!uncompress(const_cast<uint8*>(AddOnPacked.contents()), &AddonRealSize, const_cast<uint8*>((*Source).contents() + CurrentPosition), (*Source).size() - CurrentPosition) != Z_OK)
+    if (!DecompressAddonInfo(*Source, TempValue, AddOnPacked))
     {
-        Target->Initialize(SMSG_ADDON_INFO);
+        sLog.outError("Addon packet failed bounded decompression");
+        return false;
+    }
+
+    struct AddonRecord
+    {
+        std::string name;
+        uint8 flags;
+        uint32 crc;
+        uint32 unknown;
+    };
+
+    std::vector<AddonRecord> addons;
+    addons.reserve(AddonInfoLimits::MAX_RECORDS);
+    while (AddOnPacked.rpos() < AddOnPacked.size())
+    {
+        if (addons.size() >= AddonInfoLimits::MAX_RECORDS)
+            return false;
+
+        AddonRecord addon;
+        if (!ReadAddonName(AddOnPacked, addon.name) || AddOnPacked.size() - AddOnPacked.rpos() < sizeof(uint32) + sizeof(uint32) + sizeof(uint8))
+            return false;
+
+        AddOnPacked >> addon.crc >> addon.unknown >> addon.flags;
+        addons.push_back(addon);
+    }
+
+    Target->Initialize(SMSG_ADDON_INFO);
 
 
         unsigned char tdata[256] =
@@ -124,22 +214,14 @@ bool AddonHandler::BuildAddonPacket(WorldPacket *Source, WorldPacket *Target)
         };
         #endif
 
-        while (AddOnPacked.rpos() < AddOnPacked.size())
+        for (auto const& addon : addons)
         {
-            std::string AddonNames;
-            uint8 unk6;
-            uint32 crc, unk7;
-
-            AddOnPacked >> AddonNames;
-
-            AddOnPacked >> crc >> unk7 >> unk6;
-
-            //DEBUG_LOG("ADDON: Name:%s CRC:%x Unknown1 :%x Unknown2 :%x", AddonNames.c_str(), crc, unk7, unk6);
+            //DEBUG_LOG("ADDON: Name:%s CRC:%x Unknown1 :%x Unknown2 :%x", addon.name.c_str(), addon.crc, addon.unknown, addon.flags);
 
             *Target << (uint8)2;
 
 #ifdef ALLOW_TURTLE_ADDONS
-            if (IsTurtleSignedAddon(AddonNames))
+            if (IsTurtleSignedAddon(addon.name))
             {
                 *Target << (uint8)1;
                 *Target << (uint8)1;
@@ -154,7 +236,7 @@ bool AddonHandler::BuildAddonPacket(WorldPacket *Source, WorldPacket *Target)
             *Target << (uint8)unk1;
             if (unk1)
             {
-                uint8 unk2 = crc != UI64LIT(0x1c776d01);           //If addon is Standard addon CRC
+                uint8 unk2 = addon.crc != UI64LIT(0x1c776d01);           //If addon is Standard addon CRC
                 *Target << (uint8)unk2;
                 if (unk2)
                     Target->append(tdata, sizeof(tdata));
@@ -169,11 +251,5 @@ bool AddonHandler::BuildAddonPacket(WorldPacket *Source, WorldPacket *Target)
                 // String, 256
             }
         }
-    }
-    else
-    {
-        sLog.outError("Addon packet uncompress error :(");
-        return false;
-    }
     return true;
 }

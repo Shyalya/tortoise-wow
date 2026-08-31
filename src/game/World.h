@@ -135,8 +135,14 @@ enum eConfigUInt32Values
     CONFIG_UINT32_MAILSPAM_EXPIRE_SECS,
     CONFIG_UINT32_MAILSPAM_MAX_MAILS,
     CONFIG_UINT32_MAILSPAM_LEVEL,
-	CONFIG_UINT32_MAILSPAM_ACCOUNT_LEVEL,
+    CONFIG_UINT32_MAILSPAM_ACCOUNT_LEVEL,
     CONFIG_UINT32_MAILSPAM_MONEY,
+    CONFIG_UINT32_NETWORK_SESSION_INBOUND_QUEUE_MAX_PACKETS,
+    CONFIG_UINT32_NETWORK_SESSION_INBOUND_QUEUE_MAX_BYTES,
+    CONFIG_UINT32_NETWORK_SOCKET_OUTBOUND_QUEUE_MAX_PACKETS,
+    CONFIG_UINT32_NETWORK_SOCKET_OUTBOUND_QUEUE_MAX_BYTES,
+    CONFIG_UINT32_NETWORK_LOGIN_QUEUE_MAX_SESSIONS,
+    CONFIG_UINT32_NETWORK_LOGIN_QUEUE_MAX_SESSIONS_PER_IP,
     CONFIG_UINT32_EMPTY_MAPS_UPDATE_TIME,
     CONFIG_UINT32_COD_FORCE_TAG_MAX_LEVEL,
     CONFIG_UINT32_PUB_CHANS_MUTE_VANISH_LEVEL,
@@ -146,6 +152,7 @@ enum eConfigUInt32Values
     CONFIG_UINT32_CORPSES_UPDATE_MINUTES,
     CONFIG_UINT32_BONES_EXPIRE_MINUTES,
     CONFIG_UINT32_ASYNC_TASKS_THREADS_COUNT,
+    CONFIG_UINT32_ASYNC_TASKS_MAX_QUEUE,
     CONFIG_UINT32_AV_MIN_PLAYERS_IN_QUEUE,
     CONFIG_UINT32_AV_INITIAL_MAX_PLAYERS,
     CONFIG_UINT32_INACTIVE_PLAYERS_SKIP_UPDATES,
@@ -1001,6 +1008,7 @@ class World
         //player Queue
         typedef std::list<WorldSession*> Queue;
         uint32 GetConnectionCountByIp(uint32 ip) const;
+        bool CanAddQueuedSession(WorldSession const* session) const;
         void AddQueuedSession(WorldSession*);
         bool RemoveQueuedSession(WorldSession* session);
         int32 GetQueuedSessionPos(WorldSession*);
@@ -1217,6 +1225,7 @@ class World
         void SetTimeRate(float rate) { m_timeRate = rate; }
         float m_timeRate;
         void SetSessionDisconnected(WorldSession* sess);
+        void DecrementIpConnection(uint32 ip);
 
         void SetAnticrashRearmTimer(uint32 value) { m_anticrashRearmTimer = value; }
         uint32 GetAnticrashRearmTimer() const { return m_anticrashRearmTimer; }
@@ -1235,9 +1244,14 @@ class World
          * includes reading, unless the read itself is serialized
          */
         void AddAsyncTask(std::function<void ()> task);
+        // Bounded admission for optional, remote-triggered work. Returns
+        // false without scheduling the task when the configured queue is full.
+        bool TryAddAsyncTask(std::function<void ()> task);
         std::mutex m_asyncTaskQueueMutex;
         std::vector<std::function<void()>> _asyncTasks;
         std::vector<std::function<void()>> _asyncTasksBusy;
+        uint32 m_asyncTaskDropsSinceLog = 0;
+        time_t m_asyncTaskDropLogTime = 0;
 
         void LogChat(WorldSession* sess, const char* type, std::string const& msg, PlayerPointer target = nullptr, uint32 chanId = 0, const char* chanStr = nullptr);
         std::string FormatLoggedChat(WorldSession* sess, const char* type, std::string const& msg, PlayerPointer target, uint32 chanId, const char* chanStr);

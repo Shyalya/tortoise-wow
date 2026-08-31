@@ -26,9 +26,27 @@
 #include "Util.h"
 #include "DBCStores.h"
 #include "ObjectMgr.h"
+#include "ChannelBroadcaster.h"
+
+#include <cctype>
+#include <set>
 
 INSTANTIATE_SINGLETON_1(AllianceChannelMgr);
 INSTANTIATE_SINGLETON_1(HordeChannelMgr);
+
+uint32 ChannelMgr::customChannelCount = 0;
+
+namespace
+{
+bool MakeChannelKey(std::string const& name, std::wstring& key)
+{
+    if (!Utf8toWStr(name, key) || key.empty())
+        return false;
+
+    wstrToLower(key);
+    return true;
+}
+}
 
 ChannelMgr* channelMgr(Team team)
 {
@@ -47,28 +65,129 @@ ChannelMgr* channelMgr(Team team)
 ChannelMgr::~ChannelMgr()
 {
     for (const auto& channel : channels)
+    {
+        if (channel.second->HasFlag(Channel::CHANNEL_FLAG_CUSTOM) && customChannelCount)
+            --customChannelCount;
         delete channel.second;
+    }
 
     channels.clear();
 }
 
-Channel *ChannelMgr::GetOrCreateChannel(std::string const& name, bool allowAreaDependantChans)
+bool ChannelMgr::IsValidChannelName(std::string const& name)
 {
+    // Keep the bound on the wire representation as well as the normalized
+    // character count.  Built-in names still have to fit the same packet
+    // bound, but are not subject to custom-channel normalization or quotas.
+    if (name.empty() || name.size() > CHANNEL_MAX_NAME_LENGTH || name.find('\0') != std::string::npos)
+        return false;
+
+    if (uint8(name[0]) <= 127 && !std::isalpha(static_cast<unsigned char>(name[0])))
+        return false;
+
+    std::wstring unicodeName;
+    if (!Utf8toWStr(name, unicodeName) || unicodeName.empty())
+        return false;
+
+    if (sObjectMgr.GetChannelEntryFor(name) || IsReservedChannelName(name))
+        return true;
+
+    std::string normalized = name;
+    return normalizePlayerName(normalized, CHANNEL_MAX_NAME_LENGTH);
+}
+
+bool ChannelMgr::IsReservedChannelName(std::string const& name)
+{
+    if (sObjectMgr.GetChannelEntryFor(name))
+        return true;
+
+    std::wstring key;
+    if (!MakeChannelKey(name, key))
+        return false;
+
+    // These channels are owned by server features, or intentionally behave as
+    // first-class public/national channels despite missing Channel.dbc rows.
+    // Classify them before applying attacker-controlled custom-channel quotas.
+    static std::set<std::wstring> const reservedNames =
+    {
+        L"warden", L"anticrash", L"antiflood", L"itemscheck", L"golddupe",
+        L"sac", L"mailsac", L"botsdetector", L"chatspam", L"lowlevelbots",
+        L"global", L"world", L"worldh", L"worlda", L"english", L"ru",
+        L"welt", L"china"
+    };
+    return reservedNames.find(key) != reservedNames.end();
+}
+
+bool ChannelMgr::CanPlayerJoinCustomChannel(ObjectGuid playerGuid)
+{
+    if (playerGuid.IsEmpty())
+        return true;
+
+    uint32 count = 0;
+    ChannelMgr* alliance = channelMgr(ALLIANCE);
+    if (alliance)
+        count += alliance->GetCustomChannelCount(playerGuid);
+
+    ChannelMgr* horde = channelMgr(HORDE);
+    if (horde && horde != alliance)
+        count += horde->GetCustomChannelCount(playerGuid);
+
+    return count < CHANNEL_MAX_CUSTOM_CHANNELS_PER_PLAYER;
+}
+
+Channel *ChannelMgr::GetOrCreateChannel(std::string const& name, bool allowAreaDependantChans, ObjectGuid playerGuid)
+{
+    ChatChannelsEntry const* ch = sObjectMgr.GetChannelEntryFor(name);
+    bool const reserved = ch || IsReservedChannelName(name);
+    std::string channelName = name;
+
+    if (!IsValidChannelName(name))
+        return nullptr;
+
+    if (!reserved && !normalizePlayerName(channelName, CHANNEL_MAX_NAME_LENGTH))
+        return nullptr;
+
     std::wstring wname;
-    Utf8toWStr(name, wname);
-    wstrToLower(wname);
+    if (!MakeChannelKey(channelName, wname))
+        return nullptr;
 
     if (channels.find(wname) == channels.end())
     {
-        ChatChannelsEntry const* ch = sObjectMgr.GetChannelEntryFor(name);
         if (!allowAreaDependantChans && ch && ch->flags & Channel::CHANNEL_DBC_FLAG_ZONE_DEP)
             return nullptr;
-        Channel *nchan = new Channel(name, m_team);
-        channels[wname] = nchan;
+
+        if (!reserved)
+        {
+            if (customChannelCount >= CHANNEL_MAX_CUSTOM_CHANNELS ||
+                (!playerGuid.IsEmpty() && !CanPlayerJoinCustomChannel(playerGuid)))
+                return nullptr;
+        }
+
+        Channel *nchan = new Channel(channelName, m_team);
+        auto result = channels.emplace(wname, nchan);
+        if (!result.second)
+        {
+            delete nchan;
+            return result.first->second;
+        }
+
+        if (nchan->HasFlag(Channel::CHANNEL_FLAG_CUSTOM))
+            ++customChannelCount;
+
         return nchan;
     }
 
-    return channels[wname];
+    return channels.find(wname)->second;
+}
+
+uint32 ChannelMgr::GetCustomChannelCount(ObjectGuid playerGuid) const
+{
+    uint32 count = 0;
+    for (const auto& channel : channels)
+        if (channel.second->HasFlag(Channel::CHANNEL_FLAG_CUSTOM) && channel.second->IsMember(playerGuid))
+            ++count;
+
+    return count;
 }
 
 // bot passes Player*; convert via PlayerWrapper.
@@ -80,14 +199,14 @@ Channel* ChannelMgr::GetChannel(std::string const& name, Player* p, bool sendPac
 Channel *ChannelMgr::GetChannel(std::string const& name, PlayerPointer p, bool sendPacket)
 {
     std::wstring wname;
-    Utf8toWStr(name, wname);
-    wstrToLower(wname);
+    if (!MakeChannelKey(name, wname))
+        return nullptr;
 
     ChannelMap::const_iterator i = channels.find(wname);
 
     if (i == channels.end())
     {
-        if (sendPacket)
+        if (sendPacket && p)
         {
             WorldPacket data;
             Channel::MakeNotOnPacket(&data, name);
@@ -103,8 +222,8 @@ Channel *ChannelMgr::GetChannel(std::string const& name, PlayerPointer p, bool s
 void ChannelMgr::LeftChannel(std::string const& name)
 {
     std::wstring wname;
-    Utf8toWStr(name, wname);
-    wstrToLower(wname);
+    if (!MakeChannelKey(name, wname))
+        return;
 
     ChannelMap::const_iterator i = channels.find(wname);
 
@@ -115,28 +234,36 @@ void ChannelMgr::LeftChannel(std::string const& name)
 
     if (channel->GetNumPlayers() == 0 && !channel->IsConstant() && !channel->GetSecurityLevel())
     {
-        channels.erase(wname);
+        if (channel->HasFlag(Channel::CHANNEL_FLAG_CUSTOM) && customChannelCount)
+            --customChannelCount;
+        channels.erase(i);
         delete channel;
     }
 }
 
 void ChannelMgr::CreateDefaultChannels()
 {
-    GetOrCreateChannel("Warden")->SetSecurityLevel(SEC_DEVELOPER);
-    GetOrCreateChannel("Anticrash")->SetSecurityLevel(SEC_DEVELOPER);
-    GetOrCreateChannel("Antiflood")->SetSecurityLevel(SEC_MODERATOR);
-    GetOrCreateChannel("ItemsCheck")->SetSecurityLevel(SEC_DEVELOPER);
-    GetOrCreateChannel("GoldDupe")->SetSecurityLevel(SEC_DEVELOPER);
-    GetOrCreateChannel("SAC")->SetSecurityLevel(SEC_DEVELOPER);
-    GetOrCreateChannel("MailsAC")->SetSecurityLevel(SEC_DEVELOPER);
-    GetOrCreateChannel("BotsDetector")->SetSecurityLevel(SEC_DEVELOPER);
-    GetOrCreateChannel("ChatSpam")->SetSecurityLevel(SEC_MODERATOR);
-    GetOrCreateChannel("LowLevelBots")->SetSecurityLevel(SEC_DEVELOPER);
-    GetOrCreateChannel("Global")->SetSecurityLevel(SEC_MODERATOR);
+    auto createServerChannel = [this](char const* name, AccountTypes security)
+    {
+        if (Channel* channel = GetOrCreateChannel(name))
+            channel->SetSecurityLevel(security);
+    };
+
+    createServerChannel("Warden", SEC_DEVELOPER);
+    createServerChannel("Anticrash", SEC_DEVELOPER);
+    createServerChannel("Antiflood", SEC_MODERATOR);
+    createServerChannel("ItemsCheck", SEC_DEVELOPER);
+    createServerChannel("GoldDupe", SEC_DEVELOPER);
+    createServerChannel("SAC", SEC_DEVELOPER);
+    createServerChannel("MailsAC", SEC_DEVELOPER);
+    createServerChannel("BotsDetector", SEC_DEVELOPER);
+    createServerChannel("ChatSpam", SEC_MODERATOR);
+    createServerChannel("LowLevelBots", SEC_DEVELOPER);
+    createServerChannel("Global", SEC_MODERATOR);
     if (sWorld.IsPvPRealm())
     {
-        GetOrCreateChannel("WorldH")->SetSecurityLevel(SEC_MODERATOR);
-        GetOrCreateChannel("WorldA")->SetSecurityLevel(SEC_MODERATOR);
+        createServerChannel("WorldH", SEC_MODERATOR);
+        createServerChannel("WorldA", SEC_MODERATOR);
     }
 
     for (const auto& channel : channels)
@@ -145,11 +272,13 @@ void ChannelMgr::CreateDefaultChannels()
 
 void ChannelMgr::AnnounceBothFactionsChannel(std::string const& channelName, ObjectGuid playerGuid, char const* message)
 {
-    if (Channel* c = channelMgr(HORDE)->GetOrCreateChannel(channelName))
-        c->AsyncSay(playerGuid, message, LANG_UNIVERSAL, true);
+    ChannelBroadcaster* broadcaster = sWorld.GetChannelBroadcaster();
+    if (!broadcaster || !message)
+        return;
+
+    broadcaster->EnqueueMessage(std::string(message), channelName, playerGuid, LANG_UNIVERSAL, HORDE, true);
     if (!sWorld.getConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_INTERACTION_CHANNEL))
-        if (Channel* c = channelMgr(ALLIANCE)->GetOrCreateChannel(channelName))
-            c->AsyncSay(playerGuid, message, LANG_UNIVERSAL, true);
+        broadcaster->EnqueueMessage(std::string(message), channelName, playerGuid, LANG_UNIVERSAL, ALLIANCE, true);
 }
 
 AllianceChannelMgr::AllianceChannelMgr()

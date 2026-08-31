@@ -108,6 +108,9 @@ class MangosSocket : public WorldHandler
         /// Queue for storing packets for which there is no space.
         typedef ACE_Unbounded_Queue<WorldPacket*> PacketQueueT;
 
+        static constexpr uint32 DEFAULT_OUTBOUND_QUEUE_MAX_PACKETS = 1024;
+        static constexpr uint32 DEFAULT_OUTBOUND_QUEUE_MAX_BYTES = 8 * 1024 * 1024;
+
         /// Check if socket is closed.
         bool IsClosed() const { return closing_; }
 
@@ -221,9 +224,14 @@ class MangosSocket : public WorldHandler
         /// Size of the m_OutBuffer.
         size_t m_OutBufferSize;
 
-        /// Here are stored packets for which there was no space on m_OutBuffer,
-        /// this allows not-to kick player if its buffer is overflowed.
+        /// Here are stored packets for which there was no space on m_OutBuffer.
+        /// The bounded queue is drained by the reactor and overflow disconnects
+        /// the owning session through SendPacket's -1 result.
         PacketQueueT m_PacketQueue;
+        uint32 m_PacketQueuePackets;
+        uint32 m_PacketQueueBytes;
+        uint32 m_PacketQueueMaxPackets;
+        uint32 m_PacketQueueMaxBytes;
 
         /// True if the socket is registered with the reactor for output
         bool m_OutActive;

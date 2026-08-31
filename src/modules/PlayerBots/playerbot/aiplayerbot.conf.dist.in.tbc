@@ -988,8 +988,16 @@ AiPlayerbot.RandomBotTeleportDistance = 100
 #AiPlayerbot.LogValuesPerTick = 0
 #AiPlayerbot.RandomChangeMultiplier = 1
 
-# Command server port, 0 - disabled
+# Command server port, 0 - disabled. The server also stays disabled unless a
+# non-empty secret is configured. Clients send the secret as the first line,
+# then continue with the existing command,guid lines.
 #AiPlayerbot.CommandServerPort = 8888
+#AiPlayerbot.CommandServerAddress = 127.0.0.1
+#AiPlayerbot.CommandServerSecret =
+#AiPlayerbot.CommandServerMaxClients = 16
+#AiPlayerbot.CommandServerMaxLineLength = 4096
+#AiPlayerbot.CommandServerMaxResponseLength = 65536
+#AiPlayerbot.CommandServerReadTimeout = 30
 
 AiPlayerbot.PerfMonEnabled = 0
 
