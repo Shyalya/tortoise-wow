@@ -149,7 +149,7 @@ bool Engine::DoNextAction(Unit* unit, int depth, bool minimal, bool isStunned)
             bool skipPrerequisites = basket->isSkipPrerequisites();
             Event event = basket->getEvent();
             if (minimal && (relevance < 100))
-                continue;
+                break;
             // NOTE: queue.Pop() deletes basket
             ActionNode* actionNode = queue.Pop();
             Action* action = InitializeAction(actionNode);

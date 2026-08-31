@@ -75,6 +75,37 @@ bool ReviveFromCorpseAction::Execute(Event& event)
     return true;
 }
 
+bool FindCorpseAction::TryUnreachableCorpseRecovery()
+{
+    recoveryPending = true;
+    uint32 now = WorldTimer::getMSTime();
+    if (recoveryAttempted &&
+        WorldTimer::getMSTimeDiff(lastRecoveryAttemptTime, now) < RECOVERY_RETRY_DELAY)
+    {
+        return false;
+    }
+
+    recoveryAttempted = true;
+    lastRecoveryAttemptTime = now;
+    sLog.outDetail("[BOT CORPSE] %s: find corpse - trying qualified repop recovery for unreachable corpse",
+        bot->GetName());
+
+    bool recovered = ai->DoSpecificAction("repop::unreachable corpse", Event(), true);
+    if (recovered && (!bot->GetCorpse() || sServerFacade.IsAlive(bot)))
+    {
+        sLog.outDetail("[BOT CORPSE] %s: find corpse - qualified repop recovery completed", bot->GetName());
+        ResetFailureState();
+        return true;
+    }
+
+    // DoSpecificAction checks isUseful/isPossible before Execute and can still fail for a
+    // transient reason. Keep recovery pending, but return false so the dead engine can try this
+    // action's alternatives. The monotonic gate above bounds the next expensive recovery attempt.
+    sLog.outDetail("[BOT CORPSE] %s: find corpse - qualified repop recovery did not complete, retrying in %us",
+        bot->GetName(), RECOVERY_RETRY_DELAY / IN_MILLISECONDS);
+    return false;
+}
+
 bool FindCorpseAction::Execute(Event& event)
 {
     if (bot->InBattleGround())
@@ -83,8 +114,16 @@ bool FindCorpseAction::Execute(Event& event)
     Corpse* corpse = bot->GetCorpse();
     if (!corpse)
     {
+        ResetFailureState();
         sLog.outDetail("[BOT CORPSE] %s: find corpse - no corpse, abort", bot->GetName());
         return false;
+    }
+
+    if (trackedCorpseGuid != corpse->GetObjectGuid() || trackedCorpseGhostTime != corpse->GetGhostTime())
+    {
+        ResetFailureState();
+        trackedCorpseGuid = corpse->GetObjectGuid();
+        trackedCorpseGhostTime = corpse->GetGhostTime();
     }
 
     // Manual override: the master commanded "corpse run", so ignore the wait-for-master gate
@@ -102,6 +141,25 @@ bool FindCorpseAction::Execute(Event& event)
                 bot->GetName(), masterTargetDist, sPlayerbotAIConfig.farDistance);
             return false;
         }
+    }
+
+    if (recoveryPending)
+    {
+        if (ai->HasActivePlayerMaster())
+            return TryUnreachableCorpseRecovery();
+
+        // The special recovery eligibility only applies while a player master is active. If that
+        // changes, return to the existing no-master corpse/spirit-healer behavior.
+        ResetMoveFailures();
+    }
+
+    if (moveRetryPending)
+    {
+        uint32 now = WorldTimer::getMSTime();
+        if (WorldTimer::getMSTimeDiff(lastMoveToFailureTime, now) < MOVE_TO_RETRY_DELAY)
+            return false;
+
+        moveRetryPending = false;
     }
 
     WorldPosition botPos(bot), corpsePos(corpse), moveToPos = corpsePos, masterPos(master);
@@ -255,7 +313,6 @@ bool FindCorpseAction::Execute(Event& event)
         }
         else
         {
-
             moved = MoveTo(moveToPos.getMapId(), moveToPos.getX(), moveToPos.getY(), moveToPos.getZ(), false, false);
             sLog.outDetail("[BOT CORPSE] %s: find corpse - MoveTo(%.1f,%.1f,%.1f) returned %s",
                 bot->GetName(), moveToPos.getX(), moveToPos.getY(), moveToPos.getZ(), moved ? "true" : "false");
@@ -267,20 +324,57 @@ bool FindCorpseAction::Execute(Event& event)
             }
             else if (!moved)
             {
-                sLog.outDetail("[BOT CORPSE] %s: find corpse - MoveTo failed but has active player master, NOT using spirit healer -> FAILED loop", bot->GetName());
+                ++moveToFailures;
+                lastMoveToFailureTime = WorldTimer::getMSTime();
+                moveRetryPending = true;
+
+                if (moveToFailures >= MAX_MOVE_TO_FAILURES)
+                {
+                    // A real-player master normally gets priority to resurrect the bot. If the
+                    // corpse cannot be reached repeatedly, switch to the narrowly qualified repop
+                    // recovery. Its normal active-master eligibility remains unchanged.
+                    recoveryPending = true;
+                    sLog.outDetail("[BOT CORPSE] %s: find corpse - MoveTo failed %u times with active player master, starting unreachable-corpse recovery",
+                        bot->GetName(), moveToFailures);
+                    return TryUnreachableCorpseRecovery();
+                }
+                else
+                {
+                    sLog.outDetail("[BOT CORPSE] %s: find corpse - MoveTo failed with active player master (%u/%u), retrying in %us",
+                        bot->GetName(), moveToFailures, MAX_MOVE_TO_FAILURES,
+                        MOVE_TO_RETRY_DELAY / IN_MILLISECONDS);
+                    return false;
+                }
             }
         }
     }
+
+    if (moved)
+        ResetMoveFailures();
 
     return moved;
 }
 
 bool FindCorpseAction::isUseful()
 {
+    Corpse* corpse = bot->GetCorpse();
+    if (!corpse)
+    {
+        ResetFailureState();
+        return false;
+    }
+
     if (bot->InBattleGround())
         return false;
 
-    return bot->GetCorpse();
+    if (trackedCorpseGuid != corpse->GetObjectGuid() || trackedCorpseGhostTime != corpse->GetGhostTime())
+    {
+        ResetFailureState();
+        trackedCorpseGuid = corpse->GetObjectGuid();
+        trackedCorpseGhostTime = corpse->GetGhostTime();
+    }
+
+    return true;
 }
 
 bool SpiritHealerAction::Execute(Event& event)

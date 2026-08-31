@@ -20,8 +20,9 @@
 #pragma once
 
 // === Standard library headers the bot module uses without explicit includes ===
-// PlayerbotAI.h declares methods taking std::future<...> but doesn't #include
-// <future>. Penqle's botpch.h already pulls in many std headers but not this one.
+// PlayerbotLoginMgr.h, SayAction.h, and TravelValues.h use std::future
+// without including <future>. Penqle's botpch.h already pulls in many std
+// headers but not this one.
 #include <future>
 #include <chrono>
 #include <random>

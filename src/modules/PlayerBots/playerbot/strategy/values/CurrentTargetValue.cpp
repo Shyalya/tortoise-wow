@@ -30,3 +30,9 @@ void CurrentTargetValue::Set(Unit* target)
 {
     selection = target ? target->GetObjectGuid() : ObjectGuid();
 }
+
+void CurrentTargetValue::Reset()
+{
+    UnitManualSetValue::Reset();
+    selection = ObjectGuid();
+}

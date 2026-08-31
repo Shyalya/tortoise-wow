@@ -9,7 +9,10 @@
 #include "PlayerbotTextMgr.h"
 #include "BotState.h"
 #include "PlayerTalentSpec.h"
-#include <stack>
+#include <deque>
+#include <memory>
+#include <mutex>
+#include <queue>
 #include "strategy/IterateItemsMask.h"
 #include "RandomPlayerbotMgr.h"
 
@@ -317,17 +320,22 @@ enum ActivityType
 class PacketHandlingHelper
 {
 public:
-    void AddHandler(uint16 opcode, std::string handler, bool shouldDelay = false);
-    void Handle(ExternalEventHelper &helper);
+    void AddHandler(uint16 opcode, std::string handler, bool shouldDelay = false,
+                    bool critical = false);
+    void Handle(ExternalEventHelper &helper, size_t& remainingWork, size_t maxWork);
     void AddPacket(const WorldPacket& packet);
 
 private:
     std::map<uint16, std::string> handlers;
     std::map<uint16, bool> delay;
-    // Penqle WorldPacket is move-only; stack of values fails copy-assign.
-    // Use unique_ptr to keep the stack copyable-by-value-of-element.
-    std::stack<std::unique_ptr<WorldPacket>> queue;
+    std::map<uint16, bool> critical;
+    // Deques use their back as the LIFO edge. Each lane is bounded separately.
+    std::deque<std::unique_ptr<WorldPacket>> queue;
+    std::deque<std::unique_ptr<WorldPacket>> criticalQueue;
+    std::deque<std::unique_ptr<WorldPacket>> retryQueue;
+    std::deque<std::unique_ptr<WorldPacket>> criticalRetryQueue;
     std::mutex m_botPacketMutex;
+    size_t queueRoundRobinCursor = 0;
 };
 
 class ChatCommandHolder
@@ -547,8 +555,6 @@ public:
     std::list<Unit*> GetAllHostileUnitsAroundWO(WorldObject* wo, float distanceAround);
     std::list<Unit*> GetAllHostileNPCNonPetUnitsAroundWO(WorldObject* wo, float distanceAround);
 
-    static void SendDelayedPacket(WorldSession* session, std::future<std::vector<std::pair<WorldPacket, uint32>>> futurePacket);
-    void ReceiveDelayedPacket(std::future<std::vector<std::pair<WorldPacket, uint32>>> futurePacket);
  public:
     std::vector<Bag*> GetEquippedAnyBags();
     std::vector<Bag*> GetEquippedQuivers();
@@ -563,7 +569,7 @@ public:
     PlayerbotHolder* GetHolder() const;
 private:
     void InventoryIterateItemsInBags(IterateItemsVisitor* visitor);
-    void InventoryIterateItemsInEquip(IterateItemsVisitor* visitor);   
+    void InventoryIterateItemsInEquip(IterateItemsVisitor* visitor);
     void InventoryIterateItemsInBank(IterateItemsVisitor* visitor);
     void InventoryIterateItemsInBuyBack(IterateItemsVisitor* visitor);
 
@@ -810,6 +816,7 @@ protected:
     PacketHandlingHelper botOutgoingPacketHandlers;
     PacketHandlingHelper masterIncomingPacketHandlers;
     PacketHandlingHelper masterOutgoingPacketHandlers;
+    size_t packetHelperRoundRobinCursor = 0;
     CompositeChatFilter chatFilter;
     PlayerbotSecurity security;
     std::map<std::string, time_t> whispers;
