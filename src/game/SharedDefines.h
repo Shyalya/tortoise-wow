@@ -1897,12 +1897,10 @@ enum TicketType
 // core is the only version of itself. The type exists because Map::GetDifficulty
 // returns it and ported code compares against it; the heroic value is named so
 // those comparisons compile, and nothing here ever reports it.
-enum Difficulty : uint8
-{
-    DUNGEON_DIFFICULTY_NORMAL = 0,
-    DUNGEON_DIFFICULTY_HEROIC = 1,
-    MAX_DUNGEON_DIFFICULTY    = 1
-};
+typedef int Difficulty;
+constexpr Difficulty DUNGEON_DIFFICULTY_NORMAL = 0;
+constexpr Difficulty DUNGEON_DIFFICULTY_HEROIC = 1;
+constexpr Difficulty MAX_DUNGEON_DIFFICULTY = 1;
 
 struct Position
 {

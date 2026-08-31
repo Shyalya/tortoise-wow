@@ -42,6 +42,11 @@
 #include "SQLStorages.h"
 #include "CreatureLinkingMgr.h"
 
+#ifdef ENABLE_ELUNA
+#include "LuaValue.h"
+#include "ElunaMgr.h"
+#endif
+
 #include <bitset>
 #include <list>
 #include <set>
@@ -52,6 +57,9 @@ using Movement::Vector3;
 
 struct CreatureInfo;
 class Creature;
+#ifdef ENABLE_ELUNA
+class Eluna;
+#endif
 class Unit;
 class WorldPacket;
 class InstanceData;
@@ -747,6 +755,11 @@ class Map : public GridRefManager<NGridType>
         void RemoveBones(Corpse* corpse);
         void ScheduleCorpseRemoval();
 
+#ifdef ENABLE_ELUNA
+        Eluna* GetEluna() const { return sElunaMgr->Get(m_elunaInfo); }
+        LuaVal lua_data = LuaVal({});
+#endif
+
         XStatTimer MovementPerfTimer;
         XStatTimer SpellPerfTimer;
         XStatTimer UpdateTimer;
@@ -1105,6 +1118,11 @@ class Map : public GridRefManager<NGridType>
     public:
         CreatureGroupHolderType CreatureGroupHolder;
         uint32 GetLastPlayerLeftTime() const { return _lastPlayerLeftTime; }
+
+    private:
+#ifdef ENABLE_ELUNA
+        ElunaInfo m_elunaInfo;
+#endif
 };
 
 class WorldMap : public Map

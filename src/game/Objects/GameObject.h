@@ -831,6 +831,8 @@ class GameObject : public WorldObject
         Loot* const m_loot = &loot;
         // GetLinkedTrap: cmangos accesses linked-trap GO. Stub returns nullptr.
         GameObject* GetLinkedTrap() { return nullptr; }
+        Player* GetLootRecipient() const;
+        Group* GetGroupLootRecipient() const;
 
         bool HasQuest(uint32 quest_id) const override;
         bool HasInvolvedQuest(uint32 quest_id) const override;

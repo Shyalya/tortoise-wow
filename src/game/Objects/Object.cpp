@@ -59,6 +59,11 @@
 
 #include "Autoscaling/AutoScaler.hpp"
 
+#ifdef ENABLE_ELUNA
+#include "LuaEngine.h"
+#include "ElunaEventMgr.h"
+#endif
+
 ////////////////////////////////////////////////////////////
 // Methods of class MovementInfo
 
@@ -2041,6 +2046,9 @@ void WorldObject::SetMap(Map * map)
     m_mapId = map->GetId();
     m_InstanceId = map->GetInstanceId();
 
+#ifdef ENABLE_ELUNA
+    elunaMapEvents.reset();
+#endif
 
     // Order is important, must be done after m_currMap is set
     SetZoneScript();
@@ -2246,6 +2254,12 @@ Creature* WorldObject::SummonCreature(uint32 id, float x, float y, float z, floa
 
     if (GetTypeId() == TYPEID_UNIT && ((Creature*)this)->AI())
         ((Creature*)this)->AI()->JustSummoned(pCreature);
+
+#ifdef ENABLE_ELUNA
+    if (Unit* summoner = ToUnit())
+        if (Eluna* e = GetEluna())
+            e->OnSummoned(pCreature, summoner);
+#endif
 
     // Creature Linking, Initial load is handled like respawn
     if (pCreature->IsLinkingEventTrigger())
@@ -5275,6 +5289,30 @@ bool WorldObject::CheckAndIncreaseCastCounter()
     ++m_castCounter;
     return true;
 }
+
+#ifdef ENABLE_ELUNA
+Eluna* WorldObject::GetEluna() const
+{
+    return IsInWorld() ? GetMap()->GetEluna() : nullptr;
+}
+
+ElunaEventProcessor* WorldObject::GetElunaEvents(int32 mapId)
+{
+    Eluna* eluna = mapId == -1 ? sWorld.GetEluna() : GetEluna();
+    if (!eluna || !eluna->eventMgr)
+        return nullptr;
+
+    EventMgr* eventMgr = eluna->eventMgr.get();
+    std::unique_ptr<ElunaProcessorInfo>& info = mapId == -1 ? elunaWorldEvents : elunaMapEvents;
+    if (!info)
+    {
+        uint64 id = eventMgr->CreateObjectProcessor(this);
+        info = std::make_unique<ElunaProcessorInfo>(eventMgr, id);
+    }
+
+    return eventMgr->GetObjectProcessor(info->GetProcessorId());
+}
+#endif
 
 void WorldObject::MoveChannelledSpellWithCastTime(Spell* pSpell)
 {

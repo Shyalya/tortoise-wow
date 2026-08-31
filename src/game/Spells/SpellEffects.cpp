@@ -30,6 +30,9 @@
 #include "ObjectMgr.h"
 #include "SpellMgr.h"
 #include "ScriptMgr.h"
+#ifdef ENABLE_ELUNA
+#include "LuaEngine.h"
+#endif
 #include "Player.h"
 #include "Spell.h"
 #include "Chat.h"
@@ -2170,6 +2173,11 @@ void Spell::EffectSummon(SpellEffectIndex eff_idx)
         if (m_duration > 0)
             spawnCreature->SetDuration(m_duration);
 
+#ifdef ENABLE_ELUNA
+        if (Eluna* e = m_casterUnit->GetEluna())
+            e->OnSummoned(spawnCreature, m_casterUnit);
+#endif
+
         return;
     }
 
@@ -2234,6 +2242,11 @@ void Spell::EffectSummon(SpellEffectIndex eff_idx)
 
     if (m_spellScript)
         m_spellScript->OnSummon(this, spawnCreature);
+
+#ifdef ENABLE_ELUNA
+    if (Eluna* e = m_casterUnit->GetEluna())
+        e->OnSummoned(spawnCreature, m_casterUnit);
+#endif
 }
 
 void Spell::EffectLearnSpell(SpellEffectIndex eff_idx)
@@ -2699,6 +2712,11 @@ void Spell::EffectSummonGuardian(SpellEffectIndex eff_idx)
 
         if (m_spellScript)
             m_spellScript->OnSummon(this, spawnCreature);
+
+#ifdef ENABLE_ELUNA
+        if (Eluna* e = m_casterUnit->GetEluna())
+            e->OnSummoned(spawnCreature, m_casterUnit);
+#endif
     }
 }
 
@@ -2723,6 +2741,11 @@ void Spell::EffectSummonPossessed(SpellEffectIndex eff_idx)
 
     if (m_spellScript)
         m_spellScript->OnSummon(this, pMinion);
+
+#ifdef ENABLE_ELUNA
+    if (Eluna* e = pCaster->GetEluna())
+        e->OnSummoned(pMinion, pCaster);
+#endif
 }
 
 void Spell::EffectTeleUnitsFaceCaster(SpellEffectIndex eff_idx)
@@ -5117,6 +5140,11 @@ void Spell::EffectSummonCritter(SpellEffectIndex eff_idx)
 
     if (m_spellScript)
         m_spellScript->OnSummon(this, critter);
+
+#ifdef ENABLE_ELUNA
+    if (Eluna* e = player->GetEluna())
+        e->OnSummoned(critter, player);
+#endif
 }
 
 void Spell::EffectKnockBack(SpellEffectIndex eff_idx)

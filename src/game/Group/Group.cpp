@@ -166,6 +166,11 @@ bool Group::Create(ObjectGuid guid, const char * name)
 
     _updateLeaderFlag();
 
+    ScriptRegistry<GroupScript>::ForEach([&](GroupScript* script)
+    {
+        script->OnCreate(this, m_leaderGuid, static_cast<uint8>(m_groupType));
+    });
+
     return true;
 }
 
@@ -257,6 +262,11 @@ bool Group::AddInvite(Player *player)
     m_invitees.insert(player);
 
     player->SetGroupInvite(this);
+
+    ScriptRegistry<GroupScript>::ForEach([&](GroupScript* script)
+    {
+        script->OnInviteMember(this, player->GetObjectGuid());
+    });
 
     return true;
 }

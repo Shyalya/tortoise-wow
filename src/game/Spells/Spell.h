@@ -444,6 +444,8 @@ class Spell
         //void HandleAddAura(Unit* Target);
 
         SpellEntry const* m_spellInfo;
+        SpellEntry const* GetSpellProto() const { return m_spellInfo; }
+        SpellEntry const* GetSpellInfo() const { return m_spellInfo; }
         bool m_isCustomSpell = false;
 
         bool m_addThreat = true;

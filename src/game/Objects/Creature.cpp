@@ -287,6 +287,11 @@ void Creature::RemoveFromWorld()
     ///- Remove the creature from the accessor
     if (IsInWorld())
     {
+        ScriptRegistry<AllCreatureScript>::ForEach([&](AllCreatureScript* script)
+        {
+            script->OnCreatureRemoveWorld(this);
+        });
+
         if (AI())
             AI()->OnRemoveFromWorld();
         if (GetObjectGuid().GetHigh() == HIGHGUID_UNIT)
@@ -711,6 +716,11 @@ void Creature::Update(uint32 update_diff, uint32 diff)
 {
     update_diff *= sWorld.GetTimeRate();
     diff *= sWorld.GetTimeRate();
+
+    ScriptRegistry<AllCreatureScript>::ForEach([&](AllCreatureScript* script)
+    {
+        script->OnAllCreatureUpdate(this, update_diff);
+    });
 
     // AI was locked and switch was delayed to next update.
     if (HasCreatureState(CSTATE_INIT_AI_ON_UPDATE))

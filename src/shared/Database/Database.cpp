@@ -371,7 +371,7 @@ QueryResult* Database::PQuery(const char *format,...)
     return Query(szQuery);
 }
 
-QueryNamedResult* Database::PQueryNamed(const char *format,...)
+std::shared_ptr<QueryNamedResult> Database::PQueryNamed(const char *format,...)
 {
     if(!format) return nullptr;
 

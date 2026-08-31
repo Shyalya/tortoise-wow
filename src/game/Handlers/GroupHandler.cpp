@@ -29,6 +29,7 @@
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "Group.h"
+#include "ScriptObjects.h"
 #include "SocialMgr.h"
 #include "Util.h"
 
@@ -185,6 +186,12 @@ void WorldSession::HandleGroupAcceptOpcode(WorldPacket & /*recv_data*/)
                       GetPlayer()->GetGuidStr().c_str());
         return;
     }
+
+    if (ScriptRegistry<GroupScript>::ForEachWithReturn([&](GroupScript* script)
+    {
+        return !script->CanMemberAccept(group, GetPlayer());
+    }))
+        return;
 
     // remove in from invites in any case
     group->RemoveInvite(GetPlayer());

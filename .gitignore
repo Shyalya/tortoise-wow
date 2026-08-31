@@ -1,10 +1,13 @@
 /samples/
 /data/
 /build/
+/build-*/
+/bin/
 /.vscode/
 *.kate-swp
 *.exe
 /src/shared/revision.h
+/database/
 
 # Local environment / credentials — never commit
 env.md

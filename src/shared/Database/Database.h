@@ -135,14 +135,14 @@ class Database
             return guard->Query(sql);
         }
 
-        inline QueryNamedResult* QueryNamed(const char *sql)
+        inline std::shared_ptr<QueryNamedResult> QueryNamed(const char *sql)
         {
             SqlConnection::Lock guard(getQueryConnection());
-            return guard->QueryNamed(sql);
+            return std::shared_ptr<QueryNamedResult>(guard->QueryNamed(sql));
         }
 
         QueryResult* PQuery(const char *format,...) ATTR_PRINTF(2,3);
-        QueryNamedResult* PQueryNamed(const char *format,...) ATTR_PRINTF(2,3);
+        std::shared_ptr<QueryNamedResult> PQueryNamed(const char *format,...) ATTR_PRINTF(2,3);
 
         inline bool DirectExecute(const char* sql)
         {

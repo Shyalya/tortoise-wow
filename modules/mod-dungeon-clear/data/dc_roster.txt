@@ -95,3 +95,21 @@ order 48 62530 4     # Velthelaxx the Defiler
 order 48 4832 5      # Twilight Lord Kelris
 order 48 4829 8      # Aku'mai
 order 48 4830 9      # Old Serra'kis  (underwater, deliberately last)
+
+# --- Gnomeregan (map 90) --------------------------------------------------
+# The roster knew ONE target, so the ladder counted the dungeon cleared the
+# moment Thermaplugg died - which is also why it fell in three minutes on
+# 31.08. These are every single-spawn elite on the map, minus two that are
+# not kill targets:
+#   6228 Dark Iron Ambassador  - a rare; owner's rule is never to wait on one
+#   7998 Blastmaster Emi Shortfuse - quest NPC for the bomb, not a fight
+# Grubbis is absent from creature on this map (event-spawned), so he cannot be
+# rostered - nothing to path to.
+#
+# Order measured as straight-line distance from the instance entrance
+# (-332.22, -2.28, -150.86); it matches the ordinary route through the place.
+credit 7079 6235 6229 7800
+order 90 7079 1      # Viscous Fallout        122yd
+order 90 6235 2      # Electrocutioner 6000   555yd
+order 90 6229 3      # Crowd Pummeler 9-60    677yd
+order 90 7800 4      # Mekgineer Thermaplugg  723yd

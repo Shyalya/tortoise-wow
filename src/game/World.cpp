@@ -100,6 +100,12 @@
 
 #include <filesystem>
 
+#ifdef ENABLE_ELUNA
+#include "LuaEngine.h"
+#include "ElunaConfig.h"
+#include "ElunaLoader.h"
+#endif
+
 #ifdef USING_DISCORD_BOT
 #include "DiscordBot/Bot.hpp"
 
@@ -1960,6 +1966,9 @@ void LoadPlayerEggLoot();
 
     CheckEggExploit();
 
+    sLog.outString("Loading script names...");
+    sScriptMgr.LoadScriptNames();
+
     if (getConfig(CONFIG_BOOL_LOAD_SPELLS_FROM_SQL))
     {
         sLog.outString("Loading spells from `spell_template`...");
@@ -1996,8 +2005,6 @@ void LoadPlayerEggLoot();
 
     sLog.outString("Loading chat channels...");
     sObjectMgr.LoadChatChannels();
-    sLog.outString("Loading script names...");
-    sScriptMgr.LoadScriptNames();
     // No LoadSpells() here any more: spell loading moved into the
     // LoadSpellsFromSql switch further up (CONFIG_BOOL_LOAD_SPELLS_FROM_SQL).
     // Calling it here as well would load them a second time.
@@ -2052,6 +2059,17 @@ void LoadPlayerEggLoot();
 
     ///- Init highest guids before any guid using table loading to prevent using not initialized guids in some code.
     sObjectMgr.SetHighestGuids();                           // must be after packing instances
+
+#ifdef ENABLE_ELUNA
+    ELUNA_LOG_INFO("Loading Eluna config...");
+    sElunaConfig->Initialize();
+    if (sElunaConfig->IsElunaEnabled())
+    {
+        ELUNA_LOG_INFO("Loading Lua scripts...");
+        sElunaLoader->LoadScripts();
+    }
+#endif
+
     sLog.outString("Loading broadcast texts...");
     sObjectMgr.LoadBroadcastTexts();
     sLog.outString("Loading page texts...");
@@ -2230,6 +2248,16 @@ void LoadPlayerEggLoot();
     sObjectMgr.LoadGuildHouses();
     sLog.outString("Loading guild houses...");
 	sGuildMgr.LoadPetitions();
+
+#ifdef ENABLE_ELUNA
+    if (sElunaConfig->IsElunaEnabled())
+    {
+        ELUNA_LOG_INFO("Starting Eluna world state...");
+        m_elunaInfo = { ElunaInfoKey::MakeGlobalKey(0) };
+        sElunaMgr->Create(nullptr, m_elunaInfo);
+    }
+#endif
+
     sLog.outString("Loading groups...");
 	sObjectMgr.LoadGroups();
     sLog.outString("Loading reserved player names...");
@@ -2481,6 +2509,12 @@ void LoadPlayerEggLoot();
     {
         script->OnStartup();
     });
+
+#ifdef ENABLE_ELUNA
+    if (Eluna* eluna = GetEluna())
+        eluna->OnConfigLoad(false);
+#endif
+
     sLog.outString("Current content phase is set to %u.", GetContentPhase() + 1);
     uint32 uStartInterval = WorldTimer::getMSTimeDiff(uStartTime, WorldTimer::getMSTime());
     sLog.outString("World server is up and running! Loading time: %i minutes %i seconds", uStartInterval / 60000, (uStartInterval % 60000) / 1000);
@@ -2732,6 +2766,14 @@ void World::Update(uint32 diff)
     sGuardMgr.Update(diff);
     sZoneScriptMgr.Update(diff);
     sDynamicVisMgr.UpdateVisibility(diff);
+
+#ifdef ENABLE_ELUNA
+    if (Eluna* eluna = GetEluna())
+    {
+        eluna->UpdateEluna(diff);
+        eluna->OnWorldUpdate(diff);
+    }
+#endif
 
 
     ///- Update groups with offline leaders

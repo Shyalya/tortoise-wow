@@ -62,8 +62,23 @@
 #include "Logging/DatabaseLogger.hpp"
 #include "PerfStats.h"
 
+#ifdef ENABLE_ELUNA
+#include "LuaEngine.h"
+#include "ElunaConfig.h"
+#endif
+
 Map::~Map()
 {
+#ifdef ENABLE_ELUNA
+    if (Eluna* eluna = GetEluna())
+    {
+        eluna->OnDestroy(this);
+        if (Instanceable())
+            eluna->FreeInstanceId(GetInstanceId());
+    }
+    sElunaMgr->Destroy(m_elunaInfo);
+#endif
+
     UnloadAll(true);
 
     if (!m_scriptSchedule.empty())
@@ -147,15 +162,38 @@ Map::Map(uint32 id, time_t expiry, uint32 InstanceId)
 
     if (IsContinent())
     {
-        m_motionThreads.reset(new ThreadPool(sWorld.getConfig(CONFIG_UINT32_CONTINENTS_MOTIONUPDATE_THREADS), "MotionUpdate"));
-        m_objectThreads.reset(new ThreadPool(std::max((int)sWorld.getConfig(CONFIG_UINT32_MAP_OBJECTSUPDATE_THREADS) -1,0), "ObjectUpdate"));
-        m_visibilityThreads.reset(new ThreadPool(std::max((int)sWorld.getConfig(CONFIG_UINT32_MAP_VISIBILITYUPDATE_THREADS) -1,0), "Visibility"));
+        int motionThreads = sWorld.getConfig(CONFIG_UINT32_CONTINENTS_MOTIONUPDATE_THREADS);
+        int objectThreads = std::max((int)sWorld.getConfig(CONFIG_UINT32_MAP_OBJECTSUPDATE_THREADS) - 1, 0);
+        int visibilityThreads = std::max((int)sWorld.getConfig(CONFIG_UINT32_MAP_VISIBILITYUPDATE_THREADS) - 1, 0);
+#ifdef ENABLE_ELUNA
+        if (sElunaConfig->IsElunaEnabled() && (motionThreads || objectThreads || visibilityThreads))
+        {
+            ELUNA_LOG_ERROR("Map %u has parallel object updates configured; disabling them because its Lua state is single-threaded", id);
+            motionThreads = 0;
+            objectThreads = 0;
+            visibilityThreads = 0;
+        }
+#endif
+        m_motionThreads.reset(new ThreadPool(motionThreads, "MotionUpdate"));
+        m_objectThreads.reset(new ThreadPool(objectThreads, "ObjectUpdate"));
+        m_visibilityThreads.reset(new ThreadPool(visibilityThreads, "Visibility"));
         m_cellThreads.reset(new ThreadPool(std::max((int)sWorld.getConfig(CONFIG_UINT32_MTCELLS_THREADS) - 1, 0), "CellUpdate"));
         m_visibilityThreads->start<ThreadPool::MySQL<ThreadPool::MultiQueue>>();
         m_cellThreads->start();
         m_motionThreads->start();
         m_objectThreads->start<ThreadPool::MySQL<ThreadPool::MultiQueue>>();
     }
+
+#ifdef ENABLE_ELUNA
+    if (sElunaConfig->IsElunaEnabled() && sElunaConfig->ShouldMapLoadEluna(id))
+    {
+        m_elunaInfo = { ElunaInfoKey::MakeKey(GetId(), GetInstanceId()) };
+        sElunaMgr->Create(this, m_elunaInfo);
+    }
+
+    if (Eluna* eluna = GetEluna())
+        eluna->OnCreate(this);
+#endif
 
     ++PerfStats::g_totalMaps;
 }
@@ -413,6 +451,13 @@ bool Map::Add(Player *player)
     player->SetIsNewObject(true);
     UpdateObjectVisibility(player, cell, p);
     player->SetIsNewObject(false);
+
+#ifdef ENABLE_ELUNA
+    if (Eluna* eluna = player->GetEluna())
+        eluna->OnMapChanged(player);
+    if (Eluna* eluna = GetEluna())
+        eluna->OnPlayerEnter(this, player);
+#endif
 
     if (i_data)
         i_data->OnPlayerEnter(player);
@@ -962,6 +1007,14 @@ void Map::Update(uint32 t_diff)
 
     ScriptsProcess();
 
+#ifdef ENABLE_ELUNA
+    if (Eluna* eluna = GetEluna())
+    {
+        eluna->UpdateEluna(t_diff);
+        eluna->OnMapUpdate(this, t_diff);
+    }
+#endif
+
     if (i_data)
         i_data->Update(t_diff);
 
@@ -1141,6 +1194,11 @@ void ScriptedEvent::SendEventToAllTargets(uint32 uiData)
 
 void Map::Remove(Player *player, bool remove)
 {
+#ifdef ENABLE_ELUNA
+    if (Eluna* eluna = GetEluna())
+        eluna->OnPlayerLeave(this, player);
+#endif
+
     ScriptRegistry<AllMapScript>::ForEach([&](AllMapScript* script)
     {
         script->OnPlayerLeaveAll(this, player);
@@ -1695,6 +1753,16 @@ void Map::AddObjectToRemoveList(WorldObject *obj)
 {
     MANGOS_ASSERT(obj->GetMapId() == GetId() && obj->GetInstanceId() == GetInstanceId());
 
+#ifdef ENABLE_ELUNA
+    if (Eluna* eluna = GetEluna())
+    {
+        if (Creature* creature = obj->ToCreature())
+            eluna->OnRemove(creature);
+        else if (GameObject* gameObject = obj->ToGameObject())
+            eluna->OnRemove(gameObject);
+    }
+#endif
+
     obj->CleanupsBeforeDelete();                            // remove or simplify at least cross referenced links
     std::unique_lock<std::mutex> lock(i_objectsToRemove_lock);
     i_objectsToRemove.insert(obj);
@@ -1908,14 +1976,26 @@ void Map::CreateInstanceData(bool load)
     if (i_data)
         return;
 
-    if (!i_mapEntry->scriptId)
+    bool isElunaAI = false;
+#ifdef ENABLE_ELUNA
+    if (Eluna* eluna = GetEluna())
+    {
+        i_data = eluna->GetInstanceData(this);
+        isElunaAI = i_data != nullptr;
+    }
+#endif
+
+    if (!i_mapEntry->scriptId && !isElunaAI)
         return;
 
     i_script_id = i_mapEntry->scriptId;
 
-    i_data = sScriptMgr.CreateInstanceData(this);
-    if (!i_data)
-        return;
+    if (!isElunaAI)
+    {
+        i_data = sScriptMgr.CreateInstanceData(this);
+        if (!i_data)
+            return;
+    }
 
     if (load)
     {

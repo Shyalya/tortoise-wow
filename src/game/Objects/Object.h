@@ -37,6 +37,12 @@
 #include <set>
 #include <string>
 #include <array>
+#include <memory>
+
+#ifdef ENABLE_ELUNA
+#include "LuaValue.h"
+#include "ElunaEventMgr.h"
+#endif
 
 #include "MoveSpline.h"
 
@@ -159,6 +165,10 @@ class ZoneScript;
 class Transport;
 class SpellEntry;
 class Spell;
+#ifdef ENABLE_ELUNA
+class Eluna;
+class ElunaEventProcessor;
+#endif
 
 typedef std::unordered_map<Player *, UpdateData> UpdateDataMapType;
 struct FactionTemplateEntry;
@@ -411,6 +421,7 @@ class Object
 
         uint8 GetTypeId() const { return m_objectTypeId; }
         bool isType(TypeMask mask) const { return (mask & m_objectType); }
+        bool IsType(TypeMask mask) const { return isType(mask); }
 
         virtual void BuildCreateUpdateBlockForPlayer(UpdateData *data, Player *target) const;
         void SendCreateUpdateToPlayer(Player* player);
@@ -1164,6 +1175,7 @@ class WorldObject : public Object
         void GetAlivePlayerListInRange(WorldObject const* pSource, std::list<Player*>& lList, float fMaxSearchRange) const;
 
         bool isActiveObject() const { return m_isActiveObject || m_viewPoint.hasViewers(); }
+        bool IsActiveObject() const { return isActiveObject(); }
         void SetActiveObjectState(bool on);
 
         ViewPoint& GetViewPoint() { return m_viewPoint; }
@@ -1197,6 +1209,15 @@ class WorldObject : public Object
         uint32 GetCreatureSummonLimit() const;
         void SetCreatureSummonLimit(uint32 limit);
 
+#ifdef ENABLE_ELUNA
+        std::unique_ptr<ElunaProcessorInfo> elunaMapEvents;
+        std::unique_ptr<ElunaProcessorInfo> elunaWorldEvents;
+
+        Eluna* GetEluna() const;
+        ElunaEventProcessor* GetElunaEvents(int32 mapId);
+        LuaVal lua_data = LuaVal({});
+#endif
+
 virtual uint32 GetLevel() const = 0;
         uint32 GetLevelForTarget(WorldObject const* target = nullptr) const;
         uint16 GetSkillMaxForLevel(WorldObject const* target = nullptr) const { return GetLevelForTarget(target) * 5; };
@@ -1213,6 +1234,14 @@ virtual uint32 GetLevel() const = 0;
         SpellCastResult CastSpell(GameObject* pTarget, uint32 spellId, bool triggered, Item* castItem = nullptr, Aura* triggeredByAura = nullptr, ObjectGuid originalCaster = ObjectGuid(), SpellEntry const* triggeredBy = nullptr, SpellEntry const* triggeredByParent = nullptr);
         SpellCastResult CastSpell(GameObject* pTarget, SpellEntry const* spellInfo, bool triggered, Item* castItem = nullptr, Aura* triggeredByAura = nullptr, ObjectGuid originalCaster = ObjectGuid(), SpellEntry const* triggeredBy = nullptr, SpellEntry const* triggeredByParent = nullptr);
         void CastCustomSpell(Unit* pTarget, uint32 spellId, int32 const* bp0, int32 const* bp1, int32 const* bp2, bool triggered, Item* castItem = nullptr, Aura* triggeredByAura = nullptr, bool addThreat = true, ObjectGuid originalCaster = ObjectGuid(), SpellEntry const* triggeredBy = nullptr);
+        void CastCustomSpell(Unit* pTarget, uint32 spellId, int32 const* bp0, int32 const* bp1, int32 const* bp2, bool triggered, Item* castItem, Aura* triggeredByAura, ObjectGuid originalCaster)
+        {
+            CastCustomSpell(pTarget, spellId, bp0, bp1, bp2, triggered, castItem, triggeredByAura, true, originalCaster);
+        }
+        void CastCustomSpell(Unit* pTarget, uint32 spellId, int32 bp0, int32 bp1, int32 bp2, bool triggered, Item* castItem, Aura* triggeredByAura, ObjectGuid originalCaster)
+        {
+            CastCustomSpell(pTarget, spellId, &bp0, &bp1, &bp2, triggered, castItem, triggeredByAura, true, originalCaster);
+        }
         void CastCustomSpell(Unit* pTarget, SpellEntry const* spellInfo, int32 const* bp0, int32 const* bp1, int32 const* bp2, bool triggered, Item* castItem = nullptr, Aura* triggeredByAura = nullptr, bool addThreat = true, ObjectGuid originalCaster = ObjectGuid(), SpellEntry const* triggeredBy = nullptr);
         void CastCustomSpell(Unit* target, SpellEntry const* customInfo, bool triggered = false);
         SpellCastResult CastSpell(float x, float y, float z, uint32 spellId, bool triggered, Item *castItem = nullptr, Aura* triggeredByAura = nullptr, ObjectGuid originalCaster = ObjectGuid(), SpellEntry const* triggeredBy = nullptr);

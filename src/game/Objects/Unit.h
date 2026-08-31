@@ -377,6 +377,7 @@ typedef std::list< ProcTriggeredData > ProcTriggeredList;
 class Unit : public WorldObject
 {
     public:
+        virtual void SetName(std::string const& /*name*/) {}
         static Unit* GetUnit(WorldObject &obj, uint64 const &Guid);
 
         typedef std::set<Unit*> AttackerSet;
@@ -450,6 +451,7 @@ class Unit : public WorldObject
         bool HealthBelowPctDamaged(int32 pct, uint32 damage) const { return (int32(GetHealth()) - damage) * 100 < GetMaxHealth() * pct; }
         bool HealthAbovePct(int32 pct) const { return GetHealth() * 100 > GetMaxHealth() * pct; }
         uint32 CountPctFromMaxHealth(int32 pct) const { return uint32(float(pct) * GetMaxHealth() / 100.0f); }
+        uint32 CountPctFromCurHealth(int32 pct) const { return uint32(float(pct) * GetHealth() / 100.0f); }
         void SetFullHealth() { SetHealth(GetMaxHealth()); }
 
         Powers GetPowerType() const { return Powers(GetByteValue(UNIT_FIELD_BYTES_0, 3)); }
@@ -589,6 +591,7 @@ class Unit : public WorldObject
             return creatureType ? (1 << (creatureType - 1)) : 0;
         }
         bool IsAlive() const { return (m_deathState == ALIVE); }
+        bool IsDying() const { return m_deathState == JUST_DIED; }
         // AzerothCore spelling.
         bool isDead() const;
         // AzerothCore starts a fight in one call. Here that is entering combat
@@ -658,6 +661,7 @@ class Unit : public WorldObject
         bool IsInSwimmableWater() const { return IsInWater(); }
         // IsSpellReady on Unit: forward to spell-cooldown check.
         bool IsSpellReady(uint32 spellId) const { return !HasSpellCooldown(spellId); }
+        bool IsSpellReady(SpellEntry const* spellInfo) const;
         // SetTarget WorldObject* overload: bot passes WorldObject; downcast to Unit if possible.
         void SetTarget(WorldObject const* obj) {
             Unit const* u = (obj && obj->IsUnit()) ? (Unit const*)obj : nullptr;
@@ -1115,6 +1119,7 @@ class Unit : public WorldObject
         void ApplySpellDispelImmunity(const SpellEntry * spellProto, DispelType type, bool apply);
         virtual bool IsImmuneToSpell(SpellEntry const* spellInfo, bool castOnSelf) const;
         virtual bool IsImmuneToDamage(SpellSchoolMask meleeSchoolMask, SpellEntry const* spellInfo = nullptr) const;
+        bool IsTotalImmune() const;
         virtual bool IsImmuneToSpellEffect(SpellEntry const* spellInfo, SpellEffectIndex index, bool castOnSelf) const;
         bool IsImmuneToSchool(SpellEntry const* spellInfo, uint8 effectMask) const;
 
@@ -1146,6 +1151,8 @@ class Unit : public WorldObject
         void RemoveSpellCooldown(uint32 spell_id, bool update = false);
         // bot passes SpellEntry; forward to ID-based version.
         void RemoveSpellCooldown(SpellEntry const& spellInfo, bool update = false);  // impl in Unit.cpp
+        void RemoveSpellCooldown(SpellEntry const* spellInfo, bool update = false);
+        void RemoveSpellCategoryCooldown(uint32 category, bool update = true);
         void RemoveAllSpellCooldown();
         void RemoveAllArenaSpellCooldown();
         void WritePetSpellsCooldown(WorldPacket& data) const;
@@ -1260,6 +1267,10 @@ class Unit : public WorldObject
 
         void AttackerStateUpdate(Unit* pVictim, WeaponAttackType attType = BASE_ATTACK, bool checkLoS = true, bool extra = false);
         void SendAttackStateUpdate(uint32 HitInfo, Unit* target, uint8 SwingType, SpellSchoolMask damageSchoolMask, uint32 Damage, uint32 AbsorbDamage, int32 Resist, VictimState TargetState, uint32 BlockedAmount) const;
+        void SendAttackStateUpdate(uint32 hitInfo, Unit* target, SpellSchoolMask schoolMask, uint32 damage, uint32 absorb, int32 resist, VictimState targetState, uint32 blocked) const
+        {
+            SendAttackStateUpdate(hitInfo, target, 0, schoolMask, damage, absorb, resist, targetState, blocked);
+        }
         void SendMeleeAttackStop(Unit* victim) const;
         void SendMeleeAttackStart(Unit* pVictim) const;
 
@@ -1541,6 +1552,8 @@ class Unit : public WorldObject
         void SetCharmerGuid(ObjectGuid owner) { SetGuidValue(UNIT_FIELD_CHARMEDBY, owner); ForceValuesUpdateAtIndex(UNIT_FIELD_HEALTH); ForceValuesUpdateAtIndex(UNIT_FIELD_MAXHEALTH); }
         bool IsCharmed() const { return !GetCharmerGuid().IsEmpty(); }
         bool IsCharmerOrOwnerPlayerOrPlayerItself() const final { return IsPlayer() || GetCharmerOrOwnerGuid().IsPlayer(); }
+        bool isAttackingPlayer() const;
+        bool IsTargetableBy(WorldObject const* caster, bool forAoE = false, bool checkAlive = true, bool helpful = false) const;
         ObjectGuid const& GetCharmerOrOwnerGuid() const { return GetCharmerGuid() ? GetCharmerGuid() : GetOwnerGuid(); }
         ObjectGuid const& GetCharmerOrOwnerOrOwnGuid() const
         {

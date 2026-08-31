@@ -28,6 +28,9 @@
 #include "GuildMgr.h"
 #include "miscellaneous/feature_transmog.h"
 #include "PerfStats.h"
+#ifdef ENABLE_ELUNA
+#include "LuaEngine.h"
+#endif
 
 void AddItemsSetItem(Player* player, Item* item)
 {
@@ -296,6 +299,10 @@ void Item::UpdateDuration(Player* owner, uint32 diff)
 
     if (GetUInt32Value(ITEM_FIELD_DURATION) <= diff)
     {
+#ifdef ENABLE_ELUNA
+        if (Eluna* e = owner->GetEluna())
+            e->OnExpire(owner, GetProto());
+#endif
         owner->DestroyItem(GetBagSlot(), GetSlot(), true);
         return;
     }
@@ -1084,6 +1091,35 @@ Item* Item::CreateItem(uint32 item, uint32 count, Player const* player)
             delete pItem;
     }
     return nullptr;
+}
+
+Item* Item::CreateItem(uint32 item, uint32 count, ObjectGuid ownerGuid)
+{
+    if (count < 1)
+        return nullptr;
+
+    ItemPrototype const* proto = sObjectMgr.GetItemPrototype(item);
+    if (!proto)
+        return nullptr;
+
+    count = std::min(count, proto->GetMaxStackSize());
+    MANGOS_ASSERT(count != 0);
+
+    Item* created = NewItemOrBag(proto);
+    if (!created->Create(sObjectMgr.GenerateItemLowGuid(), item, ownerGuid))
+    {
+        delete created;
+        return nullptr;
+    }
+
+    created->SetCount(count);
+    return created;
+}
+
+bool Item::IsNotEmptyBag() const
+{
+    Bag const* bag = ToBag();
+    return bag && !bag->IsEmpty();
 }
 
 Item* Item::CloneItem(uint32 count, Player const* player) const

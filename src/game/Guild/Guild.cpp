@@ -304,6 +304,11 @@ void Guild::SetMOTD(std::string motd)
     // motd now can be used for encoding to DB
     CharacterDatabase.escape_string(motd);
     CharacterDatabase.PExecute("UPDATE guild SET motd='%s' WHERE guildid='%u'", motd.c_str(), m_Id);
+
+    ScriptRegistry<GuildScript>::ForEach([&](GuildScript* script)
+    {
+        script->OnMotdChanged(this, m_motd);
+    });
 }
 
 void Guild::SetGINFO(std::string ginfo)
@@ -313,6 +318,11 @@ void Guild::SetGINFO(std::string ginfo)
     // ginfo now can be used for encoding to DB
     CharacterDatabase.escape_string(ginfo);
     CharacterDatabase.PExecute("UPDATE guild SET info='%s' WHERE guildid='%u'", ginfo.c_str(), m_Id);
+
+    ScriptRegistry<GuildScript>::ForEach([&](GuildScript* script)
+    {
+        script->OnInfoChanged(this, m_info);
+    });
 }
 
 bool Guild::LoadGuildFromDB(QueryResult *guildDataResult)

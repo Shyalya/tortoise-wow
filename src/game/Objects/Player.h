@@ -1580,6 +1580,7 @@ class Player final: public Unit
         void UpdateForQuestWorldObjects();
         bool CanShareQuest(uint32 quest_id) const;
         QuestStatusMap& getQuestStatusMap() { return mQuestStatus; };
+        QuestStatusMap& GetQuestStatusMap() { return mQuestStatus; }
 
         void SendQuestCompleteEvent(uint32 quest_id) const;
         void SendQuestReward(Quest const* pQuest, uint32 XP, Object* questGiver) const;
@@ -1790,12 +1791,12 @@ class Player final: public Unit
     public:
         void UpdateFreeTalentPoints(bool resetIfNeed = true);
     private:
-        uint32 GetResetTalentsCost() const;
         void UpdateResetTalentsMultiplier() const;
         // moved to public; bot's Talentspec.h
         // calls this on bot Player instances. No encapsulation concern (pure getter).
         void SendTalentWipeConfirm(ObjectGuid guid) const;
     public:
+        uint32 GetResetTalentsCost() const;
         uint32 CalculateTalentsPoints() const;
         uint32 GetFreeTalentPoints() const { return GetUInt32Value(PLAYER_CHARACTER_POINTS1); }
         void SetFreeTalentPoints(uint32 points) { SetUInt32Value(PLAYER_CHARACTER_POINTS1, points); }
@@ -2490,6 +2491,9 @@ class Player final: public Unit
         }
         // IsSpellReady: cmangos checks spell cooldown; Penqle uses HasSpellCooldown (inverted).
         bool IsSpellReady(SpellEntry const& spellInfo) const { return !HasSpellCooldown(spellInfo.Id); }
+        bool IsSpellReady(SpellEntry const* spellInfo) const { return spellInfo && !HasSpellCooldown(spellInfo->Id); }
+        float GetHealthBonusFromStamina() const { return GetHealthBonusFromStamina(GetStat(STAT_STAMINA)); }
+        float GetManaBonusFromIntellect() const { return GetManaBonusFromIntellect(GetStat(STAT_INTELLECT)); }
         bool IsSpellReady(uint32 spellId) const { return !HasSpellCooldown(spellId); }
         // 2-arg form: cmangos passes spell + item proto for item-based ability cooldowns.
         bool IsSpellReady(SpellEntry const& spellInfo, ItemPrototype const* /*proto*/) const { return !HasSpellCooldown(spellInfo.Id); }
