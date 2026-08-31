@@ -7,6 +7,7 @@
 #include "AiObject.h"
 #include "playerbot/GuidPosition.h"
 #include "NamedObjectContext.h"
+#include "Timer.h"
 
 namespace ai
 {
@@ -86,6 +87,69 @@ namespace ai
         int checkInterval;
         time_t lastCheckTime;
         T value;
+    };
+
+    // Explicit opt-in cache for cheap, volatile values. This is intentionally
+    // separate from CalculatedValue so existing time_t-based cache semantics
+    // remain unchanged.
+    template<class T>
+    class MillisecondCalculatedValue : public CalculatedValue<T>
+    {
+    public:
+        MillisecondCalculatedValue(PlayerbotAI* ai, std::string name = "value", uint32 checkIntervalMs = 100) :
+            CalculatedValue<T>(ai, name), checkIntervalMs(checkIntervalMs ? checkIntervalMs : 100), hasValue(false) {}
+
+        virtual T Get() override
+        {
+            uint32 now = WorldTimer::getMSTime();
+            if (!hasValue || WorldTimer::getMSTimeDiff(lastCheckTimeMs, now) >= checkIntervalMs)
+            {
+                lastCheckTimeMs = now;
+                hasValue = true;
+
+                auto pmo = sPerformanceMonitor.start(PERF_MON_VALUE, AiNamedObject::getName(), this->ai);
+                this->value = this->Calculate();
+            }
+
+            return this->value;
+        }
+
+        virtual T LazyGet() override
+        {
+            return hasValue ? this->value : Get();
+        }
+
+        virtual void Reset() override
+        {
+            CalculatedValue<T>::Reset();
+            lastCheckTimeMs = 0;
+            hasValue = false;
+        }
+
+        virtual bool Expired() override
+        {
+            return ExpiredMilliseconds(checkIntervalMs);
+        }
+
+        // AiObjectContext's interval argument is expressed in seconds. Keep
+        // that public contract while using millisecond precision internally.
+        virtual bool Expired(uint32 interval) override
+        {
+            if (interval > 4294967U)
+                return ExpiredMilliseconds(0xFFFFFFFFU);
+
+            return ExpiredMilliseconds(interval * 1000U);
+        }
+
+    protected:
+        bool ExpiredMilliseconds(uint32 intervalMs) const
+        {
+            return !hasValue || WorldTimer::getMSTimeDiff(lastCheckTimeMs, WorldTimer::getMSTime()) >= intervalMs;
+        }
+
+        uint32 checkIntervalMs;
+        uint32 lastCheckTimeMs = 0;
+        bool hasValue;
     };
 
     template <class T> class SingleCalculatedValue : public CalculatedValue<T>

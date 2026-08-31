@@ -36,6 +36,7 @@ namespace ai
 
         void Reset();
         bool Update(uint32 elapsed, bool minimal, bool isStunned, bool& reactionFound);
+        bool StartReaction(bool minimal);
         bool IsReacting() const { return ongoingReaction.IsValid(); }
         bool HasIncomingReaction() const { return incomingReaction.IsValid(); }
         void SetReactionDuration(const Action* action);
@@ -43,7 +44,6 @@ namespace ai
 
     private:
         bool FindReaction(bool isStunned);
-        bool StartReaction();
         void StopReaction();
 
         bool CanUpdateAIReaction() const;
@@ -57,5 +57,6 @@ namespace ai
 
     private:
         uint32 aiReactionUpdateDelay;
+        bool reactionStartInProgress = false;
     };
 }

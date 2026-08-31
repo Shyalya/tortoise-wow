@@ -67,6 +67,51 @@ std::string &trim(std::string &s);
 
 std::set<std::string> PlayerbotAI::unsecuredCommands;
 
+namespace
+{
+    enum class PlayerbotSpellStartFailure
+    {
+        Unknown,
+        Range,
+        LineOfSight,
+        Facing,
+        Movement,
+        InvalidTarget
+    };
+
+    PlayerbotSpellStartFailure ClassifySpellStartFailure(SpellCastResult result)
+    {
+        switch (result)
+        {
+        case SPELL_FAILED_OUT_OF_RANGE:
+            return PlayerbotSpellStartFailure::Range;
+        case SPELL_FAILED_LINE_OF_SIGHT:
+            return PlayerbotSpellStartFailure::LineOfSight;
+        case SPELL_FAILED_NOT_INFRONT:
+        case SPELL_FAILED_UNIT_NOT_INFRONT:
+            return PlayerbotSpellStartFailure::Facing;
+        case SPELL_FAILED_MOVING:
+        case SPELL_FAILED_NOT_STANDING:
+            return PlayerbotSpellStartFailure::Movement;
+        case SPELL_FAILED_BAD_TARGETS:
+        case SPELL_FAILED_TARGETS_DEAD:
+            return PlayerbotSpellStartFailure::InvalidTarget;
+        default:
+            return PlayerbotSpellStartFailure::Unknown;
+        }
+    }
+
+    uint32 BoundedSpellRetryDelay()
+    {
+        // Recovery must remain responsive even if a deployment has an
+        // unusually large ReactDelay, while a zero value must not hot-loop.
+        uint32 delay = sPlayerbotAIConfig.reactDelay;
+        if (!delay)
+            return 1;
+        return delay > 1000U ? 1000U : delay;
+    }
+}
+
 uint32 PlayerbotChatHandler::extractQuestId(std::string str)
 {
     char* source = (char*)str.c_str();
@@ -281,6 +326,8 @@ void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
         }
     }
 
+    ObserveCombatTargetChanges();
+
     if(aiInternalUpdateDelay > elapsed)
     {
         aiInternalUpdateDelay -= elapsed;
@@ -373,6 +420,13 @@ void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
             StopMoving();
 
         isMoving = false;
+        faceTargetUpdateDelay = 0;
+
+        if (context)
+            context->InvalidateCombatTargetValues();
+
+        if (CanWakeCombatDecision())
+            ResetAIInternalUpdateDelay();
     }
 
 #ifdef MANGOSBOT_TWO
@@ -686,6 +740,122 @@ void PlayerbotAI::UpdateAI(uint32 elapsed, bool minimal)
     SC_PHASE("UpdateAI.exit", bot ? bot->GetName() : "(null)");
 }
 
+void PlayerbotAI::ObserveCombatTargetChanges()
+{
+    AiObjectContext* context = GetAiObjectContext();
+    if (!context)
+        return;
+
+    bool targetChanged = false;
+    const ObjectGuid selection = bot->GetSelectionGuid();
+    if (selection != lastObservedSelection)
+    {
+        lastObservedSelection = selection;
+        targetChanged = true;
+    }
+
+    // Current target is a manually-set value and must not be reset here. Read
+    // it only when it already exists so observing target replacement never
+    // instantiates a value or changes targeting policy.
+    Value<Unit*>* currentTargetValue = context->FindValue<Unit*>("current target");
+    if (currentTargetValue)
+    {
+        Unit* currentTarget = currentTargetValue->Get();
+        const ObjectGuid target = currentTarget ? currentTarget->GetObjectGuid() : ObjectGuid();
+        if (target != lastObservedCombatTarget)
+        {
+            lastObservedCombatTarget = target;
+            targetChanged = true;
+        }
+    }
+
+    if (targetChanged)
+    {
+        context->InvalidateCombatTargetValues();
+        faceTargetUpdateDelay = 0;
+
+        if (CanWakeCombatDecision())
+            ResetAIInternalUpdateDelay();
+    }
+}
+
+bool PlayerbotAI::CanWakeCombatDecision() const
+{
+    return sServerFacade.IsInCombat(bot) &&
+        !sServerFacade.UnitIsDead(bot) &&
+        !bot->IsNonMeleeSpellCasted(true) &&
+        !isWaiting &&
+        !bot->IsBeingTeleported() &&
+        !bot->IsTaxiFlying() &&
+        !sServerFacade.IsFrozen(bot) &&
+        !sServerFacade.IsCharmed(bot) &&
+        !bot->IsPolymorphed() &&
+        !bot->HasFlag(PLAYER_FLAGS, PLAYER_FLAGS_GHOST) &&
+        !bot->HasAuraType(SPELL_AURA_MOD_CONFUSE) &&
+        !bot->HasAuraType(SPELL_AURA_MOD_STUN) &&
+        !bot->hasUnitState(UNIT_STAT_CAN_NOT_REACT_OR_LOST_CONTROL);
+}
+
+void PlayerbotAI::ScheduleSpellRetry(bool waitForSpell, uint32* outSpellDuration)
+{
+    uint32 retryDelay = BoundedSpellRetryDelay();
+    if (waitForSpell)
+        SetAIInternalUpdateDelay(retryDelay);
+
+    if (outSpellDuration)
+        *outSpellDuration = retryDelay;
+}
+
+void PlayerbotAI::HandleSpellStartFailure(SpellCastResult result, bool hasUnitTarget, bool waitForSpell)
+{
+    PlayerbotSpellStartFailure failure = ClassifySpellStartFailure(result);
+    if (failure == PlayerbotSpellStartFailure::Unknown)
+        return;
+
+    AiObjectContext* context = GetAiObjectContext();
+    if (hasUnitTarget && context)
+    {
+        switch (failure)
+        {
+        case PlayerbotSpellStartFailure::Range:
+        case PlayerbotSpellStartFailure::LineOfSight:
+            context->InvalidateValue("distance::current target");
+            context->InvalidateValue("moving::current target");
+            context->InvalidateValue("behind::current target");
+            break;
+        case PlayerbotSpellStartFailure::Facing:
+            context->InvalidateValue("facing::current target");
+            context->InvalidateValue("behind::current target");
+            break;
+        case PlayerbotSpellStartFailure::Movement:
+            context->InvalidateValue("moving::current target");
+            break;
+        case PlayerbotSpellStartFailure::InvalidTarget:
+            context->InvalidateValue("invalid target::current target");
+            context->InvalidateValue("dead::current target");
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (failure == PlayerbotSpellStartFailure::Facing ||
+        failure == PlayerbotSpellStartFailure::Movement)
+    {
+        // UpdateFaceTarget still applies its normal movement/control guards;
+        // this only makes the next eligible check happen promptly.
+        faceTargetUpdateDelay = 0;
+    }
+
+    // Only callers that explicitly requested spell waiting should block the AI
+    // after a typed SpellStart failure. Most combat actions pass false so an
+    // unsuccessful action can leave its existing alternatives eligible on the
+    // next update. Unknown, control, cooldown, resource, equipment, and
+    // variant-specific failures retain the caller's existing behavior.
+    if (waitForSpell)
+        SetAIInternalUpdateDelay(BoundedSpellRetryDelay());
+}
+
 bool PlayerbotAI::UpdateAIReaction(uint32 elapsed, bool minimal, bool isStunned)
 {
     bool reactionFound;
@@ -696,23 +866,17 @@ bool PlayerbotAI::UpdateAIReaction(uint32 elapsed, bool minimal, bool isStunned)
 
     if(reactionFound)
     {
-        // If new reaction found force stop current actions (if required)
-        const Reaction* reaction = reactionEngine->GetReaction();
-        if(reaction)
-        {
-            if(reaction->ShouldInterruptCast())
-            {
-                InterruptSpell();
-            }
-
-            if (reaction->ShouldInterruptMovement())
-            {
-                StopMoving();
-            }
-        }
+        // Start the selected reaction immediately. StartReaction owns the
+        // interruption ordering and guards the action/listener sequence
+        // against synchronous re-entry.
+        reactionEngine->StartReaction(minimal);
     }
 
-    return reactionInProgress;
+    // reactionFound must gate the normal engine even if execution failed and
+    // StartReaction cleared the pending reaction. A selected reaction still
+    // consumed this update and its failure backoff is owned by the reaction
+    // engine.
+    return reactionInProgress || reactionFound;
 }
 
 void PlayerbotAI::UpdateFaceTarget(uint32 elapsed, bool minimal)
@@ -1445,7 +1609,9 @@ void PlayerbotAI::Reset(bool full)
         strategy->OnPullEnded();
 
     RESET_AI_VALUE(Unit*,"old target");
-    RESET_AI_VALUE(Unit*,"current target");
+    // CurrentTargetValue keeps a private selection GUID, so reset it through
+    // its setter rather than only clearing the cached base value.
+    SET_AI_VALUE(Unit*,"current target", nullptr);
     RESET_AI_VALUE(Unit*,"pull target");
     RESET_AI_VALUE(ObjectGuid,"attack target");
     RESET_AI_VALUE(GuidPosition,"rpg target");
@@ -1453,6 +1619,8 @@ void PlayerbotAI::Reset(bool full)
     RESET_AI_VALUE(uint32,"lfg proposal");
     RESET_AI_VALUE(time_t,"combat start time");
     bot->SetSelectionGuid(ObjectGuid());
+    lastObservedSelection = ObjectGuid();
+    lastObservedCombatTarget = ObjectGuid();
 
     LastSpellCast & lastSpell = AI_VALUE(LastSpellCast&,"last spell cast");
     lastSpell.Reset();
@@ -4963,6 +5131,14 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget, bool
 	ObjectGuid oldSel = bot->GetSelectionGuid();
 	bot->SetSelectionGuid(target->GetObjectGuid());
 
+    // SpellStart requires the selection to match the explicit target, but the
+    // selection is temporary AI state. Restore it on every exit path, including
+    // failures, and also when there was no prior selection.
+    auto restoreSelection = [this, oldSel]()
+    {
+        bot->SetSelectionGuid(oldSel);
+    };
+
     WorldObject* faceTo = target;
     if (!sServerFacade.IsInFront(bot, faceTo, sPlayerbotAIConfig.sightDistance, CAST_ANGLE_IN_FRONT))
     {
@@ -4980,15 +5156,8 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget, bool
 
     if (failWithDelay)
     {
-        if(waitForSpell)
-        {
-            SetAIInternalUpdateDelay(sPlayerbotAIConfig.globalCoolDown);
-        }
-
-        if(outSpellDuration)
-        {
-            *outSpellDuration = sPlayerbotAIConfig.globalCoolDown;
-        }
+        ScheduleSpellRetry(waitForSpell, outSpellDuration);
+        restoreSelection();
 
         return false;
     }
@@ -5005,7 +5174,8 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget, bool
         if (bot->GetTradeData())
         {
             bot->GetTradeData()->SetSpell(spellId);
-			delete spell;
+            restoreSelection();
+            delete spell;
             return true;
         }
     }
@@ -5073,6 +5243,8 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget, bool
         if (IsJumping() || bot->IsFalling())
         {
             spell->cancel();
+            restoreSelection();
+            delete spell;
             return false;
         }
 
@@ -5081,12 +5253,11 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget, bool
         // fail if not with real player to avoid movement glitches
         if (!HasActivePlayerMaster())
         {
-            if (waitForSpell)
-            {
-                SetAIInternalUpdateDelay(sPlayerbotAIConfig.globalCoolDown);
-            }
+            ScheduleSpellRetry(waitForSpell, nullptr);
 
             spell->cancel();
+            restoreSelection();
+            delete spell;
             return false;
         }
     }
@@ -5136,6 +5307,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget, bool
             if (!loot.IsLootPossible(bot))
             {
                 spell->cancel();
+                restoreSelection();
                 //delete spell;
                 return false;
             }
@@ -5143,7 +5315,11 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget, bool
     }
 
     if (spellSuccess != SPELL_CAST_OK)
+    {
+        HandleSpellStartFailure(spellSuccess, true, waitForSpell);
+        restoreSelection();
         return false;
+    }
 
     PlayAttackEmote(6);
 
@@ -5162,8 +5338,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, Unit* target, Item* itemTarget, bool
 
     aiObjectContext->GetValue<ai::PositionMap&>("position")->Get()["random"].Reset();
 
-    if (oldSel)
-        bot->SetSelectionGuid(oldSel);
+    restoreSelection();
 
     if (HasStrategy("debug spell", BotState::BOT_STATE_NON_COMBAT))
     {
@@ -5207,15 +5382,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, GameObject* goTarget, Item* itemTarg
 
     if (failWithDelay)
     {
-        if (waitForSpell)
-        {
-            SetAIInternalUpdateDelay(sPlayerbotAIConfig.globalCoolDown);
-        }
-
-        if (outSpellDuration)
-        {
-            *outSpellDuration = sPlayerbotAIConfig.globalCoolDown;
-        }
+        ScheduleSpellRetry(waitForSpell, outSpellDuration);
 
         return false;
     }
@@ -5273,6 +5440,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, GameObject* goTarget, Item* itemTarg
         if (IsJumping() || bot->IsFalling())
         {
             spell->cancel();
+            delete spell;
             return false;
         }
 
@@ -5281,19 +5449,20 @@ bool PlayerbotAI::CastSpell(uint32 spellId, GameObject* goTarget, Item* itemTarg
         // fail if not with real player to avoid movement glitches
         if (!HasActivePlayerMaster())
         {
-            if (waitForSpell)
-            {
-                SetAIInternalUpdateDelay(sPlayerbotAIConfig.globalCoolDown);
-            }
+            ScheduleSpellRetry(waitForSpell, nullptr);
 
             spell->cancel();
+            delete spell;
             return false;
         }
     }
 
     SpellCastResult spellSuccess = spell->SpellStart(&targets);
     if (spellSuccess != SPELL_CAST_OK)
+    {
+        HandleSpellStartFailure(spellSuccess, false, waitForSpell);
         return false;
+    }
 
     PlayAttackEmote(6);
 
@@ -5357,15 +5526,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, float x, float y, float z, Item* ite
 
     if (failWithDelay)
     {
-        if (waitForSpell)
-        {
-            SetAIInternalUpdateDelay(sPlayerbotAIConfig.globalCoolDown);
-        }
-
-        if (outSpellDuration)
-        {
-            *outSpellDuration = sPlayerbotAIConfig.globalCoolDown;
-        }
+        ScheduleSpellRetry(waitForSpell, outSpellDuration);
 
         return false;
     }
@@ -5397,12 +5558,16 @@ bool PlayerbotAI::CastSpell(uint32 spellId, float x, float y, float z, Item* ite
     }
     else
     {
+        spell->cancel();
+        delete spell;
         return false;
     }
 
     if (pSpellInfo->Effect[0] == SPELL_EFFECT_OPEN_LOCK ||
         pSpellInfo->Effect[0] == SPELL_EFFECT_SKINNING)
     {
+        spell->cancel();
+        delete spell;
         return false;
     }
 
@@ -5413,6 +5578,7 @@ bool PlayerbotAI::CastSpell(uint32 spellId, float x, float y, float z, Item* ite
         if (IsJumping() || bot->IsFalling())
         {
             spell->cancel();
+            delete spell;
             return false;
         }
 
@@ -5421,17 +5587,25 @@ bool PlayerbotAI::CastSpell(uint32 spellId, float x, float y, float z, Item* ite
         // fail if not with real player to avoid movement glitches
         if (!HasActivePlayerMaster())
         {
-            if (waitForSpell)
-            {
-                SetAIInternalUpdateDelay(sPlayerbotAIConfig.globalCoolDown);
-            }
+            ScheduleSpellRetry(waitForSpell, nullptr);
 
             spell->cancel();
+            delete spell;
             return false;
         }
     }
 
-    spell->SpellStart(&targets);
+    SpellCastResult spellSuccess = spell->SpellStart(&targets);
+
+    // Coordinate casts historically ignored the SpellStart result. Preserve
+    // that behavior for unknown results, but apply the same typed recovery as
+    // the unit and GameObject overloads for classifications we can prove are
+    // safe.
+    if (spellSuccess != SPELL_CAST_OK && ClassifySpellStartFailure(spellSuccess) != PlayerbotSpellStartFailure::Unknown)
+    {
+        HandleSpellStartFailure(spellSuccess, false, waitForSpell);
+        return false;
+    }
 
     if (pSpellInfo->Effect[0] == SPELL_EFFECT_OPEN_LOCK ||
         pSpellInfo->Effect[0] == SPELL_EFFECT_SKINNING)

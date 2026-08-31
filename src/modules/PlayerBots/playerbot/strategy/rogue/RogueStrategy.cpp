@@ -95,6 +95,14 @@ void RogueStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
 void RogueStrategy::InitReactionTriggers(std::list<TriggerNode*>& triggers)
 {
     ClassStrategy::InitReactionTriggers(triggers);
+
+    triggers.push_back(new TriggerNode(
+        "kick on enemy healer",
+        NextAction::array(0, new NextAction("kick on enemy healer", ACTION_INTERRUPT + 2), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "kick",
+        NextAction::array(0, new NextAction("kick", ACTION_INTERRUPT + 1), NULL)));
 }
 
 void RogueStrategy::InitDeadTriggers(std::list<TriggerNode*>& triggers)
@@ -541,6 +549,14 @@ void RogueStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
 void RogueStrategy::InitReactionTriggers(std::list<TriggerNode*>& triggers)
 {
     ClassStrategy::InitReactionTriggers(triggers);
+
+    triggers.push_back(new TriggerNode(
+        "kick on enemy healer",
+        NextAction::array(0, new NextAction("kick on enemy healer", ACTION_INTERRUPT + 2), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "kick",
+        NextAction::array(0, new NextAction("kick", ACTION_INTERRUPT + 1), NULL)));
 }
 
 void RogueStrategy::InitDeadTriggers(std::list<TriggerNode*>& triggers)
@@ -981,6 +997,14 @@ void RogueStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
 void RogueStrategy::InitReactionTriggers(std::list<TriggerNode*>& triggers)
 {
     ClassStrategy::InitReactionTriggers(triggers);
+
+    triggers.push_back(new TriggerNode(
+        "kick on enemy healer",
+        NextAction::array(0, new NextAction("kick on enemy healer", ACTION_INTERRUPT + 2), NULL)));
+
+    triggers.push_back(new TriggerNode(
+        "kick",
+        NextAction::array(0, new NextAction("kick", ACTION_INTERRUPT + 1), NULL)));
 }
 
 void RogueStrategy::InitDeadTriggers(std::list<TriggerNode*>& triggers)

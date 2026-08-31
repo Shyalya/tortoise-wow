@@ -57,6 +57,34 @@ void AiObjectContext::ClearValues(std::string findName)
     }
 }
 
+bool AiObjectContext::InvalidateValue(const std::string& name)
+{
+    UntypedValue* value = FindUntypedValue(name);
+    if (!value)
+        return false;
+
+    value->Reset();
+    return true;
+}
+
+void AiObjectContext::InvalidateCombatTargetValues()
+{
+    static const char* const targetValues[] =
+    {
+        "distance::current target",
+        "facing::current target",
+        "moving::current target",
+        "behind::current target",
+        "invalid target::current target",
+        "dead::current target"
+    };
+
+    for (const char* valueName : targetValues)
+    {
+        InvalidateValue(valueName);
+    }
+}
+
 void AiObjectContext::ClearExpiredValues(std::string findName, uint32 interval)
 {
     std::vector<std::string> namesToErase;
