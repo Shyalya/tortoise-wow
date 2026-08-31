@@ -2,31 +2,31 @@
   {
     "id": "goal-1",
     "description": "Stop running server daemons cleanly and stash all local uncommitted working tree modifications",
-    "status": "completed",
+    "status": "in-progress",
     "verification_criteria": "turtle-mangosd and turtle-realmd inactive, git stash created cleanly with clean working tree."
   },
   {
     "id": "goal-2",
-    "description": "Pull and merge latest commits from origin/playerbots-integration-gh",
-    "status": "completed",
-    "verification_criteria": "Branch successfully updated to match origin/playerbots-integration-gh HEAD."
+    "description": "Pull and merge latest commits from origin/playerbots-integration-gh and initialize submodules",
+    "status": "todo",
+    "verification_criteria": "Branch successfully updated to match origin/playerbots-integration-gh HEAD, submodules initialized."
   },
   {
     "id": "goal-3",
     "description": "Restore local modifications back to working tree via git stash pop",
-    "status": "completed",
+    "status": "todo",
     "verification_criteria": "git stash pop succeeds with 0 merge conflicts and local files intact."
   },
   {
     "id": "goal-4",
     "description": "Audit incoming commit diff and execute new database migrations if present",
-    "status": "completed",
+    "status": "todo",
     "verification_criteria": "Commit diff audited; all new SQL files applied with --force to tw_world/tw_char and tracked in tw_world.migrations."
   },
   {
     "id": "goal-5",
     "description": "Configure, compile C++ engine in Release mode, restart services, and verify operational logs",
-    "status": "completed",
+    "status": "todo",
     "verification_criteria": "CMake build exits 0, turtle-mangosd and turtle-realmd start cleanly without errors."
   }
 ]
