@@ -85,7 +85,6 @@ struct DcApproachState
     // Consecutive OffPathRebuild verdicts without regaining the route. Bounds
     // ladder rung 4, which otherwise rebuilds the same anchor route forever when
     // the bot drifts past RESNAP_RADIUS - 81 rebuilds in one window, live.
-    uint32 offPathRebuilds     = 0;
     uint32 partyNotReadyTicks  = 0;  // consecutive between-pulls not-ready ticks (yield debounce)
     // WorldTimer ms at the first HELD tick (0 = not holding). Ticks alone cannot
     // bound the wait: the advance ladder does not run at a fixed rate, so the
@@ -259,7 +258,6 @@ struct DcApproachState
         rebuildAttempts     = 0;
         resnapAttempts      = 0;
         nudgeAttempts       = 0;
-        offPathRebuilds     = 0;
         partyNotReadyTicks  = 0;
         partyYieldStartedMs = 0;
         lastPos             = Position();

@@ -1275,14 +1275,19 @@ void DungeonClearAdvanceAction::FillPathObs(AdvanceState& st, DungeonClearApproa
             obs.offPath = true;
             // Carry the spend so the ladder can stop rung 4 once rebuilding has
             // demonstrably failed to bring us back to the line.
-            obs.offPathRebuilds = appr.offPathRebuilds;
+            obs.offPathRebuilds = DcRun::Of(context).offPathRebuilds;
         }
         else
+        {
             LOG_DEBUG("playerbots.dungeonclear",
                       "[DC:{}] off-path {} ticks -> Resnapped to seg {} pt {}",
                       bot->GetName(), st.offPathTicks, follower.segmentIdx, follower.pointIdx);
-            // Back on the line - an ordinary blip must not spend the rung-4 budget.
-            appr.offPathRebuilds = 0;
+            // No reset here. A successful resnap is NOT evidence that we are
+            // unwedged - in the loop this rung exists to break, successes and
+            // failures alternate, and zeroing on every success kept the counter
+            // pinned at 1 forever. The budget is aged out by time instead, in
+            // DoOffPathRebuild.
+        }
     }
 }
 
@@ -1386,11 +1391,18 @@ DungeonClearAdvanceAction::Step DungeonClearAdvanceAction::DoOffPathRebuild(Adva
     DcApproachState& appr = *st.appr;
     DungeonFollowerState& follower = *st.follower;
 
-    ++appr.offPathRebuilds;
+    // Fresh episode? Only if nothing needed rebuilding for a while.
+    DcRunState& run = DcRun::Of(context);
+    uint32 const nowMs = WorldTimer::getMSTime();
+    if (run.offPathRebuildLastMs &&
+        WorldTimer::getMSTimeDiff(run.offPathRebuildLastMs, nowMs) > DC_OFFPATH_EPISODE_GAP_MS)
+        run.offPathRebuilds = 0;
+    run.offPathRebuildLastMs = nowMs;
+    ++run.offPathRebuilds;
     LOG_INFO("playerbots.dungeonclear",
              "[DC:{}] off-path {} ticks, Resnap FAILED (>{}yd) -> rebuild #{}",
              bot->GetName(), st.offPathTicks, DungeonPathFollower::RESNAP_RADIUS,
-             appr.offPathRebuilds);
+             run.offPathRebuilds);
     SetPhase(context, "recovering");
     DcMovement::ResolveEscortConflict(bot);
     appr.longPathExpiresMs = 0;

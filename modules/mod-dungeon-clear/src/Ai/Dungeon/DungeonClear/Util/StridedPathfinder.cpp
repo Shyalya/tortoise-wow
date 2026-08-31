@@ -333,6 +333,12 @@ StridedPathfinder::Result StridedPathfinder::Build(Player* bot, uint32 mapId, ui
                 hintStore.erase(hintStore.begin(), hintStore.begin() + joinAt);
             }
 
+            // Walk-from position for the leg probes below: the bot itself for the
+            // first anchor, then each anchor in turn.
+            float legFromX = bot->GetPositionX();
+            float legFromY = bot->GetPositionY();
+            float legFromZ = bot->GetPositionZ();
+
             for (WaypointHint const& h : hintStore)
             {
                 NavmeshSnap::Result const snapped = NavmeshSnap::Snap(map, h.x, h.y, h.z, STRIDE_SNAP_RADIUS);
@@ -357,10 +363,33 @@ StridedPathfinder::Result StridedPathfinder::Build(Player* bot, uint32 mapId, ui
                 seg.jumpDown = HasFlag(h.flags, AnchorFlag::JUMP_DOWN);
                 seg.jumpGap = HasFlag(h.flags, AnchorFlag::JUMP_GAP);
                 seg.doorGoEntry = HasFlag(h.flags, AnchorFlag::DOOR_AHEAD) ? h.doorGoEntry : 0u;
-                // Anchored segments collapse to a single polyline point —
-                // no PathGenerator ran for this leg. The follower walks
-                // straight to the anchor.
-                seg.polyline.push_back(G3D::Vector3(snapped.x, snapped.y, snapped.z));
+                // PATH the leg instead of collapsing it to one point. The old
+                // behaviour left a single polyline entry per anchor, so the
+                // follower walked ANCHOR TO ANCHOR IN A STRAIGHT LINE with no
+                // pathfinding in between. Fine across a room; on a narrow or
+                // curving stretch the chord leaves the walkable strip, and where
+                // that strip is a submerged ledge (Blackfathom Deeps, the run-up
+                // to Twilight Lord Kelris) the party ends up in deep water it
+                // cannot climb out of. Anchors now say WHICH WAY to go; the
+                // PathGenerator handles the metres.
+                std::vector<G3D::Vector3> legPoints;
+                uint32 legType = 0;
+                if (TryProbe(bot, mapId, legFromX, legFromY, legFromZ,
+                             snapped.x, snapped.y, snapped.z, legPoints, legType) &&
+                    !legPoints.empty())
+                {
+                    seg.polyline = std::move(legPoints);
+                }
+                else
+                {
+                    // Probe failed (off-mesh leg, no mmap, a gap the anchor is
+                    // there to bridge): keep the old single point. That is the
+                    // previous behaviour exactly, so this can only ever match it.
+                    seg.polyline.push_back(G3D::Vector3(snapped.x, snapped.y, snapped.z));
+                }
+                legFromX = snapped.x;
+                legFromY = snapped.y;
+                legFromZ = snapped.z;
                 result.segments.push_back(seg);
             }
             // If every anchor was off-mesh the route is unusable — fall
@@ -372,7 +401,14 @@ StridedPathfinder::Result StridedPathfinder::Build(Player* bot, uint32 mapId, ui
                 goal.ey = ty;
                 goal.ez = tz;
                 goal.arriveRadius = ARRIVE_RADIUS;
-                goal.polyline.push_back(G3D::Vector3(tx, ty, tz));
+                // Same for the last leg, from the final anchor to the boss.
+                std::vector<G3D::Vector3> goalPoints;
+                uint32 goalType = 0;
+                if (TryProbe(bot, mapId, legFromX, legFromY, legFromZ, tx, ty, tz,
+                             goalPoints, goalType) && !goalPoints.empty())
+                    goal.polyline = std::move(goalPoints);
+                else
+                    goal.polyline.push_back(G3D::Vector3(tx, ty, tz));
                 result.segments.push_back(goal);
                 result.reachable = true;
                 result.complete = true;

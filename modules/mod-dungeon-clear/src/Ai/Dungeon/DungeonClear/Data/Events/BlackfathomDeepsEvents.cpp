@@ -120,9 +120,21 @@ void RegisterBlackfathomDeepsEvents(std::vector<DungeonEvent>& out)
 
     // The fourth wave dying is what fires DoUseDoorOrButton, so the door opens
     // within a second of the sweep finishing; 30s is slack, not a wait.
-    b.WaitForGOState(BFD_GO_PORTAL_DOOR, /*GO_STATE_ACTIVE*/ 0,
-                     /*timeout*/ 30000)
-        .MoveTo(BFD_PORTAL_X, BFD_PORTAL_Y, BFD_PORTAL_Z, /*radius*/ 10.0f);
+    // No WaitForGOState on the portal here. A step that times out is not a
+    // patient wait - the executor turns it into StepResult::Failed and the
+    // whole event dies. The door is reported to close visually while still
+    // being passable, and in that case the gate would cost the run for a
+    // state flag while the way is open. It buys little either: the instance
+    // script opens the door for certain once Kelris and all four fires are
+    // done, so by the time this step ran it is open anyway.
+    // NO closing walk to the portal. It used to be
+    //     b.MoveTo(BFD_PORTAL_X, BFD_PORTAL_Y, BFD_PORTAL_Z, 10.0f);
+    // which is 36yd from the brazier square - and MoveTo is a SHORT intra-room
+    // hop on a plain MovePoint, with no pathfinding at all (see EventStepKind).
+    // The first party ever to light all four fires wedged on exactly this step
+    // (STALLED at step 12/13 kind 0) with everything before it done. The haul to
+    // Aku'mai belongs to the boss navigation, which the ladder starts the moment
+    // this event completes.
 
     // Not Optional. Skipping it would only walk the party to a portal that
     // stays shut, so a failure here has to read as a stall, not as progress.

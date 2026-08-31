@@ -55,6 +55,14 @@ namespace
     // Anchor spacing in the emitted route. The authored Azjol-Nerub route sits
     // at ~24yd between anchors; 15 keeps corners in a tighter dungeon.
     constexpr float kAnchorStep = 15.0f;
+
+    // Total heading change tolerated between two anchors, in radians (~25 deg).
+    // The single-corner test below only fires on a sharp bend; a LONG GENTLE arc
+    // slips past it and gets one anchor every kAnchorStep, so the straight line
+    // the escort walks between them cuts the arc. Harmless in a corridor, fatal
+    // on the narrow submerged ledge before Twilight Lord Kelris, where the miss
+    // lands in deep water the party cannot climb out of.
+    constexpr float kAnchorTurnSum = 0.44f;
     // A leg shorter than this is not worth an anchor route (the boss was
     // already next door and the router handles that trivially).
     constexpr float kMinLegLength = 40.0f;
@@ -133,6 +141,7 @@ namespace
             return out;
         out.push_back(pts.front());
         float run = 0.0f;
+        float turnSum = 0.0f;   // heading change accumulated since the last anchor
         for (size_t i = 1; i + 1 < pts.size(); ++i)
         {
             run += Dist2D(pts[i - 1], pts[i]);
@@ -155,10 +164,20 @@ namespace
             // unaffected: extra points on a straight line buy nothing but
             // stop-and-go.
             bool const climbed = std::fabs(pts[i].z - out.back().z) > kAnchorRise;
-            if (run >= kAnchorStep || corner || climbed)
+            // Sum the per-sample heading change. `corner` above is a single sharp
+            // bend; this catches the arc that never bends sharply but has turned
+            // a long way by the time the next spacing mark arrives.
+            if (la > 0.1f && lb > 0.1f)
+            {
+                float const cosang = std::max(-1.0f, std::min(1.0f,
+                                     (ax * bx + ay * by) / (la * lb)));
+                turnSum += std::acos(cosang);
+            }
+            if (run >= kAnchorStep || corner || climbed || turnSum >= kAnchorTurnSum)
             {
                 out.push_back(pts[i]);
                 run = 0.0f;
+                turnSum = 0.0f;
             }
         }
         out.push_back(pts.back());
@@ -419,6 +438,17 @@ namespace DcRouteRecorder
         // close the same boss leg within milliseconds, and a direct truncate
         // would let one read the other's half-written file. Rename is atomic
         // on the same filesystem.
+        // Never overwrite a pinned route's files. The registry already refuses
+        // the in-memory replacement; without this the next restart would read
+        // the recorder's version back off disk and the pin would quietly expire.
+        if (DungeonClearRouteRegistry::IsPinned(mapId, DUNGEON_DIFFICULTY_NORMAL, bossEntry))
+        {
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC-ROUTE] not writing {} for map {} boss {}: route is PINNED",
+                     bossName, mapId, bossEntry);
+            return;
+        }
+
         std::string const finalPath = path.str();
         std::string const tmpPath =
             finalPath + ".tmp" + std::to_string(map->GetInstanceId());

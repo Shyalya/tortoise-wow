@@ -410,6 +410,12 @@ constexpr uint32 DC_PARTY_YIELD_DEBOUNCE_TICKS = 3;
 // closes, so keep this long enough that it stays a last resort.
 constexpr uint32 DC_PARTY_YIELD_MAX_MS = 60000;
 
+// How long without an off-path rebuild before the rung-4 budget counts as a
+// fresh episode. Shorter than this and we are still in the same wedge: the
+// loop alternates failed and successful resnaps, so counting CONSECUTIVE
+// failures never accumulates (1039 logged "rebuild #1" in twenty minutes).
+constexpr uint32 DC_OFFPATH_EPISODE_GAP_MS = 20000;
+
 // Consecutive Resnap recoveries allowed before the stuck ladder stops trusting
 // the cached route and forces a rebuild. Resnap only proves the bot's position
 // can be snapped ONTO the polyline — never that it can walk ALONG it — so a bot

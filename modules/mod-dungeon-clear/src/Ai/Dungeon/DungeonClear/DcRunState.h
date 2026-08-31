@@ -50,6 +50,14 @@ struct DcRunState
 {
     // === run session — cleared by Reset() (dc on / dc off / death / all-cleared) ===
     bool        enabled = false;   // the run's master switch (leader-owned)
+
+    // Off-path rebuild budget for approach-ladder rung 4. It lives HERE, not on
+    // DcApproachState, because that one resets on every pull interrupt - and the
+    // wedge this budget exists to detect outlasts any number of trash fights. In
+    // the approach state the counter never passed 1 (841 logged "#1" in half an
+    // hour while two bots rebuilt 433 and 350 times against the same wall).
+    uint32      offPathRebuilds = 0;
+    uint32      offPathRebuildLastMs = 0;
     bool        paused  = false;   // soft-stop layered on `enabled`; see OnResume
 
     // Short human phrase describing WHY the run is paused, for the status panel to

@@ -495,7 +495,13 @@ namespace DcDiag
             else if (seen.count(info.entry))
                 b.status = "missing";
             else
-                b.status = "alive";  // never seen: grid most likely not loaded
+                // NOT "alive": that word already means "found alive on the map"
+                // three lines up, and the two are nearly opposites. This branch
+                // is "no creature of this entry was ever observed", i.e. the grid
+                // holding it was never loaded - the single most useful thing the
+                // line can say when a party is parked on a boss's spawn point
+                // with combat=0.
+                b.status = "unseen";
 
             snap.roster.push_back(std::move(b));
         }
@@ -686,11 +692,26 @@ namespace DcDiag
         std::ostringstream s;
         s.precision(1);
         s << std::fixed;
+        // The roster already knows whether the TARGET is alive, a corpse whose
+        // completion was never latched, missing, or simply never loaded. Without
+        // it, "dist=0.2 combat=0" is unreadable: it looks like a party refusing
+        // to attack a boss it is standing on, when it may be a party standing on
+        // an empty spawn point - IsAtBossEngage falls back to the static spawn
+        // coordinates whenever the live creature is not found.
+        char const* targetState = "?";
+        for (auto const& rb : snap.roster)
+            if (rb.isTarget)
+            {
+                targetState = rb.status.empty() ? "?" : rb.status.c_str();
+                break;
+            }
+
         s << "state=" << (snap.stateStr.empty() ? "?" : snap.stateStr)
           << " phase=" << (snap.phase.empty() ? "-" : snap.phase)
           << " boss=" << (snap.nextBossName.empty() ? "none" : snap.nextBossName)
           << "(" << snap.nextBossEntry << ")"
           << " dist=" << snap.distToTarget
+          << " bossState=" << targetState
           << " pos=" << snap.mapId << ":" << snap.tankX << "," << snap.tankY << "," << snap.tankZ
           << " party=" << snap.aliveCount << "/" << snap.partySize << " alive"
           << (snap.offlineCount ? " offline=" + std::to_string(snap.offlineCount) : "")

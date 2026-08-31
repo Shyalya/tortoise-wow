@@ -7,6 +7,7 @@
 #define _PLAYERBOT_DUNGEONCLEARROUTEREGISTRY_H
 
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Common.h"
@@ -46,6 +47,16 @@ public:
     // Drop a route that has proven unwalkable. Returns true if one was there.
     static bool Forget(uint32 mapId, Difficulty difficulty, uint32 bossEntry);
 
+    // PINNED routes are exempt from both ways a route normally disappears:
+    // Forget() (the stuck ladder dropping a route it could not follow) and
+    // Register() (the recorder replacing it with a shorter run). Marked by the
+    // word "pinned" in the .route file header, so pinning is a data decision.
+    // For a path with no margin - the submerged ledge before Twilight Lord
+    // Kelris, where a metre off the line is deep water with no way out - a route
+    // that proved itself must not be re-litigated by the next unlucky run.
+    static void Pin(uint32 mapId, Difficulty difficulty, uint32 bossEntry);
+    static bool IsPinned(uint32 mapId, Difficulty difficulty, uint32 bossEntry);
+
 private:
     struct Key
     {
@@ -72,6 +83,7 @@ private:
 
     static std::unordered_map<Key, std::vector<WaypointHint>, KeyHash>& Store();
     static std::mutex& RegistryLock();
+    static std::unordered_set<Key, KeyHash>& PinnedSet();
 };
 
 #endif

@@ -56,8 +56,18 @@ static void LoadRecordedRoutesFromDisk()
                 hints.push_back(WaypointHint{x, y, z, 0, 0, 6.0f});
             if (hints.size() >= 3)
             {
+                // "pinned" anywhere in the header marks a route the recorder may
+                // neither replace nor discard. Pin BEFORE registering, so the
+                // very first Register is the one that sticks.
+                bool const pinned = header.find("pinned") != std::string::npos;
+                if (pinned)
+                    DungeonClearRouteRegistry::Pin(mapId, DUNGEON_DIFFICULTY_NORMAL, bossEntry);
                 DungeonClearRouteRegistry::Register(mapId, DUNGEON_DIFFICULTY_NORMAL,
                                                     bossEntry, std::move(hints));
+                if (pinned)
+                    LOG_INFO("playerbots.dungeonclear",
+                             "[DC-ROUTE] map {} boss {}: route is PINNED (recorder will not touch it)",
+                             mapId, bossEntry);
                 ++loaded;
             }
         }
@@ -112,18 +122,55 @@ DungeonClearRouteRegistry::Store()
     return instance;
 }
 
+std::unordered_set<DungeonClearRouteRegistry::Key, DungeonClearRouteRegistry::KeyHash>&
+DungeonClearRouteRegistry::PinnedSet()
+{
+    static std::unordered_set<Key, KeyHash> instance;
+    return instance;
+}
+
+void DungeonClearRouteRegistry::Pin(uint32 mapId, Difficulty difficulty, uint32 bossEntry)
+{
+    std::lock_guard<std::mutex> lock(RegistryLock());
+    PinnedSet().insert(Key{mapId, difficulty, bossEntry});
+}
+
+bool DungeonClearRouteRegistry::IsPinned(uint32 mapId, Difficulty difficulty, uint32 bossEntry)
+{
+    std::lock_guard<std::mutex> lock(RegistryLock());
+    return PinnedSet().count(Key{mapId, difficulty, bossEntry}) != 0;
+}
+
 void DungeonClearRouteRegistry::Register(uint32 mapId, Difficulty difficulty, uint32 bossEntry,
                                          std::vector<WaypointHint> hints)
 {
     std::lock_guard<std::mutex> lock(RegistryLock());
-    Store()[Key{mapId, difficulty, bossEntry}] = std::move(hints);
+    Key const key{mapId, difficulty, bossEntry};
+    // A pinned route is never replaced. The recorder's shortest-wins rule is
+    // right for ordinary ground and wrong for a ledge: "shorter" there usually
+    // means the line was cut across the water the ledge exists to avoid.
+    if (PinnedSet().count(key) && !Store()[key].empty())
+        return;
+    Store()[key] = std::move(hints);
 }
 
 bool DungeonClearRouteRegistry::Forget(uint32 mapId, Difficulty difficulty, uint32 bossEntry)
 {
     SeedAuthoredRoutes();
     std::lock_guard<std::mutex> lock(RegistryLock());
-    return Store().erase(Key{mapId, difficulty, bossEntry}) > 0;
+    Key const key{mapId, difficulty, bossEntry};
+    // A pinned route survives the stuck ladder. Returning false here also stops
+    // the caller from renaming the files to .bad (DcRouteRecorder::DiscardRoute
+    // runs only when Forget reported a removal), so the decision holds across
+    // restarts instead of only until the next wedge.
+    if (PinnedSet().count(key))
+    {
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC-ROUTE] keeping PINNED route for map {} boss {} despite a stuck ladder",
+                 mapId, bossEntry);
+        return false;
+    }
+    return Store().erase(key) > 0;
 }
 
 bool DungeonClearRouteRegistry::Has(uint32 mapId, Difficulty difficulty, uint32 bossEntry)

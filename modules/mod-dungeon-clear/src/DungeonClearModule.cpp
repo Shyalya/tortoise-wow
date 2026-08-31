@@ -709,8 +709,14 @@ public:
     }
 };
 
+// Der Live-Ticker fuer die Lagekarte. Steht in LiveMapTicker.cpp, haengt an nichts
+// aus diesem Modul und ist ohne LiveMap.File in der Konfiguration still.
+void AddSC_livemap_ticker();
+
 void AddSC_dungeon_clear_module()
 {
+    AddSC_livemap_ticker();
+
     new DungeonClearRegistrarWorldScript();
     new DungeonClearPullBrakeScript();
     // Opening half only — the End script registers on the first world tick so

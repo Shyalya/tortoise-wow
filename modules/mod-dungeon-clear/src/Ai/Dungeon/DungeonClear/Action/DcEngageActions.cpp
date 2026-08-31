@@ -1963,6 +1963,25 @@ bool DcObjectiveArriveAction::Execute(Event& /*event*/)
     {
         // The event needs the human (something the bot can't drive). Stall so
         // the player can sort it; they can also `dc skip` past the objective.
+        //
+        // Name the step that wedged. The executor logs step transitions at DEBUG,
+        // and raising the whole level floods the journal with hundreds of lines a
+        // minute - but a stall is rare and singular, so it may carry the one fact
+        // that makes it diagnosable. Without it the next round is guesswork:
+        // MoveTo, UseGO, ClearRadius and KillCreature fail for entirely different
+        // reasons. Live on 2026-08-30, the first party ever to reach the four
+        // Fires of Aku'mai wedged there and the log could not say on what.
+        if (ev)
+        {
+            auto const& p = context->GetValue<DungeonEventProgress&>(DcKey::EventProgress)->Get();
+            uint32 const kind = p.stepIndex < ev->steps.size()
+                                    ? static_cast<uint32>(ev->steps[p.stepIndex].kind)
+                                    : 9999u;
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] event '{}' STALLED at step {}/{} kind {}",
+                     bot->GetName(), ev->name, p.stepIndex,
+                     static_cast<uint32>(ev->steps.size()), kind);
+        }
         StallDungeonClear(botAI, "I can't progress the event at " + next->name +
                                      " on my own. Sort it and I'll continue, or `dc skip`.");
         return true;
