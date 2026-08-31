@@ -9,7 +9,7 @@
     "id": "goal-2",
     "description": "Pull and merge latest commits from origin/playerbots-integration-gh",
     "status": "completed",
-    "verification_criteria": "Branch successfully rebased/merged with origin/playerbots-integration-gh HEAD."
+    "verification_criteria": "Branch successfully updated to match origin/playerbots-integration-gh HEAD."
   },
   {
     "id": "goal-3",

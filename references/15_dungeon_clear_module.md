@@ -1,7 +1,7 @@
 # 15. Dungeon Clear AI Module (.dc)
 
 > **Target Core**: Turtle-WoW 1.18.1 (Build 7272) • CMaNGOS + PlayerBots Framework  
-> **Source Verification**: `modules/mod-dungeon-clear/src/DungeonClearCommand.cpp` & `DungeonClearModule.cpp`  
+> **Source Verification**: `modules/mod-dungeon-clear/src/DungeonClearCommand.cpp`, `DungeonClearModule.cpp` & `data/dc_roster.txt`  
 > **Quick Navigation**: [🏠 Master Portal (gm_commands.md)](../gm_commands.md) • [📖 Project Readme](../README.md) • [🎯 Bot Macro Book (13_bot_whispers_and_macros.md)](./13_bot_whispers_and_macros.md) • [⚔️ Class Strategies (14_bot_strategies_and_tactics.md)](./14_bot_strategies_and_tactics.md) • [🗺️ Teleport Directory (03_teleports_and_movement.md)](./03_teleports_and_movement.md)
 
 ---
@@ -174,13 +174,16 @@ Allows Game Masters or Console to spawn, gear, and run full 5-bot automated dung
 
 ---
 
-## 3. Mod-Dungeon-Clear Architecture & Configuration
+## 3. Mod-Dungeon-Clear Architecture & Dynamic Roster Data
 
 `mod-dungeon-clear` is a dedicated C++ behavioral module that turns PlayerBots into autonomous dungeon explorers:
 
 - **Navmesh Route Resolution**: Automatically resolves dungeon corridors, ramps, elevators, and doors via `NavmeshSnap::SnapColumn` and `LongRangePathfinder`.
 - **Pull Governor**: Coordinates tank pulls, prevents unintended trash add packs, and pauses pulls when healer mana drops below threshold.
-- **Boss Encounter Logic & Masks**: Handles interrupts, dispels, phase positioning, and tracks kills via `DcEncounterMask`.
+- **Dynamic Boss Roster & Order Overlay (`data/dc_roster.txt`)**: Allows live configuration of dungeon boss rosters, encounter orders, and dropped pool rares without needing C++ rebuilds. Live updates take effect immediately with `.reload config`:
+  - `credit <entry> [<entry> ...]`: Adds creature entry IDs to the required boss kill list.
+  - `order <mapId> <entry> <index>`: Assigns strict encounter order (1–32) for that map.
+  - `drop <entry>`: Excludes low-percentage pool rares (e.g. Fallen Champion 2%, Earthcaller Halmgar 30%) so bots don't deadlock waiting for non-spawned creatures.
 
 ### Configuration Settings (`run/modules/mod_dungeon_clear.conf`)
 

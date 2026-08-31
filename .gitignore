@@ -16,7 +16,13 @@ env.md
 /build/
 /TurtleWow-Server/
 /client/
-
+/build-*/
+/bin/
+/.vscode/
+*.kate-swp
+*.exe
+/src/shared/revision.h
+/database/
 # Build/log artifacts
 build.log
 racechange.log
