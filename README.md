@@ -222,60 +222,20 @@ Two are deliberately manual, in `sql/tools/`, because both depend on per-server 
 
 ### Build and documentation
 
-- Release builds on MSVC ship debug symbols, so a crash dump is readable.
-- `INSTALL-LINUX.md` and `INSTALL-WINDOWS.md` are start-to-finish walkthroughs, including the OpenSSL 3 legacy provider, the database procedure that actually works, and reading a crash dump.
-- The **world database is in this repository** — `sql/base` holds 186 files, 131 MB, plus the migrations under `sql/database_updates`. Only client data (maps, DBC, vmaps, mmaps) has to be extracted from a game client, with the tools under `tools/`.
-
-Several of the fixes below are also kept as standalone patches, each one self-contained, so they can be lifted onto any compatible tree without taking the rest of this fork with them. Ask if you want one.
-
-Work from other forks is pulled in where it fits and credited in the commit — the mage pass comes from [faemwow/tortoise-wow](https://github.com/faemwow/tortoise-wow), whose repository is also worth a look if you would rather run this in Docker or build it with Nix.
-
-> [!IMPORTANT]
-> **Client Compatibility**: The core must be built with `-DALLOW_TURTLE_ADDONS=ON`, otherwise the client crashes with "interface corrupt" on entering the world.
-
-## ⚡ Compilation & Production Daemon Supervision
-
-### 🐧 Linux (Build & Systemd Service Management)
-
-#### 1. CMake Compilation & Installation
-
-```bash
-# Configure production release build with PlayerBots and static modules
-cmake -B build -S . \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=$HOME/server \
-  -DBUILD_PLAYERBOTS=ON \
-  -DUSE_EXTRACTORS=ON \
-  -DALLOW_TURTLE_ADDONS=ON \
-  -DMODULES=static
-
-# Compile binaries using all available CPU cores
-cmake --build build -j$(nproc)
-
-# Install binaries, libraries, and configuration files
-cmake --install build
-```
-
-#### 2. Systemd Service Unit Installation
-
-Create user service files to ensure high availability and automatic restarts:
-
-**`~/.config/systemd/user/turtle-realmd.service`**:
-
-```ini
-[Unit]
-Description=Turtle-WoW Realm Authentication Daemon
-After=network.target mariadb.service
-
-[Service]
-Type=simple
-WorkingDirectory=%h/server
-ExecStart=%h/server/bin/realmd -c %h/server/etc/realmd.conf
-Restart=on-failure
-RestartSec=5s
+- Release builds on MSVC ship debug symbols, so a crash dump is readable
+- Eluna is integrated as a pinned Git submodule, built by default, and controlled at
+  runtime by `Eluna.Enabled`. See `docs/ELUNA.md` for checkout, configuration,
+  architecture, compatibility, and update guidance
+- `INSTALL-LINUX.md` and `INSTALL-WINDOWS.md` are start-to-finish walkthroughs, including
+  the OpenSSL 3 legacy provider, the database procedure that actually works, and reading a
+  crash dump
+- The **world database is in this repository** — `sql/base` holds 190 files, 131 MB, plus
+  the migrations under `sql/database_updates`. Only client data (maps, DBC, vmaps, mmaps)
+  has to be extracted from a game client, with the tools under `tools/`
 
 [Install]
 WantedBy=default.target
+
 ```
 
 **`~/.config/systemd/user/turtle-mangosd.service`**:
@@ -413,12 +373,7 @@ Additions will be added as the core code reaches feature completion.
 - **Leech** - Basic toggleable leech system designed for solo play, found in `mangosd.conf`.
 - **Additional Talent Points** - Mostly used for testing, found in `tw_char.characters`.
 - **[Playerbots][20]** *(this fork)* - Integrated from [r-o-sh's branch](https://github.com/r-o-sh/tortoise-wow/tree/playerbots-integration-gh). Not an experiment: ~1000 of them run permanently and the fork is built around them. Upstream still lists this as planned.
-
-#### Planned Additions
-
-- **[Eluna][19]** - The WoW lua engine.
-
----
+- **[Eluna][19]** *(this branch)* - Lua scripting through a pinned submodule. The custom Turtle WoW MaNGOS core uses Eluna's VMaNGOS compatibility backend without becoming a VMaNGOS core. Enable it at build time with `BUILD_ELUNA` and at runtime with `Eluna.Enabled`; see `docs/ELUNA.md`.
 
 ## Operating Systems
 
