@@ -780,6 +780,12 @@ void WorldSession::HandleLootMasterGiveOpcode(WorldPacket & recv_data)
 
     LootItem& item = pLoot->items[slotid];
 
+    if (item.is_looted || item.freeforall || !item.AllowedForPlayer(target, pLoot->GetLootTarget()))
+    {
+        _player->SendLootError(lootGuid, LOOT_ERROR_MASTER_OTHER);
+        return;
+    }
+
     ItemPosCountVec dest;
     InventoryResult msg = target->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, item.itemid, item.count);
     if (msg != EQUIP_ERR_OK)
