@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ObjectGuid.h"
+#include <string>
 
 class Player;
 class PlayerbotAI;
@@ -28,5 +29,13 @@ namespace ai
         static bool PrepareFallbackCast(PlayerbotAI* ai, Unit* target);
         static void RecordCast(Player* bot, Unit* target, bool castStarted);
         static void Release(Player* bot, ObjectGuid targetGuid);
+
+        // Shared, short-lived assignments for reactive combat actions.  These
+        // deliberately live beside CC reservations so all bots observe the
+        // same world-thread coordination state.
+        static bool ClaimInterrupt(PlayerbotAI* ai, Unit* target, std::string const& spell);
+        static void RecordInterrupt(Player* bot, Unit* target, std::string const& spell, bool castStarted);
+        static bool ClaimResurrection(PlayerbotAI* ai, Unit* target);
+        static void RecordResurrection(Player* bot, Unit* target, bool castStarted);
     };
 }

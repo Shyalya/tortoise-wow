@@ -73,6 +73,14 @@ bool CastSpellAction::Execute(Event& event)
         }
 
         executed = ai->CastSpell(spellName, target, nullptr, false, &spellDuration);
+
+        // Reactive assignments are claimed by the trigger/value layer.  A
+        // successful cast keeps a short in-flight lease; failed starts move
+        // the owner into bounded backoff while releasing the shared target.
+        if (GetTargetName() == "party member to resurrect")
+            GroupCcTargetReservation::RecordResurrection(bot, target, executed);
+        else
+            GroupCcTargetReservation::RecordInterrupt(bot, target, spellName, executed);
     }
 
     if (executed)

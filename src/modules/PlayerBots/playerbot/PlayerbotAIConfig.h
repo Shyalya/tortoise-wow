@@ -113,6 +113,7 @@ public:
 	bool IsInPvpProhibitedZone(uint32 id);
 
     bool enabled;
+    std::string companionAutonomyPolicy;
     bool autoSaveMana;
     bool forceRebuffOnReadyCheck;
     bool allowGuildBots;

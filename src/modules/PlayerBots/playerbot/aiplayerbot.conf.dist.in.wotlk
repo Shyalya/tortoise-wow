@@ -1180,3 +1180,7 @@ AiPlayerbot.LLMDefaultPromptsFile = llm_character_card.txt
 
 # Mystery config value. Currently enables async bot pathfinding. Rarely crashes the server.
 # AiPlayerbot.TweakValue = 0
+# Companion autonomy policy: strict, assist (default), or independent. Strict
+# disables automatic summoning, cooperative game-object use, and master-vendor
+# maintenance. Ready-check replies/preparation remain explicit protocol responses.
+AiPlayerbot.CompanionAutonomyPolicy = assist

@@ -147,6 +147,7 @@ bool PlayerbotAIConfig::Initialize()
     sLog.outString("Bot configuration read from %s.", config.GetFilename().c_str());
 
     enabled = config.GetBoolDefault("AiPlayerbot.Enabled", false);
+    companionAutonomyPolicy = config.GetStringDefault("AiPlayerbot.CompanionAutonomyPolicy", "assist");
     autoSaveMana = config.GetBoolDefault("AiPlayerbot.AutoSaveMana", true);
     forceRebuffOnReadyCheck = config.GetBoolDefault("AiPlayerbot.ForceRebuffOnReadyCheck", false);
     if (!enabled)

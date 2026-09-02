@@ -10,6 +10,40 @@ using namespace ai;
 
 namespace
 {
+    // Automatic CC is deliberately conservative: only the conventional
+    // dungeon assignments are acted on.  Other raid icons remain available to
+    // explicit RTI commands, but are never guessed by the value layer.
+    bool IsAutomaticCcMarker(Player* bot, Unit* creature)
+    {
+        Group* group = bot ? bot->GetGroup() : nullptr;
+        if (!group || !creature)
+            return false;
+
+        // RtiTargetValue uses star=0 ... moon=4, square=5.  Square is the
+        // blue marker in the client UI.
+        return group->GetTargetIcon(4) == creature->GetObjectGuid() ||
+               group->GetTargetIcon(5) == creature->GetObjectGuid();
+    }
+
+    // Require a genuinely attackable companion mob before assigning CC.
+    bool HasOtherAttackableMob(PlayerbotAI* ai, Unit* excluded)
+    {
+        std::list<ObjectGuid> possible = ai->GetAiObjectContext()
+            ->GetValue<std::list<ObjectGuid>>("possible targets no los")->Get();
+        Player* bot = ai->GetBot();
+        for (std::list<ObjectGuid>::const_iterator it = possible.begin(); it != possible.end(); ++it)
+        {
+            Unit* unit = ai->GetUnit(*it);
+            if (unit && unit != excluded && unit->IsAlive() &&
+                !unit->HasFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_SPAWNING | UNIT_FLAG_NOT_SELECTABLE |
+                               UNIT_FLAG_NOT_ATTACKABLE_1 | UNIT_FLAG_NON_ATTACKABLE_2) &&
+                sServerFacade.IsHostileTo(unit, bot) &&
+                !unit->HasBreakableByDamageCrowdControlAura())
+                return true;
+        }
+        return false;
+    }
+
     bool IsBossCcTarget(Unit* creature)
     {
         if (Creature* boss = creature->ToCreature())
@@ -93,6 +127,16 @@ public:
         if (rtiTarget == creature)
             return;
 
+        // Do not autonomously CC an unmarked add.  This also prevents a stale
+        // fallback claim from causing a cast after the marker was removed.
+        if (!IsAutomaticCcMarker(bot, creature))
+            return;
+
+        // CC is useful only while the rest of the pull can be fought.  Never
+        // strand the group by controlling the final attackable mob.
+        if (!HasOtherAttackableMob(ai, creature))
+            return;
+
         if (IsBossCcTarget(creature) || IsCurrentTankTarget(ai, creature) || IsAlreadyControlled(creature))
             return;
 
@@ -119,7 +163,9 @@ public:
                 return;
         }
 
-        if (creature->HasAuraType(SPELL_AURA_PERIODIC_DAMAGE) && !(spell == "fear" || spell == "banish"))
+        // Any damaging periodic aura will break most CC immediately (and a
+        // target that is already DoTed is not a safe automatic assignment).
+        if (creature->HasAuraType(SPELL_AURA_PERIODIC_DAMAGE))
             return;
 
         if (GroupCcTargetReservation::IsOwnedBy(bot, creatureGuid))

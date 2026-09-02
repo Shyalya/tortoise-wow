@@ -73,6 +73,7 @@
 #include "RangeAction.h"
 #include "UseConsumableAction.h"
 #include "WorldBuffTravelActions.h"
+#include "CooperativeGameObjectActions.h"
 
 #include "OnyxiasLairDungeonActions.h"
 #include "MoltenCoreDungeonActions.h"
@@ -92,6 +93,7 @@ namespace ai
     public:
         ActionContext()
         {
+            creators["use cooperative game object"] = [](PlayerbotAI* ai) { return new UseCooperativeGameObjectAction(ai); };
             creators["mark rti"] = [](PlayerbotAI* ai) { return new MarkRtiAction(ai); };
             creators["set return position"] = [](PlayerbotAI* ai) { return new SetReturnPositionAction(ai); };
             creators["rpg"] = [](PlayerbotAI* ai) { return new RpgAction(ai); };

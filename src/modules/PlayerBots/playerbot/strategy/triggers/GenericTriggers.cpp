@@ -510,7 +510,12 @@ bool ItemCountTrigger::IsActive()
 
 bool InterruptSpellTrigger::IsActive()
 {
-	return SpellTrigger::IsActive() && ai->IsInterruptableSpellCasting(GetTarget(), getName(), true);
+    if (!SpellTrigger::IsActive())
+        return false;
+    Unit* target = GetTarget();
+    if (!target || !ai->IsInterruptableSpellCasting(target, getName(), true))
+        return false;
+    return GroupCcTargetReservation::ClaimInterrupt(ai, target, getName());
 }
 
 bool DeflectSpellTrigger::IsActive()

@@ -27,6 +27,10 @@ void NonCombatStrategy::InitNonCombatTriggers(std::list<TriggerNode*>& triggers)
         "assist summoning ritual",
         NextAction::array(0, new NextAction("assist summoning ritual", 82.0f), NULL)));
 
+    triggers.push_back(new TriggerNode(
+        "cooperative game object",
+        NextAction::array(0, new NextAction("use cooperative game object", 80.0f), NULL)));
+
     /*
     triggers.push_back(new TriggerNode(
         "vehicle near",

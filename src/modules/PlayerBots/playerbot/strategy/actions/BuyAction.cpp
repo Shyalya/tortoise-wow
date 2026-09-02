@@ -10,15 +10,27 @@
 
 using namespace ai;
 
+namespace
+{
+    // A single vendor interaction must never consume an unbounded amount of
+    // gold, even when a vendor offers many grades of consumables.
+    static uint32 const MAX_MAINTENANCE_SPEND = 100000; // 10 gold
+}
+
 bool BuyAction::Execute(Event& event)
 {
     Player* requester = event.getOwner() ? event.getOwner() : GetMaster();
     bool buyUseful = false;
+    bool maintenance = false;
     ItemIds itemIds;
     std::string link = event.getParam();
+    bool exactMaintenanceVendor = event.getSource() == "master gossip maintenance";
 
-    if (link == "vendor")
+    if (link == "vendor" || link == "maintenance" || exactMaintenanceVendor)
+    {
         buyUseful = true;
+        maintenance = link == "maintenance" || exactMaintenanceVendor;
+    }
     else
     {
         itemIds = chat->parseItems(link);
@@ -28,10 +40,14 @@ bool BuyAction::Execute(Event& event)
     bool vendored = false, result = false;
 
     UsageBoughtList bought;
+    uint32 maintenanceSpent = 0;
 
+    ObjectGuid exactVendor = exactMaintenanceVendor ? event.getObject() : ObjectGuid();
     for (std::list<ObjectGuid>::iterator i = vendors.begin(); i != vendors.end(); ++i)
     {
         ObjectGuid vendorguid = *i;
+        if (exactMaintenanceVendor && vendorguid != exactVendor)
+            continue;
         Creature *pCreature = bot->GetNPCIfCanInteractWith(vendorguid, UNIT_NPC_FLAG_VENDOR);
         if (!pCreature)
             continue;
@@ -73,6 +89,53 @@ bool BuyAction::Execute(Event& event)
                 if (!proto)
                     continue;
 
+                if (maintenance)
+                {
+                    if (proto->Class == ITEM_CLASS_QUEST || proto->StartQuest)
+                        continue;
+                    ItemUsage maintenanceUsage = AI_VALUE2(ItemUsage, "item usage", tItem->item);
+                    bool isFoodOrDrink = ItemUsageValue::IsHpFoodOrDrink(proto) ||
+                        ItemUsageValue::IsManaFoodOrDrink(proto);
+                    bool isAmmo = maintenanceUsage == ItemUsage::ITEM_USAGE_AMMO;
+                    bool isClassReagent = false;
+                    if (proto->Class == ITEM_CLASS_REAGENT)
+                    {
+                        uint32 family = 0;
+                        switch (bot->getClass())
+                        {
+                            case CLASS_WARRIOR: family = SPELLFAMILY_WARRIOR; break;
+                            case CLASS_PALADIN: family = SPELLFAMILY_PALADIN; break;
+                            case CLASS_HUNTER: family = SPELLFAMILY_HUNTER; break;
+                            case CLASS_ROGUE: family = SPELLFAMILY_ROGUE; break;
+                            case CLASS_PRIEST: family = SPELLFAMILY_PRIEST; break;
+#ifdef MANGOSBOT_TWO
+                            case CLASS_DEATH_KNIGHT: family = SPELLFAMILY_DEATHKNIGHT; break;
+#endif
+                            case CLASS_SHAMAN: family = SPELLFAMILY_SHAMAN; break;
+                            case CLASS_MAGE: family = SPELLFAMILY_MAGE; break;
+                            case CLASS_WARLOCK: family = SPELLFAMILY_WARLOCK; break;
+                            case CLASS_DRUID: family = SPELLFAMILY_DRUID; break;
+                            default: break;
+                        }
+                        if (family)
+                            for (uint32 spellId : ItemUsageValue::SpellsUsingItem(proto->ItemId, bot))
+                            {
+                                SpellEntry const* spell = sServerFacade.LookupSpellInfo(spellId);
+                                if (spell && spell->SpellFamilyName == family)
+                                {
+                                    isClassReagent = true;
+                                    break;
+                                }
+                            }
+                    }
+                    if (!isFoodOrDrink && !isAmmo && !isClassReagent)
+                        continue;
+
+                    uint32 reserve = isAmmo ? 200 : (isClassReagent ? 20 : 20);
+                    if (AI_VALUE2(uint32, "item count", std::to_string(tItem->item)) >= reserve)
+                        continue;
+                }
+
                 // reputation discount 
                 uint32 price = uint32(floor(proto->BuyPrice * bot->GetReputationPriceDiscount(pCreature)));
 
@@ -93,9 +156,21 @@ bool BuyAction::Execute(Event& event)
                 }
 #endif
 
-                for (uint32 n = 0; n < 10; ++n) //Buy 10 times or until no longer usefull/possible 
+                for (uint32 n = 0; n < (maintenance ? 200 : 10); ++n) //Bounded; maintenance re-checks its reserve below.
                 {
                     ItemUsage usage = AI_VALUE2(ItemUsage, "item usage", tItem->item);
+
+                    if (maintenance)
+                    {
+                        bool isAmmo = usage == ItemUsage::ITEM_USAGE_AMMO;
+                        if (usage == ItemUsage::ITEM_USAGE_QUEST)
+                            break;
+                        uint32 reserve = isAmmo ? 200 : 20;
+                        uint32 currentCount = bot->GetItemCount(tItem->item, true);
+                        uint32 buyCount = proto->BuyCount ? proto->BuyCount : 1;
+                        if (currentCount >= reserve || buyCount > reserve - currentCount)
+                            break;
+                    }
 
                     uint32 moneyKey = 0;
                     bool usageAllowed = true;
@@ -121,6 +196,8 @@ bool BuyAction::Execute(Event& event)
                     RESET_AI_VALUE2(uint32, "free money for", moneyKey);
                     uint32 money = AI_VALUE2(uint32, "free money for", moneyKey);
                     if (price > money)
+                        break;
+                    if (maintenance && (price > MAX_MAINTENANCE_SPEND || maintenanceSpent > MAX_MAINTENANCE_SPEND - price))
                         break;
 
 #ifndef MANGOSBOT_ZERO
@@ -150,11 +227,11 @@ bool BuyAction::Execute(Event& event)
                     }
 #endif
 
-                    if (usage == ItemUsage::ITEM_USAGE_USE && ItemUsageValue::CurrentStacks(ai, proto) >= 1)
+                    if (!maintenance && usage == ItemUsage::ITEM_USAGE_USE && ItemUsageValue::CurrentStacks(ai, proto) >= 1)
                         break;
 
                     // Stop buying reagents/recipes once we have 1 stack
-                    if (usage == ItemUsage::ITEM_USAGE_SKILL && ItemUsageValue::CurrentStacks(ai, proto) >= 1)
+                    if (!maintenance && usage == ItemUsage::ITEM_USAGE_SKILL && ItemUsageValue::CurrentStacks(ai, proto) >= 1)
                         break;
 
                     bool didBuy = false;
@@ -163,6 +240,8 @@ bool BuyAction::Execute(Event& event)
                         didBuy = BuyItem(requester, vItems, vendorguid, proto, bought, usage);
 
                     result |= didBuy;
+                    if (maintenance && didBuy)
+                        maintenanceSpent += price;
                     if (!didBuy)
                         break;
 
@@ -180,7 +259,7 @@ bool BuyAction::Execute(Event& event)
             }
 
             // Exception for crafting bots with guild order - Buy profession reagents from vendor first for more efficient crafting.
-            if (AI_VALUE(bool, "needs profession reagents"))
+            if (!maintenance && AI_VALUE(bool, "needs profession reagents"))
             {
                 std::vector<uint32> missingReagents = NeedsProfessionReagentsValue::GetMissingReagents(ai);
 

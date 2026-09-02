@@ -3,6 +3,7 @@
 
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/strategy/values/ItemUsageValue.h"
+#include "playerbot/strategy/CooperativeObjectPolicy.h"
 
 using namespace ai;
 
@@ -24,15 +25,19 @@ bool MasterGossipMaintenanceAction::Execute(Event& event)
         return false;
 
     bool canSell = false;
+    bool canRestock = false;
     bool canRepair = false;
 
     if (bot->GetNPCIfCanInteractWith(npcGuid, UNIT_NPC_FLAG_VENDOR))
+    {
         canSell = AI_VALUE2(uint32, "item count", "usage " + std::to_string((uint8)ItemUsage::ITEM_USAGE_VENDOR)) > 0;
+        canRestock = true;
+    }
 
     if (bot->GetNPCIfCanInteractWith(npcGuid, UNIT_NPC_FLAG_REPAIR))
         canRepair = AI_VALUE(uint8, "durability inventory") < 100;
 
-    if (!canSell && !canRepair)
+    if (!canSell && !canRepair && !canRestock)
         return false;
 
     RememberInteraction(npcGuid);
@@ -42,6 +47,9 @@ bool MasterGossipMaintenanceAction::Execute(Event& event)
     if (canSell)
         didSomething |= ai->DoSpecificAction("sell", Event(getName(), npcGuid), true);
 
+    if (canRestock)
+        didSomething |= ai->DoSpecificAction("buy", Event(getName(), npcGuid, master), true);
+
     if (canRepair)
         didSomething |= ai->DoSpecificAction("repair", Event(getName(), npcGuid), true);
 
@@ -50,12 +58,12 @@ bool MasterGossipMaintenanceAction::Execute(Event& event)
 
 bool MasterGossipMaintenanceAction::isUseful()
 {
-    return sPlayerbotAIConfig.autoMaintenanceOnMasterVendor && ai->HasRealPlayerMaster();
+    return AllowsCooperativeObjectUse(ai) && sPlayerbotAIConfig.autoMaintenanceOnMasterVendor && ai->HasRealPlayerMaster();
 }
 
 bool MasterGossipMaintenanceAction::IsEligibleBot(Player* master) const
 {
-    if (!sPlayerbotAIConfig.autoMaintenanceOnMasterVendor || !master || !ai->HasRealPlayerMaster())
+    if (!AllowsCooperativeObjectUse(ai) || !sPlayerbotAIConfig.autoMaintenanceOnMasterVendor || !master || !ai->HasRealPlayerMaster())
         return false;
 
     if (!bot->IsInWorld() || !master->IsInWorld() || !bot->IsInMap(master) ||

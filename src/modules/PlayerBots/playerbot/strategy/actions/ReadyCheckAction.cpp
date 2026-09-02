@@ -73,8 +73,19 @@ public:
         return true;
     }
 
-    virtual bool PrintAlways() override { return false; }
+    virtual bool PrintAlways() override { return true; }
     virtual std::string GetName() override { return "Far away"; }
+};
+
+class DurabilityChecker : public ReadyChecker
+{
+public:
+    bool Check(Player* requester, PlayerbotAI* ai, AiObjectContext* context) override
+    {
+        return AI_VALUE(uint8, "durability inventory") >= 50;
+    }
+
+    virtual std::string GetName() override { return "Durability"; }
 };
 
 class HunterChecker : public ReadyChecker
@@ -86,29 +97,20 @@ public:
         if (bot->getClass() == CLASS_HUNTER)
         {
             if (!bot->GetUInt32Value(PLAYER_AMMO_ID))
-            {
-                ai->TellError(requester, "Out of ammo!");
                 return false;
-            }
 
             if (!bot->GetPet())
-            {
-                ai->TellError(requester, "No pet!");
                 return false;
-            }
 
             if (bot->GetPet()->GetHappinessState() == UNHAPPY)
-            {
-                ai->TellError(requester, "Pet is unhappy!");
                 return false;
-            }
         }
 
         return true;
     }
 
-    virtual bool PrintAlways() override { return false; }
-    virtual std::string GetName() override { return "Far away"; }
+    virtual bool PrintAlways() override { return true; }
+    virtual std::string GetName() override { return "Hunter supplies"; }
 };
 
 
@@ -167,6 +169,7 @@ bool ReadyCheckAction::ReadyCheck(Player* requester, bool deferForRebuff)
         ReadyChecker::checkers.push_back(new HealthChecker());
         ReadyChecker::checkers.push_back(new ManaChecker());
         ReadyChecker::checkers.push_back(new DistanceChecker());
+        ReadyChecker::checkers.push_back(new DurabilityChecker());
         ReadyChecker::checkers.push_back(new HunterChecker());
 
         ReadyChecker::checkers.push_back(new ItemCountChecker("food", "Food"));
@@ -175,35 +178,42 @@ bool ReadyCheckAction::ReadyCheck(Player* requester, bool deferForRebuff)
         ReadyChecker::checkers.push_back(new ManaPotionChecker("mana potion", "Mpot"));
     }
 
+    bool startedPreparation = false;
+    if (AI_VALUE2(uint8, "health", "self target") <= sPlayerbotAIConfig.almostFullHealth)
+        startedPreparation |= ai->DoSpecificAction("food", Event("ready check", "", requester), true);
+    if (AI_VALUE2(bool, "has mana", "self target") &&
+        AI_VALUE2(uint8, "mana", "self target") <= sPlayerbotAIConfig.mediumHealth)
+        startedPreparation |= ai->DoSpecificAction("drink", Event("ready check", "", requester), true);
+
+    if (startedPreparation && !deferForRebuff && !bot->IsInCombat())
+    {
+        // Reuse the existing deferred reply path. ReadyReplyAction will
+        // re-enter this action after the item-use cooldown and re-evaluate.
+        ai->BeginForceRebuff(true);
+        return true;
+    }
+
     bool result = true;
+    std::vector<std::string> blockers;
     for (std::list<ReadyChecker*>::iterator i = ReadyChecker::checkers.begin(); i != ReadyChecker::checkers.end(); ++i)
     {
         ReadyChecker* checker = *i;
         bool ok = checker->Check(requester, ai, context);
         result = result && ok;
+        if (!ok)
+            blockers.push_back(checker->GetName());
     }
 
     std::ostringstream out;
-
-    uint32 hp = AI_VALUE2(uint32, "item count", "healing potion");
-    out << formatPercent("Hp", hp, 100.0 * hp / 5);
-
-    out << ", ";
-    uint32 food = AI_VALUE2(uint32, "item count", "food");
-    out << formatPercent("Food", food, 100.0 * food / 20);
-
-    if (AI_VALUE2(bool, "has mana", "self target"))
+    if (!blockers.empty())
     {
-        out << ", ";
-        uint32 mp = AI_VALUE2(uint32, "item count", "mana potion");
-        out << formatPercent("Mp", mp, 100.0 * mp / 5);
-
-        out << ", ";
-        uint32 water = AI_VALUE2(uint32, "item count", "water");
-        out << formatPercent("Water", water, 100.0 * water / 20);
+        out << "Not ready: ";
+        for (size_t n = 0; n < blockers.size(); ++n)
+            out << (n ? ", " : "") << blockers[n];
     }
 
-    ai->TellPlayer(requester, out, PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, false);
+    if (!blockers.empty())
+        ai->TellPlayer(requester, out, PlayerbotSecurityLevel::PLAYERBOT_SECURITY_ALLOW_ALL, false);
 
     if (deferForRebuff)
     {
@@ -212,7 +222,10 @@ bool ReadyCheckAction::ReadyCheck(Player* requester, bool deferForRebuff)
     }
 
     WorldPacket packet(MSG_RAID_READY_CHECK);
-    packet << uint8(1);
+    // The server expects the answer, not merely an acknowledgement.  Sending
+    // ready unconditionally made bots report ready while missing supplies or
+    // being out of range.
+    packet << uint8(result ? 1 : 0);
     bot->GetSession()->HandleRaidReadyCheckOpcode(packet);
 
     ai->ChangeStrategy("-ready check", BotState::BOT_STATE_NON_COMBAT);
@@ -251,14 +264,13 @@ bool ReadyReplyAction::Execute(Event& event)
     if (!isUseful())
         return false;
 
-    if (ai->ShouldReplyToReadyCheck())
-    {
-        WorldPacket packet(MSG_RAID_READY_CHECK);
-        packet << uint8(1);
-        bot->GetSession()->HandleRaidReadyCheckOpcode(packet);
-    }
-
+    bool shouldReply = ai->ShouldReplyToReadyCheck();
+    // End the completed rebuff cycle before re-entering ReadyCheck.  The
+    // latter may start a new deferred cycle for food/drink preparation; doing
+    // this afterwards would cancel that newly-created cycle.
     ai->EndForceRebuff();
+    if (shouldReply)
+        ai->DoSpecificAction("ready check finished", Event("ready check", "", ai->GetMaster()), true);
     SetDuration(sPlayerbotAIConfig.globalCoolDown);
     return true;
 }

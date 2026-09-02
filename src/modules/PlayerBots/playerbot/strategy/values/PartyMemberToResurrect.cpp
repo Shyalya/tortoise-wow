@@ -3,6 +3,7 @@
 #include "PartyMemberToResurrect.h"
 
 #include "playerbot/ServerFacade.h"
+#include "GroupCcTargetReservation.h"
 using namespace ai;
 
 class IsTargetOfResurrectSpell : public SpellEntryPredicate
@@ -37,7 +38,14 @@ public:
 				return false;
 		}
 
-        return player && !player->isRessurectRequested() && sServerFacade.GetDistance2d(ai->GetBot(), player) <= ai->GetRange("spell") && sServerFacade.GetDeathState(player) == CORPSE && !value->IsTargetOfSpellCast(player, predicate);
+        if (!player || player->isRessurectRequested() ||
+            sServerFacade.GetDistance2d(ai->GetBot(), player) > ai->GetRange("spell") ||
+            sServerFacade.GetDeathState(player) != CORPSE || value->IsTargetOfSpellCast(player, predicate))
+            return false;
+
+        // Claim in the predicate so FindPartyMember continues its normal
+        // priority ordering when another bot already owns the first corpse.
+        return GroupCcTargetReservation::ClaimResurrection(ai, player);
     }
 
 private:

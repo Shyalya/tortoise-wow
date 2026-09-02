@@ -5070,3 +5070,7 @@ AiPlayerbot.HealDistance = 30
 # The same for battlegrounds, where tighter is better. Previously this was a hard
 # halving of the value above, which tied the two together for no good reason.
 AiPlayerbot.HealDistanceBg = 25
+# Companion autonomy policy: strict, assist (default), or independent. Strict
+# disables automatic summoning, cooperative game-object use, and master-vendor
+# maintenance. Ready-check replies/preparation remain explicit protocol responses.
+AiPlayerbot.CompanionAutonomyPolicy = assist

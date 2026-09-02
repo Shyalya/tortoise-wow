@@ -69,6 +69,41 @@ namespace
     bool hasInactiveSweepMs = false;
     bool inInactiveSweep = false;
 
+    struct CombatClaim
+    {
+        ObjectGuid targetGuid;
+        ObjectGuid ownerGuid;
+        uint32 startMs;
+        uint32 durationMs;
+        uint8 failures;
+        std::string spell;
+        uint32 spellId = 0;
+    };
+    std::unordered_map<uint32, std::vector<CombatClaim>> interruptClaims;
+    std::unordered_map<uint32, std::vector<CombatClaim>> resurrectionClaims;
+    std::unordered_map<uint32, std::vector<CombatClaim>> combatRetries;
+    constexpr uint32 kCombatClaimMs = 1800;
+    constexpr uint32 kResurrectionClaimMs = 15000;
+    constexpr uint32 kCombatBackoffMs = 1800;
+    constexpr uint8 kCombatMaxFailures = 2;
+
+    void PruneCombatMap(std::unordered_map<uint32, std::vector<CombatClaim>>& map)
+    {
+        uint32 now = WorldTimer::getMSTime();
+        for (std::unordered_map<uint32, std::vector<CombatClaim>>::iterator group = map.begin(); group != map.end();)
+        {
+            for (std::vector<CombatClaim>::iterator it = group->second.begin(); it != group->second.end();)
+                if (WorldTimer::getMSTimeDiff(it->startMs, now) >= it->durationMs)
+                    it = group->second.erase(it);
+                else
+                    ++it;
+            if (group->second.empty())
+                group = map.erase(group);
+            else
+                ++group;
+        }
+    }
+
     bool IsTimedOut(uint32 startMs, uint32 durationMs)
     {
         return WorldTimer::getMSTimeDiff(startMs, WorldTimer::getMSTime()) >= durationMs;
@@ -261,6 +296,10 @@ namespace
                 ++it;
         }
 
+        PruneCombatMap(interruptClaims);
+        PruneCombatMap(resurrectionClaims);
+        PruneCombatMap(combatRetries);
+
         inInactiveSweep = false;
     }
 
@@ -336,6 +375,144 @@ namespace
 
         return nullptr;
     }
+}
+
+namespace
+{
+    bool ClaimCombat(std::unordered_map<uint32, std::vector<CombatClaim>>& claimsByGroup,
+                     PlayerbotAI* ai, Unit* target, bool allowDead, std::string const& spell, uint32 duration, uint32 hostileSpellId)
+    {
+        // A resurrection claim is naturally completed when the corpse is no
+        // longer dead.  Drop the owner lease before selecting another corpse.
+        if (allowDead && target && target->IsAlive())
+        {
+            Player* bot = ai ? ai->GetBot() : nullptr;
+            uint32 groupId = GetGroupId(bot);
+            if (groupId)
+            {
+                std::vector<CombatClaim>& claims = claimsByGroup[groupId];
+                for (std::vector<CombatClaim>::iterator it = claims.begin(); it != claims.end();)
+                    if (it->targetGuid == target->GetObjectGuid())
+                        it = claims.erase(it);
+                    else
+                        ++it;
+            }
+            return false;
+        }
+        if (!ai || !target || (!allowDead && !target->IsAlive()))
+            return false;
+        Player* bot = ai->GetBot();
+        uint32 groupId = GetGroupId(bot);
+        if (!bot || !groupId)
+            return true; // solo/manual behavior is unchanged
+        MaybeSweepInactiveGroups();
+        PruneCombatMap(combatRetries);
+        uint32 now = WorldTimer::getMSTime();
+        std::vector<CombatClaim>& claims = claimsByGroup[groupId];
+        for (std::vector<CombatClaim>::iterator it = claims.begin(); it != claims.end();)
+        {
+            if (WorldTimer::getMSTimeDiff(it->startMs, now) >= it->durationMs)
+                it = claims.erase(it);
+            else
+                ++it;
+        }
+        for (std::vector<CombatClaim>::iterator it = claims.begin(); it != claims.end();)
+            if (!spell.empty() && it->targetGuid == target->GetObjectGuid() && it->spellId != hostileSpellId)
+                it = claims.erase(it);
+            else
+                ++it;
+        for (CombatClaim const& claim : claims)
+            if (claim.targetGuid == target->GetObjectGuid() && claim.ownerGuid != bot->GetObjectGuid())
+                return false;
+        std::vector<CombatClaim>& retries = combatRetries[groupId];
+        for (CombatClaim const& retry : retries)
+            if (retry.targetGuid == target->GetObjectGuid() && retry.ownerGuid == bot->GetObjectGuid() &&
+                retry.spell == spell)
+                return false;
+        for (CombatClaim const& claim : claims)
+            if (claim.targetGuid == target->GetObjectGuid() && claim.ownerGuid == bot->GetObjectGuid())
+                return claim.spell == spell;
+        CombatClaim claim;
+        claim.targetGuid = target->GetObjectGuid();
+        claim.ownerGuid = bot->GetObjectGuid();
+        claim.startMs = now;
+        claim.durationMs = duration;
+        claim.failures = 0;
+        claim.spell = spell;
+        claim.spellId = hostileSpellId;
+        claims.push_back(claim);
+        return true;
+    }
+
+    void RecordCombat(std::unordered_map<uint32, std::vector<CombatClaim>>& claimsByGroup,
+                      Player* bot, Unit* target, std::string const& spell, bool castStarted)
+    {
+        if (!bot || !target || !bot->GetGroup())
+            return;
+        uint32 groupId = bot->GetGroup()->GetId();
+        std::vector<CombatClaim>& claims = claimsByGroup[groupId];
+        for (std::vector<CombatClaim>::iterator it = claims.begin(); it != claims.end(); ++it)
+        {
+            bool sameInterruptCast = true;
+            if (!spell.empty() && !castStarted && it->spellId)
+            {
+                Spell* current = target->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+                if (!current)
+                    current = target->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+                sameInterruptCast = current && current->m_spellInfo && current->m_spellInfo->Id == it->spellId;
+            }
+            if (it->targetGuid != target->GetObjectGuid() || it->ownerGuid != bot->GetObjectGuid() ||
+                (!spell.empty() && (it->spell != spell || !sameInterruptCast)))
+                continue;
+            if (castStarted)
+            {
+                // Keep the owner lease briefly after a successful reactive
+                // cast so another bot cannot duplicate it in the same tick.
+                it->startMs = WorldTimer::getMSTime();
+                it->durationMs = spell.empty() ? kResurrectionClaimMs : kCombatClaimMs;
+            }
+            else
+            {
+                CombatClaim retry = *it;
+                ++retry.failures;
+                retry.startMs = WorldTimer::getMSTime();
+                retry.durationMs = kCombatBackoffMs * (retry.failures >= kCombatMaxFailures ? 2 : 1);
+                combatRetries[groupId].push_back(retry);
+                claims.erase(it);
+            }
+            return;
+        }
+    }
+}
+
+bool GroupCcTargetReservation::ClaimInterrupt(PlayerbotAI* ai, Unit* target, std::string const& spell)
+{
+    // Re-check at claim time: triggers can be evaluated from stale cached
+    // state, while movement or another cast may have made this interrupt
+    // unusable.  CanCastSpell covers range, resource and cooldown readiness.
+    if (!ai || spell.empty() || !ai->CanCastSpell(spell, target, true, nullptr, false, true))
+        return false;
+    Spell* hostile = target->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+    if (!hostile)
+        hostile = target->GetCurrentSpell(CURRENT_CHANNELED_SPELL);
+    if (!hostile || !hostile->m_spellInfo || hostile->GetCastedTime() < 400)
+        return false;
+    return ClaimCombat(interruptClaims, ai, target, false, spell, kCombatClaimMs, hostile->m_spellInfo->Id);
+}
+
+void GroupCcTargetReservation::RecordInterrupt(Player* bot, Unit* target, std::string const& spell, bool castStarted)
+{
+    RecordCombat(interruptClaims, bot, target, spell, castStarted);
+}
+
+bool GroupCcTargetReservation::ClaimResurrection(PlayerbotAI* ai, Unit* target)
+{
+    return ClaimCombat(resurrectionClaims, ai, target, true, std::string(), kResurrectionClaimMs, 0);
+}
+
+void GroupCcTargetReservation::RecordResurrection(Player* bot, Unit* target, bool castStarted)
+{
+    RecordCombat(resurrectionClaims, bot, target, std::string(), castStarted);
 }
 
 bool GroupCcTargetReservation::IsClaimedByOther(Player* bot, ObjectGuid targetGuid)

@@ -64,7 +64,8 @@ void WorldPacketHandlerStrategy::InitNonCombatTriggers(std::list<TriggerNode*> &
         "use game object",
         NextAction::array(0,
             new NextAction("add loot", relevance),
-            new NextAction("use meeting stone", relevance), NULL)));
+            new NextAction("use meeting stone", relevance),
+            new NextAction("use cooperative game object", relevance), NULL)));
 
     triggers.push_back(new TriggerNode(
         "gossip hello",

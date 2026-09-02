@@ -23,6 +23,7 @@
 #include "NaxxramasDungeonTriggers.h"
 #include "GlyphTriggers.h"
 #include "WorldBuffTravelTriggers.h"
+#include "CooperativeGameObjectTrigger.h"
 
 #ifdef GenerateBotTests
 #include "../tests/TestTriggers.h"
@@ -41,6 +42,7 @@ namespace ai
             creators["return to pull position"] = [](PlayerbotAI* ai) { return new ReturnToPullPositionTrigger(ai); };
             creators["collision"] = [](PlayerbotAI* ai) { return new CollisionTrigger(ai); };
             creators["assist summoning ritual"] = [](PlayerbotAI* ai) { return new AssistSummoningRitualTrigger(ai); };
+            creators["cooperative game object"] = [](PlayerbotAI* ai) { return new CooperativeGameObjectTrigger(ai); };
 
             creators["timer"] = [](PlayerbotAI* ai) { return new TimerTrigger(ai); };
             creators["random"] = [](PlayerbotAI* ai) { return new RandomTrigger(ai, "random", 20); };

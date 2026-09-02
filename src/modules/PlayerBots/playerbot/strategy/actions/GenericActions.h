@@ -4,6 +4,7 @@
 #include "ChooseTargetActions.h"
 #include "MovementActions.h"
 #include "RemoveAuraAction.h"
+#include "playerbot/strategy/CooperativeObjectPolicy.h"
 
 namespace ai
 {
@@ -102,11 +103,13 @@ namespace ai
 
         bool isUseful() override
         {
-            return FindNearbySummoningRitual();
+            return AllowsCooperativeObjectUse(ai) && FindNearbySummoningRitual();
         }
 
         bool Execute(Event& event) override
         {
+            if (!AllowsCooperativeObjectUse(ai))
+                return false;
             GameObject* go = FindNearbySummoningRitual();
             if (!go)
                 return false;
