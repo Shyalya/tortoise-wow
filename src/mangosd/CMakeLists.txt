@@ -140,6 +140,18 @@ if(BUILD_DUNGEON_CLEAR)
   endif()
 endif()
 
+if(BUILD_GROUP_QUEST_LOOT)
+  # Static-lib constructors (module auto-registration) must not be stripped.
+  if(MSVC)
+    target_link_libraries(${EXECUTABLE_NAME} groupquestloot)
+    target_link_options(${EXECUTABLE_NAME} PRIVATE "/WHOLEARCHIVE:$<TARGET_FILE:groupquestloot>")
+  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_link_libraries(${EXECUTABLE_NAME} -Wl,--whole-archive groupquestloot -Wl,--no-whole-archive)
+  else()
+    target_link_libraries(${EXECUTABLE_NAME} groupquestloot)
+  endif()
+endif()
+
 target_link_libraries(${EXECUTABLE_NAME}
     libdeflate
 )

@@ -128,6 +128,9 @@ struct LootStoreItem
     bool AllowedForTeam(Loot const& loot) const;               // Checks item group compatibility
 };
 
+using QuestLootSharingPolicy = bool (*)(LootStoreItem const&);
+void RegisterQuestLootSharingPolicy(QuestLootSharingPolicy policy);
+
 typedef std::set<uint32> AllowedLooterSet;
 
 // bot uses lootItemType field. Stub default 0 = NORMAL.
@@ -296,7 +299,7 @@ struct Loot
     bool m_personal;
     LootItemList items;
     uint32 gold;
-    uint8 unlootedCount;
+    uint32 unlootedCount;
     ObjectGuid groupLeaderGuid;
     uint64 roundRobinPlayer;
     LootType loot_type;                                     // required for for proper item loot finish (store internal loot types in different from 3.x version, in fact this meaning that it send same loot types for interesting cases like 3.x version code, skip pre-3.x client loot type limitaitons)

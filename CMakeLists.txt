@@ -53,6 +53,8 @@ option(ALLOW_TURTLE_ADDONS "Allow Turtle addons" ON)
 option(BUILD_PLAYERBOTS "Build the cmangos/playerbots subsystem" OFF)
 # Autonomous dungeon-clear AI for playerbots (requires BUILD_PLAYERBOTS).
 option(BUILD_DUNGEON_CLEAR "Build the DungeonClear playerbots extension module" OFF)
+# Share quest-only and quest-starting loot with eligible group members.
+option(BUILD_GROUP_QUEST_LOOT "Build the GroupQuestLoot core extension module" OFF)
 
 
 if(UNIX)
@@ -698,6 +700,12 @@ if (BUILD_DUNGEON_CLEAR)
     endif()
     message(STATUS "BUILD_DUNGEON_CLEAR=ON - adding DungeonClear module at src/modules/DungeonClear/")
     add_subdirectory(src/modules/DungeonClear)
+endif()
+
+# GroupQuestLoot — optional quest-loot sharing policy for group loot.
+if (BUILD_GROUP_QUEST_LOOT)
+    message(STATUS "BUILD_GROUP_QUEST_LOOT=ON - adding GroupQuestLoot module at src/modules/GroupQuestLoot/")
+    add_subdirectory(src/modules/GroupQuestLoot)
 endif()
 
 if (USE_EXTRACTORS OR USE_REALMMERGE)

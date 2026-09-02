@@ -41,6 +41,26 @@ static eConfigFloatValues const qualityToRate[MAX_ITEM_QUALITY] =
     CONFIG_FLOAT_RATE_DROP_ITEM_ARTIFACT,                                // ITEM_QUALITY_ARTIFACT
 };
 
+namespace
+{
+    QuestLootSharingPolicy& QuestLootSharingPolicyStorage()
+    {
+        static QuestLootSharingPolicy policy = nullptr;
+        return policy;
+    }
+
+    bool ShouldUseQuestLootSharingPolicy(LootStoreItem const& item)
+    {
+        QuestLootSharingPolicy policy = QuestLootSharingPolicyStorage();
+        return policy && policy(item);
+    }
+}
+
+void RegisterQuestLootSharingPolicy(QuestLootSharingPolicy policy)
+{
+    QuestLootSharingPolicyStorage() = policy;
+}
+
 LootStore LootTemplates_Creature(     "creature_loot_template",      "creature entry",                     true);
 LootStore LootTemplates_Disenchant(   "disenchant_loot_template",    "item disenchant id",                 true);
 LootStore LootTemplates_Fishing(      "fishing_loot_template",       "area id",                            true);
@@ -372,7 +392,7 @@ LootItem::LootItem(LootStoreItem const& li)
     conditionId = li.conditionId;
 
     ItemPrototype const* proto = sObjectMgr.GetItemPrototype(itemid);
-    freeforall  = proto && (proto->Flags & ITEM_FLAG_PARTY_LOOT);
+    freeforall  = (proto && (proto->Flags & ITEM_FLAG_PARTY_LOOT)) || ShouldUseQuestLootSharingPolicy(li);
 
     needs_quest = li.needs_quest;
 
@@ -500,16 +520,14 @@ void Loot::AddItem(LootStoreItem const & item)
     }
     else if (items.size() < MAX_NR_LOOT_ITEMS)              // Non-quest drop
     {
-        items.push_back(LootItem(item));
+        LootItem lootItem(item);
+        items.push_back(lootItem);
 
         // non-conditional one-player only items are counted here,
         // free for all items are counted in FillFFALoot(),
         // non-ffa conditionals are counted in FillNonQuestNonFFAConditionalLoot()
-        if (!item.conditionId)
-        {
-            if (!proto || !(proto->Flags & ITEM_FLAG_PARTY_LOOT))
-                ++unlootedCount;
-        }
+        if (!item.conditionId && !lootItem.freeforall)
+            ++unlootedCount;
     }
 }
 
