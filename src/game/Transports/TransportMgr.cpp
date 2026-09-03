@@ -83,7 +83,13 @@ void TransportMgr::LoadTransportTemplates()
         // paths are generated per template, saves us from generating it again in case of instanced transports
         TransportTemplate& transport = _transportTemplates[entry];
         transport.entry = entry;
-        GeneratePath(goInfo, &transport);
+        if (!GeneratePath(goInfo, &transport))
+        {
+            sLog.outErrorDb("Transport %u (name: %s, path: %u) produced an unusable movement path and was skipped.",
+                entry, goInfo->name.c_str(), goInfo->moTransport.taxiPathId);
+            _transportTemplates.erase(entry);
+            continue;
+        }
         MMAP::MMapFactory::createOrGetMMapManager()->loadGameObject(goInfo->displayId);
 
         // transports in instance are only on one map
@@ -114,13 +120,30 @@ public:
     Movement::PointsArray& _points;
 };
 
-void TransportMgr::GeneratePath(GameObjectInfo const* goInfo, TransportTemplate* transport)
+bool TransportMgr::GeneratePath(GameObjectInfo const* goInfo, TransportTemplate* transport)
 {
     uint32 pathId = goInfo->moTransport.taxiPathId;
     TaxiPathNodeList const& path = sTaxiPathNodesByPath[pathId];
     std::vector<KeyFrame>& keyFrames = transport->keyFrames;
     Movement::PointsArray splinePath, allPoints;
     bool mapChange = false;
+
+    if (path.size() < 3)
+    {
+        sLog.outErrorDb("Transport %u path %u has only %u node(s); at least 3 are required.",
+            goInfo->id, pathId, uint32(path.size()));
+        return false;
+    }
+
+    const float speed = float(goInfo->moTransport.moveSpeed);
+    const float accel = float(goInfo->moTransport.accelRate);
+    if (!std::isfinite(speed) || !std::isfinite(accel) || speed <= 0.0f || accel <= 0.0f)
+    {
+        sLog.outErrorDb("Transport %u path %u has invalid speed/acceleration (%f/%f).",
+            goInfo->id, pathId, speed, accel);
+        return false;
+    }
+
     for (size_t i = 0; i < path.size(); ++i)
         allPoints.push_back(G3D::Vector3(path[i].x, path[i].y, path[i].z));
 
@@ -141,6 +164,12 @@ void TransportMgr::GeneratePath(GameObjectInfo const* goInfo, TransportTemplate*
             TaxiPathNodeEntry const& node_i = path[i];
             if (i != path.size() - 1 && (node_i.actionFlag & 1 || node_i.mapid != path[i + 1].mapid))
             {
+                if (keyFrames.empty())
+                {
+                    sLog.outErrorDb("Transport %u path %u starts with an invalid teleport/map transition at node %u.",
+                        goInfo->id, pathId, node_i.index);
+                    return false;
+                }
                 keyFrames.back().Teleport = true;
                 mapChange = true;
             }
@@ -160,23 +189,43 @@ void TransportMgr::GeneratePath(GameObjectInfo const* goInfo, TransportTemplate*
             mapChange = false;
     }
 
-    ASSERT(!keyFrames.empty());
+    if (keyFrames.size() < 2 || splinePath.size() < 2 || transport->mapsUsed.empty())
+    {
+        sLog.outErrorDb("Transport %u path %u generated only %u usable key frame(s).",
+            goInfo->id, pathId, uint32(keyFrames.size()));
+        return false;
+    }
 
     if (transport->mapsUsed.size() > 1)
     {
         for (const auto itr : transport->mapsUsed)
-            ASSERT(!sMapStorage.LookupEntry<MapEntry>(itr)->Instanceable());
+        {
+            MapEntry const* mapEntry = sMapStorage.LookupEntry<MapEntry>(itr);
+            if (!mapEntry || mapEntry->Instanceable())
+            {
+                sLog.outErrorDb("Transport %u path %u references invalid/instance map %u in a continent route.",
+                    goInfo->id, pathId, itr);
+                return false;
+            }
+        }
 
         transport->inInstance = false;
     }
     else
-        transport->inInstance = sMapStorage.LookupEntry<MapEntry>(*transport->mapsUsed.begin())->Instanceable();
+    {
+        MapEntry const* mapEntry = sMapStorage.LookupEntry<MapEntry>(*transport->mapsUsed.begin());
+        if (!mapEntry)
+        {
+            sLog.outErrorDb("Transport %u path %u references missing map %u.",
+                goInfo->id, pathId, *transport->mapsUsed.begin());
+            return false;
+        }
+        transport->inInstance = mapEntry->Instanceable();
+    }
 
     // last to first is always "teleport", even for closed paths
     keyFrames.back().Teleport = true;
 
-    const float speed = float(goInfo->moTransport.moveSpeed);
-    const float accel = float(goInfo->moTransport.accelRate);
     const float accel_dist = 0.5f * speed * speed / accel;
 
     transport->accelTime = speed / accel;
@@ -330,17 +379,42 @@ void TransportMgr::GeneratePath(GameObjectInfo const* goInfo, TransportTemplate*
     }
 
     keyFrames.back().NextArriveTime = keyFrames.back().DepartureTime;
-    // the client destroys a transport by itself after a while, refresh is needed mid course
-    // Feathermoon 303 & Teldrassil 293 ferries
-    if (pathId == 303 || pathId == 293)
-        keyFrames[12].Update = true;
-    // hack for custom boats:
-    if ((pathId == 1500))
+    // The Vanilla client destroys these ferries by itself after a while, so a
+    // create refresh is needed mid-course. 117/122 are the released 1.18 DBC
+    // ids; 293/303 were obsolete development ids retained by the base dump.
+    if (pathId == 117 || pathId == 122 || pathId == 293 || pathId == 303)
     {
-        keyFrames[6].InitialOrientation = 2.3F;
-        keyFrames[13].InitialOrientation = 2.2F;
+        if (keyFrames.size() > 12)
+            keyFrames[12].Update = true;
+        else
+            sLog.outErrorDb("Transport %u path %u is missing the refresh key frame expected at index 12.", goInfo->id, pathId);
+    }
+    // Sparkwater Port <-> Revantusk Village custom ship. 296 is the released
+    // DBC path; 1500 was its obsolete development id.
+    if (pathId == 296 || pathId == 1500)
+    {
+        if (keyFrames.size() > 13)
+        {
+            keyFrames[6].InitialOrientation = 2.3F;
+            keyFrames[13].InitialOrientation = 2.2F;
+        }
+        else
+            sLog.outErrorDb("Transport %u path %u cannot apply its custom orientation fix: only %u key frames.",
+                goInfo->id, pathId, uint32(keyFrames.size()));
     }
     transport->pathTime = keyFrames.back().DepartureTime;
+
+    if (transport->pathTime < IN_MILLISECONDS)
+    {
+        sLog.outErrorDb("Transport %u path %u generated an invalid period of %u ms.",
+            goInfo->id, pathId, transport->pathTime);
+        return false;
+    }
+
+    sLog.outString("Transport %u (%s): path %u, %u key frames, %u map(s), period %u ms.",
+        goInfo->id, goInfo->name.c_str(), pathId, uint32(keyFrames.size()),
+        uint32(transport->mapsUsed.size()), transport->pathTime);
+    return true;
 }
 
 Transport* TransportMgr::CreateTransport(uint32 entry, uint32 guid /*= 0*/)

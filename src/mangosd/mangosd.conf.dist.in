@@ -455,7 +455,7 @@ LogTimestamp = 1
 
 # LogFileLevel. Server file level of logging. 0 = Minimum; 1 = Error; 2 = Detail; 3 = Full/Debug
 
-LogFileLevel = 1
+LogFileLevel = 0
 
 # HonorLogFile. HonorLogFile name.
 
@@ -480,16 +480,16 @@ LogFilter_CreatureMoves = 1
 LogFilter_VisibilityChanges = 1
 LogFilter_DbStrictedCheck = 1
 LogFilter_Honor = 1
-LogFilter_PlayerStats = 0
-LogFilter_SQLText = 0
-LogFilter_PlayerMoves = 0
-LogFilter_PeriodicAffects = 0
-LogFilter_AIAndMovegens = 0
-LogFilter_Damage = 0
-LogFilter_Combat = 0
-LogFilter_SpellCast = 0
-LogFilter_Pathfinding = 0
-LogFilter_Weather = 0
+LogFilter_PlayerStats = 1
+LogFilter_SQLText = 1
+LogFilter_PlayerMoves = 1
+LogFilter_PeriodicAffects = 1
+LogFilter_AIAndMovegens = 1
+LogFilter_Damage = 1
+LogFilter_Combat = 1
+LogFilter_SpellCast = 1
+LogFilter_Pathfinding = 1
+LogFilter_Weather = 1
 
 # AnticheatLogFile. Log file for anticheat check results.
 
@@ -1753,8 +1753,11 @@ Rate.Drop.Item.Referenced = 1
 Rate.Drop.Money = 1
 
 # Rate.XP. XP rates (player's favorite, haha)
+# Kill applies to all kill XP. Kill.Elite is an additional multiplier for
+# elite creatures and is applied before Kill.
 
 Rate.XP.Kill = 1
+Rate.XP.Kill.Elite = 1
 Rate.XP.Quest = 1
 Rate.XP.Explore = 1
 

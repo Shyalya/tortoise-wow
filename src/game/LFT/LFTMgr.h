@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "Common.h"
+#include "ObjectGuid.h"
 
 class Group;
 class Player;

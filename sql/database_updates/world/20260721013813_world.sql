@@ -2,8 +2,23 @@
 -- FILE: add_spell_template_script_name.sql
 -- GENERATED: 20260721013813
 -- ==============================================
-ALTER TABLE `spell_template`
-    ADD COLUMN `script_name` VARCHAR(64) NOT NULL DEFAULT '' AFTER `customFlags`;
+-- The current base dump and some manually updated installations already have
+-- this column. Keep the migration replayable for both database states.
+SET @add_spell_script_name = (
+    SELECT IF(
+        EXISTS(
+            SELECT 1 FROM `information_schema`.`COLUMNS`
+            WHERE `TABLE_SCHEMA` = DATABASE()
+              AND `TABLE_NAME` = 'spell_template'
+              AND `COLUMN_NAME` = 'script_name'
+        ),
+        'DO 0',
+        'ALTER TABLE `spell_template` ADD COLUMN `script_name` VARCHAR(64) NOT NULL DEFAULT '''' AFTER `customFlags`'
+    )
+);
+PREPARE add_spell_script_name_stmt FROM @add_spell_script_name;
+EXECUTE add_spell_script_name_stmt;
+DEALLOCATE PREPARE add_spell_script_name_stmt;
 
 -- ==============================================
 -- FILE: spell_script_assignment.sql

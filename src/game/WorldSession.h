@@ -421,7 +421,7 @@ class WorldSession
 
         void QueuePacket(WorldPacket* new_packet);
         // bot wraps packets in unique_ptr.
-        void QueuePacket(std::unique_ptr<WorldPacket> new_packet) { QueuePacket(new_packet.release()); }
+        void QueuePacket(std::unique_ptr<WorldPacket> new_packet);
         // Const-reference overload (bot sometimes constructs an inline WorldPacket).
         // Copies into a fresh heap WorldPacket so QueuePacket(WorldPacket*) — which
         // takes ownership and may delete on the unknown-opcode path — never sees

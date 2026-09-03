@@ -2296,10 +2296,13 @@ void LoadPlayerEggLoot();
     sScriptMgr.LoadGenericScripts();
     sLog.outString("Loading creature EventAI scripts...");
     sScriptMgr.LoadCreatureEventAIScripts();
-    sScriptMgr.CheckAllScriptTexts();
     sLog.outString("Loading creature EventAI events...");
     sEventAIMgr.LoadCreatureEventAI_Events();
     sScriptMgr.Initialize();
+    // ScriptMgr::Initialize() loads script_texts. Validate database-script text
+    // references only after that data is available, otherwise every negative
+    // ScriptDev2/Turtle text id is reported as missing during startup.
+    sScriptMgr.CheckAllScriptTexts();
     ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_LOAD_CUSTOM_DATABASE_TABLE, [](WorldScript* script)
     {
         script->OnLoadCustomDatabaseTable();
@@ -4009,7 +4012,12 @@ void World::LoadAccountData()
         ++count;
     } while (result->NextRow());
 
-    result.reset(LoginDatabase.PQuery("SELECT account, extendedHash FROM system_fingerprint_usage GROUP BY account ORDER BY time DESC"));
+    // Pick the most recent fingerprint for each account without relying on
+    // MySQL's non-deterministic GROUP BY extension. Production servers that
+    // enable ONLY_FULL_GROUP_BY otherwise reject the old query at startup.
+    result.reset(LoginDatabase.PQuery(
+        "SELECT account, SUBSTRING_INDEX(GROUP_CONCAT(extendedHash ORDER BY `time` DESC, id DESC), ',', 1) "
+        "FROM system_fingerprint_usage GROUP BY account"));
     if (result)
     {
         do

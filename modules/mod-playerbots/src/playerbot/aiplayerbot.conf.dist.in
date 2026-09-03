@@ -74,7 +74,7 @@ AiPlayerbot.RandomBotAccountCount = 500
 # This will ingore the AiPlayerbot.botActiveAlone setting, all bots will be active regardless
 # Works best together with AiPlayerbot.DisableBotOptimizations = 1
 # (0-1), default 0
-AiPlayerbot.DisableActivityPriorities = 1
+AiPlayerbot.DisableActivityPriorities = 0
 
 # Force bots to become active when a player is nearby
 #AiPlayerbot.ForceActiveWhenNearPlayer = 0
@@ -86,7 +86,7 @@ AiPlayerbot.DisableActivityPriorities = 1
 #AiPlayerbot.LimitCombatActivity = 0
 
 # Percentage of fully active bots. Default is 10, higher numbers may affect performance
-# AiPlayerbot.botActiveAlone = 10
+AiPlayerbot.botActiveAlone = 10
 
 # Limit random bot max level to online players max level + 5 and uses reference level 1 without a player.
 # AiPlayerbot.SyncLevelWithPlayers = 0
@@ -133,7 +133,7 @@ AiPlayerbot.RandomGearMaxLevel = 500
 AiPlayerbot.RandomGearMaxDiff = 9
 
 # Regularly upgrade bots equipment for their level
-AiPlayerbot.RandomGearUpgradeEnabled = 1
+AiPlayerbot.RandomGearUpgradeEnabled = 0
 
 # Enable random tabards on randomisation
 AiPlayerbot.RandomGearTabards = 0
@@ -160,7 +160,7 @@ AiPlayerbot.RollBadItemsWithPlayer = 0
 AiPlayerbot.RandomBotMaxLevelChance = 0.15
 
 # Chance bot chooses RPG (Teleport to random camp for their level) instead of grinding
-AiPlayerbot.RandomBotRpgChance = 0.8
+AiPlayerbot.RandomBotRpgChance = 0.20
 
 # Random bots teleport to zones around real player if level is appropriate
 # AiPlayerbot.RandomBotTeleportNearPlayer = 0
@@ -264,7 +264,7 @@ AiPlayerbot.RandomBotQuestIds = 7848,3802,5505,6502,7761,9378
 # AiPlayerbot.RandomBotFormGuild = 1
 
 # Bots will chat in say/guild when they invite other bots to groups/raids/guilds
-AiPlayerbot.InviteChat = 1
+AiPlayerbot.InviteChat = 0
 
 # Enable per-bot action log files (logs/bots/<botname>_acc<id>_<timestamp>.log)
 # and "[BOT]" prefixed structured log lines in the server log. Useful for
@@ -392,10 +392,10 @@ AiPlayerbot.ToxicLinksRepliesChance = 30
 # Chance to reply to thunderfury with thunderfury (0-100)
 AiPlayerbot.ThunderfuryRepliesChance = 40
 # Bots will chat in guild about certain events (int) (0-100)
-AiPlayerbot.GuildRepliesRate = 100         # Reply someone saying something.
+AiPlayerbot.GuildRepliesRate = 10          # Reply someone saying something.
 
 # Bots without a master will say things they normally tell their master.
-AiPlayerbot.RandomBotSayWithoutMaster = 1
+AiPlayerbot.RandomBotSayWithoutMaster = 0
 
 # Minimum level at which bots will start accepting duels
 # AiPlayerbot.BotAcceptDuelMinimumLevel = 10
@@ -956,7 +956,7 @@ AiPlayerbot.PremadeSpecLink.11.2.60 = 5002012--5050013355213521
 #AiPlayerbot.CommandPrefix =
 
 # Max AI iterations per tick
-#AiPlayerbot.IterationsPerTick = 10
+AiPlayerbot.IterationsPerTick = 10
 
 # Allow/deny bots from your guild
 AiPlayerbot.AllowGuildBots = 1
@@ -971,7 +971,7 @@ AiPlayerbot.GlobalCooldown = 1500
 #AiPlayerbot.MaxWaitForMove = 5000
 
 # Delay between two bot actions (default 100)
-AiPlayerbot.ReactDelay = 100
+AiPlayerbot.ReactDelay = 500
 
 # Inactivity delay
 AiPlayerbot.PassiveDelay = 10000
@@ -1068,7 +1068,7 @@ AiPlayerbot.NonCombatStrategies = +grind,+loot,+custom::say,+return,+delayed rol
 #AiPlayerbot.OpenGoSpell = 6477
 
 # Intervals
-AiPlayerbot.RandomBotUpdateInterval = 500
+AiPlayerbot.RandomBotUpdateInterval = 1000
 AiPlayerbot.RandomBotsMaxLoginsPerInterval = 30
 AiPlayerbot.RandomBotCountChangeMinInterval = 1800
 AiPlayerbot.RandomBotCountChangeMaxInterval = 7200
@@ -1193,7 +1193,7 @@ AiPlayerbot.RndBotCheats = repair,breath,item
 
 # Allowed log files. See SPP_MAP for more information
 # https://github.com/mostlikely4r/spp-map
-AiPlayerbot.AllowedLogFiles = bot_events.csv,deaths.csv
+AiPlayerbot.AllowedLogFiles =
 
 # Filters certain actions from showing up in 'nc +debug' and 'nc +debug action'
 # AiPlayerbot.DebugFilter = add gathering loot,check values,emote,check mount state,jump

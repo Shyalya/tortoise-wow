@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS `skill_race_class_info_mod` (
   PRIMARY KEY (`Id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=8;
 
-INSERT INTO `skill_race_class_info_mod`
+REPLACE INTO `skill_race_class_info_mod`
 (
     `Id`,
     `SkillLineDbcRecord`,

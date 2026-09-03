@@ -6891,6 +6891,11 @@ void AddSC_random_scripts_1()
     newscript->RegisterSelf();
 
     newscript = new Script;
+    newscript->Name = "npc_teslinah";
+    newscript->pQuestAcceptNPC = &QuestAccept_npc_teslinah;
+    newscript->RegisterSelf();
+
+    newscript = new Script;
     newscript->Name = "go_portal_amanialor";
     newscript->pGOHello = &GOHello_go_portal_amanialor;
     newscript->RegisterSelf();

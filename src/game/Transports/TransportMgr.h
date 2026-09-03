@@ -123,7 +123,7 @@ class TransportMgr
         TransportMgr& operator=(TransportMgr const&);
 
         // Generates and precaches a path for transport to avoid generation each time transport instance is created
-        void GeneratePath(GameObjectInfo const* goInfo, TransportTemplate* transport);
+        bool GeneratePath(GameObjectInfo const* goInfo, TransportTemplate* transport);
 
         // Container storing transport templates
         TransportTemplates _transportTemplates;

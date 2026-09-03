@@ -106,6 +106,13 @@ bool Transport::Create(uint32 guidlow, uint32 entry, uint32 mapid, float x, floa
 
     _transportInfo = tInfo;
 
+    if (tInfo->keyFrames.size() < 2 || tInfo->pathTime < IN_MILLISECONDS)
+    {
+        sLog.outErrorDb("Transport %u (name: %s) has invalid generated timing (%u frame(s), %u ms period).",
+            entry, goinfo->name.c_str(), uint32(tInfo->keyFrames.size()), tInfo->pathTime);
+        return false;
+    }
+
     // initialize waypoints
     _nextFrame = tInfo->keyFrames.begin();
     _currentFrame = _nextFrame++;
@@ -157,6 +164,7 @@ void Transport::Update(uint32 update_diff, uint32 /*time_diff*/)
     // Desired outcome: _currentFrame->DepartureTime < _pathProgress < _nextFrame->ArriveTime
     // ... arrive | ... delay ... | departure
     //      event /         event /
+    size_t frameSearchCount = 0;
     for (;;)
     {
         if (_pathProgress >= _currentFrame->ArriveTime && _pathProgress < _currentFrame->DepartureTime)
@@ -173,10 +181,17 @@ void Transport::Update(uint32 update_diff, uint32 /*time_diff*/)
 
         MoveToNextWaypoint();
 
+        if (++frameSearchCount > GetKeyFrames().size())
+        {
+            sLog.outError("Transport %u (%s) could not resolve path progress %u within its %u ms period; update skipped.",
+                GetEntry(), GetName(), _pathProgress, GetPeriod());
+            return;
+        }
+
         DEBUG_LOG("Transport %u (%s) moved to node %u %u %f %f %f", GetEntry(), GetName(), _currentFrame->Node->index, _currentFrame->Node->mapid, _currentFrame->Node->x, _currentFrame->Node->y, _currentFrame->Node->z);
 
         // Departure event
-        if (_currentFrame->IsTeleportFrame())
+        if (_currentFrame->IsTeleportFrame() || _currentFrame->Node->mapid != GetMapId())
         {
             if (TeleportTransport(_nextFrame->Node->mapid, _nextFrame->Node->x, _nextFrame->Node->y, _nextFrame->Node->z, _nextFrame->InitialOrientation))
                 return; // Update more in new map thread

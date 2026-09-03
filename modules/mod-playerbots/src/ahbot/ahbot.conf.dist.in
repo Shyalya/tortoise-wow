@@ -21,28 +21,34 @@ AuctionHouseBot.Buyer.Enabled = 0
 # item behind them, and eventually takes the server down through the C runtime's
 # invalid-parameter handler. Create a character for it, put its guid below, then
 # turn this on.
-AhBot.Enabled = 0
+AhBot.Enabled = 1
 
 # Character GUID of the AHBot player. Must be set to a valid character GUID for each server instance.
-AhBot.GUID = 0
+AhBot.GUID = 16
+
+# Run one market pass every 15 minutes and retain 30 days of price history.
+AhBot.UpdateIntervalInSeconds = 900
+AhBot.History.Days = 30
 
 AhBot.MaxItemLevel = 500
-AhBot.MaxRequiredLevel = 80
+AhBot.MaxRequiredLevel = 60
 
 AhBot.PriceMultiplier = 0.35
 AhBot.DefaultMinPrice = 20
 AhBot.PriceQualityMultiplier = 1.0
 AhBot.AlwaysAvailableMoney = 2000000
 AhBot.SendMail = 1
+AhBot.StackReducePrice = 1000000
+AhBot.UnderPriceProbability = 0.05
 
 # Intervals
 # The time between buying/selling items of the same type or category.
-# AhBot.ItemBuyMinInterval  = 600
-# AhBot.ItemBuyMinInterval  = 7200
-AhBot.ItemSellMinInterval = 60
-AhBot.ItemSellMaxInterval = 300
-# The maxium time 
-# AhBot.MaxSellInterval     = 28800
+AhBot.ItemBuyMinInterval = 600
+AhBot.ItemBuyMaxInterval = 7200
+AhBot.ItemSellMinInterval = 600
+AhBot.ItemSellMaxInterval = 7200
+# Maximum age of a sell decision: 8 hours.
+AhBot.MaxSellInterval = 28800
 
 #
 # Misc

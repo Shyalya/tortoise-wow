@@ -101,6 +101,7 @@ public:
         if (!sess->GetPlayer() || !sess->GetPlayer()->IsInWorld())
             return;
         uint32 clientcount = 0;
+        uint32 matchcount = 0;
         Team team = sess->GetPlayer()->GetTeam();
         AccountTypes security = sess->GetSecurity();
         bool allowTwoSideWhoList = sWorld.getConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_WHO_LIST);
@@ -108,6 +109,11 @@ public:
 
         const uint32 zone = sess->GetPlayer()->GetCachedZoneId();
         const bool notInBattleground = !((zone == 2597) || (zone == 3277) || (zone == 3358));
+        // Turtle's 1.18 client can retain stale race/class/level masks when the
+        // unfiltered `/who` command is issued. Treat a request without textual
+        // or zone filters as the intended realm-wide query.
+        const bool plainWhoRequest = wplayer_name.empty() && wguild_name.empty() &&
+                                     zones_count == 0 && str_count == 0;
 
         WorldPacket data(SMSG_WHO, 50);                         // guess size
         data << uint32(clientcount);                            // clientcount place holder, listed count
@@ -119,6 +125,14 @@ public:
         {
             Player* pPlayer = itr.second;
 
+            // Random Playerbots use headless WorldSessions. Letting them fill
+            // the 50-row client limit makes /who appear empty or useless on
+            // bot-heavy realms (the total can still report 1000+ matches).
+            // A real player in the world always has a live client socket.
+            WorldSession* targetSession = pPlayer ? pPlayer->GetSession() : nullptr;
+            if (!targetSession || !targetSession->GetSocket())
+                continue;
+
             if (security == SEC_PLAYER)
             {
                 // player can see member of other team only if CONFIG_BOOL_ALLOW_TWO_SIDE_WHO_LIST
@@ -126,7 +140,7 @@ public:
                     continue;
 
                 // player can see MODERATOR, GAME MASTER, ADMINISTRATOR only if CONFIG_GM_IN_WHO_LIST
-                if (pPlayer->GetSession()->GetSecurity() > gmLevelInWhoList)
+                if (targetSession->GetSecurity() > gmLevelInWhoList)
                     continue;
 
                 if (pPlayer->HasGMDisabledSocials())
@@ -139,7 +153,7 @@ public:
 
             // check if target's level is in level range
             uint32 lvl = pPlayer->GetLevel();
-            if (lvl < level_min || lvl > level_max)
+            if (!plainWhoRequest && (lvl < level_min || lvl > level_max))
                 continue;
 
             // check if target is globally visible for player
@@ -148,12 +162,14 @@ public:
 
             // check if class matches classmask
             uint32 class_ = pPlayer->GetClass();
-            if (!(classmask & (1 << class_)))
+            // Some 1.18 clients send a zero mask for "all". Only constrain
+            // the result when an actual mask was supplied.
+            if (!plainWhoRequest && classmask && (class_ >= 32 || !(classmask & (uint32(1) << class_))))
                 continue;
 
             // check if race matches racemask
             uint32 race = pPlayer->GetRace();
-            if (!(racemask & (1 << race)))
+            if (!plainWhoRequest && racemask && (race >= 32 || !(racemask & (uint32(1) << race))))
                 continue;
 
             std::string pname = pPlayer->GetName();
@@ -219,21 +235,24 @@ public:
             if (!s_show)
                 continue;
 
-            data << pname;                                      // player name
-            data << gname;                                      // guild name
-            data << uint32(lvl);                                // player level
-            data << uint32(class_);                             // player class
-            data << uint32(race);                               // player race
-            data << uint32(pzoneid);                            // player zone id
+            ++matchcount;
 
-            // 50 is maximum player count sent to client
-            if ((++clientcount) == 49)
-                break;
+            // 50 is the maximum player count sent to the client. Continue
+            // counting matches after the display limit so the total is honest.
+            if (clientcount < 50)
+            {
+                data << pname;                                  // player name
+                data << gname;                                  // guild name
+                data << uint32(lvl);                            // player level
+                data << uint32(class_);                         // player class
+                data << uint32(race);                           // player race
+                data << uint32(pzoneid);                        // player zone id
+                ++clientcount;
+            }
         }
 
-        uint32 count = m.size();
         data.put(0, clientcount);                               // insert right count, listed count
-        data.put(4, count > 49 ? count : clientcount);          // insert right count, online count
+        data.put(4, matchcount);                                // insert filtered online count
 
         sess->SendPacket(&data);
         DEBUG_LOG("WORLD: Send SMSG_WHO Message");

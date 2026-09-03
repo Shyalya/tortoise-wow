@@ -292,6 +292,11 @@ void WorldSession::QueuePacket(WorldPacket const& new_packet)
     QueuePacket(new WorldPacket(new_packet));
 }
 
+void WorldSession::QueuePacket(std::unique_ptr<WorldPacket> new_packet)
+{
+    QueuePacket(new_packet.release());
+}
+
 /// Add an incoming packet to the queue
 void WorldSession::QueuePacket(WorldPacket* newPacket)
 {
