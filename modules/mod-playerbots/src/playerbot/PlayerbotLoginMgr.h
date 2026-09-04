@@ -166,7 +166,6 @@ namespace ai
 		static void SendHolders(const BotInfos& queue);
 		static void SendHolders(BotPool* pool);
 
-		std::future<BotInfos> futureQueue;
 		std::future<BotPool> futurePool;
 
 		bool debug = false;

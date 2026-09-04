@@ -1069,7 +1069,7 @@ AiPlayerbot.NonCombatStrategies = +grind,+loot,+custom::say,+return,+delayed rol
 
 # Intervals
 AiPlayerbot.RandomBotUpdateInterval = 1000
-AiPlayerbot.RandomBotsMaxLoginsPerInterval = 30
+AiPlayerbot.RandomBotsMaxLoginsPerInterval = 8
 AiPlayerbot.RandomBotCountChangeMinInterval = 1800
 AiPlayerbot.RandomBotCountChangeMaxInterval = 7200
 #AiPlayerbot.MinRandomBotInWorldTime = 3600

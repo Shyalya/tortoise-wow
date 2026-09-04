@@ -34,6 +34,9 @@
 #include "ScriptMgr.h"
 #include "Util.h"
 
+#include <mutex>
+#include <unordered_set>
+
 pAuraProcHandler AuraProcHandler[TOTAL_AURAS] =
 {
     &Unit::HandleNULLProc,                                  //  0 SPELL_AURA_NONE
@@ -822,8 +825,20 @@ SpellAuraProcResult Unit::HandleProcTriggerSpellAuraProc(Unit* pVictim, uint32 d
     SpellEntry const* triggerEntry = sSpellMgr.GetSpellEntry(trigger_spell_id);
     if (!triggerEntry)
     {
-        // Not cast unknown spell
-        sLog.outError("Unit::HandleProcTriggerSpell: Spell %u have %u in EffectTriggered[%d], not handled custom case?", auraSpellInfo->Id, trigger_spell_id, triggeredByAura->GetEffIndex());
+        // A malformed spell row may be evaluated every combat tick. Keep the
+        // diagnostic actionable without producing hundreds of identical log
+        // lines and making an already slow map update even more expensive.
+        static std::mutex reportedProcMutex;
+        static std::unordered_set<uint64> reportedProcPairs;
+        uint64 const pairKey = (uint64(auraSpellInfo->Id) << 32) | trigger_spell_id;
+        bool firstReport = false;
+        {
+            std::lock_guard<std::mutex> lock(reportedProcMutex);
+            firstReport = reportedProcPairs.insert(pairKey).second;
+        }
+        if (firstReport)
+            sLog.outError("Unit::HandleProcTriggerSpell: aura spell %u references missing trigger spell %u (effect %u); suppressing duplicate reports",
+                          auraSpellInfo->Id, trigger_spell_id, uint32(triggeredByAura->GetEffIndex()));
         return SPELL_AURA_PROC_FAILED;
     }
 

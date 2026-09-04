@@ -385,7 +385,15 @@ void PlayerBotLoginMgr::Update(RealPlayers& realPlayers)
         return;
     }
 
-    BotInfos queue = GetFuture(FillLoginLogoutQueue, futureQueue, true, &botPool, realPlayers);
+    // FillLoginLogoutQueue mutates login state inside botPool and also reads
+    // live Player objects through realPlayers.  Running it on a detached
+    // std::async worker races the world thread, which updates the same objects
+    // immediately above and consumes the resulting pointers below.  Under a
+    // large startup wave this manifested as intermittent SIGABRT crashes while
+    // hundreds of character query holders were completing.  Queue selection
+    // is intentionally kept on the world thread; character DB holders remain
+    // asynchronous and retain the expensive I/O off-thread.
+    BotInfos queue = FillLoginLogoutQueue(&botPool, realPlayers);
 
     if (!queue.empty())
     {
