@@ -2290,6 +2290,7 @@ class Player final: public Unit
         void GetHomebindLocation(float& x, float& y, float& z, uint32& mapId) const {
             x = m_homebindX; y = m_homebindY; z = m_homebindZ; mapId = m_homebindMapId;
         }
+        WorldLocation GetHomeBindLocation() const { return WorldLocation(m_homebindMapId, m_homebindX, m_homebindY, m_homebindZ); }
 
         void SendSummonRequest(ObjectGuid summonerGuid, uint32 mapId, uint32 zoneId, float x, float y, float z);
         void SetSummonPoint(uint32 mapid, float x, float y, float z)

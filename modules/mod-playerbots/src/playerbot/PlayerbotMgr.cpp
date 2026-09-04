@@ -26,7 +26,7 @@
 #include "World.h"
 #include "Database/DatabaseImpl.h"
 #include "ObjectMgr.h"
-#include "Handlers/LoginQueryHolder.h"
+#include "PlayerLoginQueryHolder.h"
 
 #ifdef GenerateBotTests
 #include "strategy/tests/TestAction.h"

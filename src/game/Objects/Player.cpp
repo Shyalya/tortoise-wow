@@ -4080,9 +4080,6 @@ void Player::GiveLevel(uint32 level)
     if (Pet* pet = GetPet())
         pet->SynchronizeLevelWithOwner();
 
-    // Penqle stub's OnLevelUp bot hook removed — cmangos's bot factory
-    // re-grants level-appropriate gear/talents via different mechanism.
-
     CheckInfernoInvite();
 
     if (m_session->ShouldBeBanned(GetLevel()))
@@ -16788,7 +16785,6 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder *holder)
 
     // check if the character's account in the db and the logged in account match.
     // player should be able to load/delete character only with correct account!
-    // (Penqle's !GetBot() bypass removed — cmangos bots use synthetic sessions.)
     if (dbAccountId != GetSession()->GetAccountId())
     {
         sLog.outError("%s loading from wrong account (is: %u, should be: %u)",
@@ -16987,9 +16983,6 @@ bool Player::LoadFromDB(ObjectGuid guid, SqlQueryHolder *holder)
             RelocateToHomebind();
         }
     }
-
-    // Penqle stub's BeforeAddToMap bot hook removed; cmangos's bot init is
-    // handled inside the bot module's BotFactory.
 
     // player bounded instance saves loaded in _LoadBoundInstances, group versions at group loading
     DungeonPersistentState* state = GetBoundInstanceSaveForSelfOrGroup(GetMapId());
@@ -18402,8 +18395,6 @@ bool Player::SaveToDB(bool online, bool force, bool direct)
     // delay auto save at any saves (manual, in code, or autosave)
     m_nextSave = sWorld.getConfig(CONFIG_UINT32_INTERVAL_SAVE);
 
-    // Penqle stub's "skip save for bots" guard removed — cmangos's bot
-    // factory persists bot characters as normal Player rows; no save skip needed.
     if (m_DbSaveDisabled)
         return false;
 
