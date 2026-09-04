@@ -361,6 +361,19 @@ struct spell_paladin_holy_shock : public SpellScript
 
 struct spell_paladin_holy_strike : public SpellScript
 {
+    void OnHit(Spell* spell, SpellMissInfo missInfo) const override
+    {
+        if (missInfo != SPELL_MISS_NONE || !spell->m_casterUnit)
+            return;
+
+        // Turtle's Holy Strike ranks store their Mending Light spell in the
+        // second trigger slot even though that effect is direct damage.  The
+        // generic spell executor therefore never fires the heal/mana pulse.
+        uint32 const mendingLightSpellId = spell->m_spellInfo->EffectTriggerSpell[EFFECT_INDEX_1];
+        if (mendingLightSpellId)
+            spell->m_casterUnit->CastSpell(spell->m_casterUnit, mendingLightSpellId, true);
+    }
+
     bool OnEffectExecute(Spell* spell, SpellEffectIndex effIdx) const override
     {
         if (effIdx != EFFECT_INDEX_0)
@@ -384,6 +397,17 @@ struct spell_paladin_holy_strike : public SpellScript
 
             break;
         }
+
+        return true;
+    }
+};
+
+struct spell_paladin_mending_light : public SpellScript
+{
+    bool OnEffectHealCalculate(Spell* spell, SpellEffectIndex effIdx, int32& heal) const override
+    {
+        if (effIdx == EFFECT_INDEX_1 && spell->GetUnitTarget() == spell->m_casterUnit)
+            heal /= 2;
 
         return true;
     }
@@ -966,6 +990,7 @@ void AddSC_paladin_spell_scripts()
     RegisterSpellScript("spell_paladin_judgement_of_the_crusader", &GetSpellScript<spell_paladin_judgement_of_the_crusader>);
     RegisterSpellScript("spell_paladin_holy_shock", &GetSpellScript<spell_paladin_holy_shock>);
     RegisterSpellScript("spell_paladin_holy_strike", &GetSpellScript<spell_paladin_holy_strike>);
+    RegisterSpellScript("spell_paladin_mending_light", &GetSpellScript<spell_paladin_mending_light>);
     RegisterSpellScript("spell_paladin_crusader_strike", &GetSpellScript<spell_paladin_crusader_strike>);
     RegisterSpellScript("spell_paladin_judgement", &GetSpellScript<spell_paladin_judgement>);
     RegisterAuraScript("spell_paladin_conviction_seals", &GetAuraScript<spell_paladin_conviction_seals>);
