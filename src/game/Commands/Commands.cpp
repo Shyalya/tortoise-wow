@@ -290,7 +290,9 @@ bool ChatHandler::HandleAccountSetGmLevelCommand(char* args)
     if (!ExtractInt32(&args, gm))
         return false;
 
-    if (gm < SEC_PLAYER || gm > SEC_ADMINISTRATOR)
+    // SEC_CONSOLE is reserved for the command-line console, but SEC_SIGMACHAD
+    // is a valid playable account rank and must be assignable here.
+    if (gm < SEC_PLAYER || gm > SEC_SIGMACHAD)
     {
         SendSysMessage(LANG_BAD_VALUE);
         SetSentErrorMessage(true);
