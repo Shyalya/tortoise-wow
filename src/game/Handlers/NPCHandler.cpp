@@ -330,7 +330,23 @@ void WorldSession::HandleTrainerBuySpellOpcode(WorldPacket & recv_data)
         return;
     }
 
-    SpellEntry const *proto = sSpellMgr.GetSpellEntry(trainer_spell->spell);
+    SpellEntry const* proto = sSpellMgr.GetSpellEntry(trainer_spell->spell);
+    uint32 const learnedSpellId = proto ? proto->EffectTriggerSpell[EFFECT_INDEX_0] : 0;
+    SpellEntry const* learnedSpellInfo = learnedSpellId ? sSpellMgr.GetSpellEntry(learnedSpellId) : nullptr;
+
+    // Trainer rows contain a service spell whose first effect teaches the real
+    // player spell. A successful prepare() only means that the service cast was
+    // accepted; it does not prove that its learn effect executed. Charging on
+    // that result allowed a broken or interrupted wrapper cast to take money
+    // repeatedly while leaving the spell unlearned.
+    if (!proto || proto->Effect[EFFECT_INDEX_0] != SPELL_EFFECT_LEARN_SPELL ||
+            !learnedSpellInfo || !SpellMgr::IsSpellValid(learnedSpellInfo, _player, false))
+    {
+        sLog.outError("HandleTrainerBuySpellOpcode: trainer %s has invalid training service %u (learned spell %u).",
+            guid.GetString().c_str(), trainer_spell->spell, learnedSpellId);
+        SendTrainingFailure(guid, spellId, TRAIN_FAIL_UNAVAILABLE);
+        return;
+    }
 
     // Apply reputation discount.
     uint32 nSpellCost = uint32(floor(trainer_spell->spellCost * _player->GetReputationPriceDiscount(unit)));
@@ -342,48 +358,35 @@ void WorldSession::HandleTrainerBuySpellOpcode(WorldPacket & recv_data)
         return;
     }
 
-    // All is good. Spell can be learned if we reach this point.
+    // All validation has passed. Teach first and commit the payment only after
+    // the authoritative player spell map confirms the postcondition. Map packet
+    // processing is serialized, so a repeated click observes the learned spell
+    // as gray and cannot charge twice.
     _player->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_TALK);
     _player->RemoveSpellsCausingAura(SPELL_AURA_MOUNTED);
 
-    // A seated trainer cannot teach. The learning spell is cast by the trainer,
-    // and CheckCast refuses any caster that is not standing up, so the purchase
-    // failed with SPELL_FAILED_NOT_STANDING - silently, since the client shows
-    // nothing for TRAIN_FAIL_UNAVAILABLE and no money changes hands. Turtle has
-    // trainers who sit at their tables by design, so rather than stand them up,
-    // let them cast this as triggered. Everything that check would otherwise
-    // catch has already been verified above: interaction, line of sight, that
-    // the spell is on this trainer's list, that it can be learned, and money.
-    bool const seatedTrainer = !unit->IsStandingUp();
-
-    Spell *spell;
-    if (proto->SpellVisual == 222)
-        spell = new Spell(_player, proto, false);
-    else
-        spell = new Spell(unit, proto, seatedTrainer);
-
-    SpellCastTargets targets;
-    targets.setUnitTarget(_player);
-
-    SpellCastResult cast_result = spell->prepare(std::move(targets));
-    spell->update(1); // Update the spell right now. Prevents desynch => take twice the money if you click really fast.
-
-    // Only charge player if cast of learning spell was successful.
-    if (cast_result == SPELL_CAST_OK)
+    _player->LearnSpell(learnedSpellId, false);
+    if (!_player->HasSpell(learnedSpellId))
     {
-        _player->ModifyMoney(-int32(nSpellCost));
-        SendTrainingSuccess(guid, spellId);
-    }
-    else
-    {
-        // Worth saying out loud: the client shows nothing for TRAIN_FAIL_UNAVAILABLE,
-        // so without this a failed purchase is invisible on both ends - the player
-        // clicks, nothing happens, and the log stays silent about why.
-        sLog.outError("HandleTrainerBuySpellOpcode: %s could not learn spell %u from %s, cast result %u.",
-            _player->GetGuidStr().c_str(), spellId, guid.GetString().c_str(), uint32(cast_result));
-
+        sLog.outError("HandleTrainerBuySpellOpcode: %s failed to learn spell %u from trainer %s; no money charged.",
+            _player->GetGuidStr().c_str(), learnedSpellId, guid.GetString().c_str());
         SendTrainingFailure(guid, spellId, TRAIN_FAIL_UNAVAILABLE);
+        return;
     }
+
+    _player->ModifyMoney(-int32(nSpellCost));
+    SendTrainingSuccess(guid, spellId);
+
+    // Preserve the normal trainer feedback without relying on the learning
+    // wrapper spell for game state.
+    SendPlaySpellVisual(guid, 0xB3);
+    WorldPacket impact(SMSG_PLAY_SPELL_IMPACT, 12);
+    impact << _player->GetObjectGuid();
+    impact << uint32(0x016A);
+    SendPacket(&impact);
+
+    DEBUG_LOG("Trainer purchase: %s learned spell %u through service %u from %s for %u copper.",
+        _player->GetGuidStr().c_str(), learnedSpellId, spellId, guid.GetString().c_str(), nSpellCost);
 }
 
 void WorldSession::HandleGossipHelloOpcode(WorldPacket & recv_data)
