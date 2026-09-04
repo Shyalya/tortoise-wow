@@ -6708,6 +6708,28 @@ bool ChatHandler::HandleGMCommand(char* args)
     return true;
 }
 
+// Enable/disable free flight for the selected player, or the issuing player
+// when no player target is selected. The Turtle player implementation already
+// owns the movement flags and heartbeat update; the command was simply absent.
+bool ChatHandler::HandleGMFlyCommand(char* args)
+{
+    bool value;
+    if (!ExtractOnOff(&args, value))
+    {
+        SendSysMessage(LANG_USE_BOL);
+        SetSentErrorMessage(true);
+        return false;
+    }
+
+    Player* target = GetSelectedPlayer();
+    if (!target)
+        target = m_session->GetPlayer();
+
+    target->SetFly(value);
+    PSendSysMessage(LANG_COMMAND_FLYMODE_STATUS, GetNameLink(target).c_str(), value ? "on" : "off");
+    return true;
+}
+
 //Enable\Disable Invisible mode
 bool ChatHandler::HandleGMVisibleCommand(char* args)
 {

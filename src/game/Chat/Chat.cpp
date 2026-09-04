@@ -222,6 +222,7 @@ ChatCommand * ChatHandler::getCommandTable()
     {
         { "list",           SEC_DEVELOPER,  true,  &ChatHandler::HandleGMListFullCommand,          "", nullptr },
         { "ingame",         SEC_MODERATOR,  true,  &ChatHandler::HandleGMOnlineListCommand,        "", nullptr },
+        { "fly",            SEC_ADMINISTRATOR, false, &ChatHandler::HandleGMFlyCommand,             "Syntax: .gm fly on|off. Enables or disables free flight for the selected player, or yourself when no player is selected.", nullptr },
         { "visible",        SEC_MODERATOR, false, &ChatHandler::HandleGMVisibleCommand,           "", nullptr },
         { "options",        SEC_ADMINISTRATOR,     false, &ChatHandler::HandleGMOptionsCommand,           "", nullptr },
         { "socials",        SEC_MODERATOR,    false, &ChatHandler::HandleGMSocialsCommand,                "", nullptr},
