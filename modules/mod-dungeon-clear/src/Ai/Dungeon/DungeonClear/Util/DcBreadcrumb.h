@@ -56,7 +56,11 @@ inline void DcRecordBreadcrumb(AiObjectContext* ctx, Player* bot)
     constexpr float kFloorSlope = 0.75f;
     // One number, one place: the readers' walk-back guard IS this bound.
     constexpr float kRelocation = DungeonClearMath::TrailJumpGuard;
-    constexpr size_t kMax = 128;       // history cap (~ kMax*kSpacing yd)
+    // 128 crumbs (~512yd) was shorter than a Maraudon leg: followers 480yd
+    // behind found "nearest crumb 100+yd away" 63 times in 90 min (2026-09-05)
+    // because the tail of the trail had already been dropped. 384 crumbs
+    // (~1.5km) costs 4.6 KB per tank; WalkTrailBack stays linear and cheap.
+    constexpr size_t kMax = 384;       // history cap (~ kMax*kSpacing yd)
     std::vector<Position>& crumbs =
         ctx->GetValue<DcPullContext&>(DcKey::PullContext)->Get().breadcrumbs;
     Position const cur(bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
