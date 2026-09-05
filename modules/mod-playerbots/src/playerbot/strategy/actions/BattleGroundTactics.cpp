@@ -4450,7 +4450,26 @@ bool BGTactics::atFlag(std::vector<BattleBotPath*> const& vPaths, std::vector<ui
     case BATTLEGROUND_IC:
 #endif
     {
-        closeObjects = *context->GetValue<std::list<ObjectGuid> >("closest game objects static los");
+        // NOT "closest game objects static los": that value probes VMAP line of
+        // sight from the banner's BASE to the bot's FEET with no height offset
+        // (WorldPosition::IsInStaticLineOfSight, heightMod 0). On the AB node
+        // platforms that ray grazes the stone and the banner 1.5 yd away is
+        // filtered out. Tester log 2026-09-05: 2049 atFlag samples, closeObjects
+        // empty in 2015 of them, 84 of those with the objective inside 5 yd - so
+        // the bots stood at the banner and never clicked. The core itself lifts
+        // both ends by ~2 yd for its LOS checks. A banner within interaction range
+        // needs no line-of-sight test at all: take the no-LOS list and keep what
+        // is in reach.
+        {
+            std::list<ObjectGuid> const noLos =
+                *context->GetValue<std::list<ObjectGuid> >("nearest game objects no los");
+            for (ObjectGuid const& guid : noLos)
+            {
+                GameObject* go = ai->GetGameObject(guid);
+                if (go && bot->IsWithinDistInMap(go, INTERACTION_DISTANCE))
+                    closeObjects.push_back(guid);
+            }
+        }
         closePlayers = *context->GetValue<std::list<ObjectGuid> >("closest friendly players");
         flagRange = INTERACTION_DISTANCE;
         break;
