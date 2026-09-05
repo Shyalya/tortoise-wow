@@ -64,6 +64,21 @@ namespace DcTestDungeonRegistry
             { "st",              "The Temple of Atal'Hakkar",     109,  -319.24f,    99.90f, -131.85f, 3.190f, 52, "" },
             { "brd",             "Blackrock Depths",              230,   456.93f,    34.09f,  -68.09f, 4.712f, 54, "" },
             { "brs",             "Blackrock Spire",               229,    78.51f,  -225.04f,   49.84f, 5.100f, 58, "" },
+            // --- Turtle WoW custom dungeons (entrances = tw_world areatrigger_teleport,
+            //     2026-09-05). Level = strongest boss of the roster in dc_roster.txt (turtle_world
+            //     2026-09-05), capped at 60 where the bosses are 61-62. None of these has a compiled boss list - they run on the
+            //     roster file alone, so do NOT put one on the ladder before its order
+            //     block exists (an empty roster reads as an instant clear).
+            { "crescent",        "The Crescent Grove",            802,   579.13f,    90.70f,  276.11f, 3.400f, 38, "" },
+            { "stormwrought",    "Stormwrought Ruins",            818, -5632.67f, -4393.33f,  249.98f, 3.182f, 38, "" },
+            { "gilneas",         "Gilneas City",                  815, -1100.00f,  2237.75f,  182.86f, 2.600f, 49, "" },
+            { "hateforge",       "Hateforge Quarry",              808, -8173.90f, -3120.60f,  199.80f, 4.700f, 57, "" },
+            { "kara-crypt",      "Karazhan Crypt",                800, -11068.10f, -1806.40f,  52.70f, 1.500f, 60, "" },
+            { "sw-vault",        "Stormwind Vault",                35,    -0.91f,    40.57f,  -24.23f, 1.520f, 60, "" },
+            // Turtle's own Black Morass shares map 269 with the TBC dungeon of the same
+            // name (row further down, level 70). Distinct token; Find() by map id is
+            // ambiguous for 269 on purpose.
+            { "black-morass-tw", "The Black Morass (Turtle)",     269, -2002.50f,  6575.30f, -154.90f, 5.700f, 60, "" },
             { "dm-east",         "Dire Maul: East",               429,    44.45f,  -154.82f,   -2.71f, 0.000f, 58, "East" },
             { "dm-west",         "Dire Maul: West",               429,   -62.97f,   159.87f,   -3.46f, 3.148f, 60, "West" },
             { "dm-north",        "Dire Maul: North",              429,   255.25f,   -16.06f,   -2.59f, 4.700f, 60, "North" },
