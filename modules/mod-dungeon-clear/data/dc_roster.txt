@@ -260,3 +260,22 @@ order 349 13601 6     # Tinkerer Gizlock
 order 349 12201 7     # Princess Theradras
 order 349 13596 8     # Rotgrip (open water; owner: last, after Theradras)
 keep  13596           # the module removes Rotgrip (open water); owner wants him in, last
+
+# --- Sunken Temple (map 109) -------------------------------------------------
+# The compiled rows put Hazzas at key 2, Shade of Eranikus at key 3 and the
+# Weaver & Dreamscythe objective (key 5) BEFORE Jammal'an (key 6). The two
+# dragons phase in only after Jammal'an dies (owner 2026-09-05: "die kommen
+# erst nach Jammal"), so a group would stand at an invisible objective. This
+# restores the order the events file intended: forcefield defenders (0),
+# central-circle pre-clear (1), Jammal'an (2), Weaver & Dreamscythe (5),
+# Morphaz (6), Hazzas (7), Shade of Eranikus (8), then the optional pit wing
+# (statues 10-15, Atal'alarion 16, Egg 17, Avatar 18) as the compiled tail.
+# Zolo, Gasher and Hukku are credited bosses AND forcefield objectives; at
+# key 0 they are dead before the picker reaches them and get skipped.
+order 109 5712 1     # Zolo (key 0, dies as a forcefield defender)
+order 109 5713 1     # Gasher (key 0, dies as a forcefield defender)
+order 109 5715 1     # Hukku (key 0, dies as a forcefield defender; 5715, not 5713)
+order 109 5710 3     # Jammal'an the Prophet (key 2)
+order 109 5719 7     # Morphaz (key 6)
+order 109 5722 8     # Hazzas (key 7)
+order 109 5709 9     # Shade of Eranikus (key 8)
