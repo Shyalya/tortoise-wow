@@ -1,0 +1,4 @@
+# Characters the dungeon-clear test harness must not claim: they never enter the
+# world when logged in as bots (see DcTestRunJob.cpp). One guid per line.
+# Remove a line after repairing the character.
+886    # Sirina - the auction bot lists its wares under this character; 14 failed logins on 2026-09-05
