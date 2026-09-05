@@ -9,6 +9,7 @@
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 
 #include <algorithm>
+#include <mutex>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -24,6 +25,7 @@
 #include "GameObject.h"
 #include "Group.h"
 #include "Log.h"
+#include "Timer.h"
 #include "Map.h"
 #include "ModelIgnoreFlags.h"
 #include "MotionMaster.h"
@@ -650,9 +652,28 @@ bool DungeonClearFollowTankAction::Execute(Event& /*event*/)
     // PartyMaxSpread, so the tight cluster never reaches this line.
     float const behind = bot->GetExactDist(tank);
     if (behind > 60.0f)
-        LOG_INFO("playerbots.dungeonclear",
-                 "[DC:{}] follow-tank: {}yd behind, falling through to stock Follow() - {}",
-                 bot->GetName(), int(behind), trailOutcome);
+    {
+        // Once per 10 s per bot. Unthrottled this ran at ~10 lines a second per
+        // stranded follower (Maraudon 2026-09-05: one bot, 30 lines in 3 s),
+        // and journal volume has starved this server before.
+        static std::mutex s_stockLogLock;
+        static std::unordered_map<ObjectGuid, uint32> s_stockLogAt;
+        uint32 const now = WorldTimer::getMSTime();
+        bool speak = false;
+        {
+            std::lock_guard<std::mutex> lock(s_stockLogLock);
+            uint32& last = s_stockLogAt[bot->GetObjectGuid()];
+            if (!last || WorldTimer::getMSTimeDiff(last, now) > 10000)
+            {
+                last = now;
+                speak = true;
+            }
+        }
+        if (speak)
+            LOG_INFO("playerbots.dungeonclear",
+                     "[DC:{}] follow-tank: {}yd behind, falling through to stock Follow() - {}",
+                     bot->GetName(), int(behind), trailOutcome);
+    }
 
     uint32 const seed = static_cast<uint32>(bot->GetObjectGuid().GetCounter());
     float const angle =
