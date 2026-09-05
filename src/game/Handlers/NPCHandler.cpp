@@ -331,15 +331,16 @@ void WorldSession::HandleTrainerBuySpellOpcode(WorldPacket & recv_data)
     }
 
     SpellEntry const* proto = sSpellMgr.GetSpellEntry(trainer_spell->spell);
+    bool const teachesPet = proto && proto->Effect[EFFECT_INDEX_0] == SPELL_EFFECT_LEARN_PET_SPELL;
     uint32 const learnedSpellId = proto ? proto->EffectTriggerSpell[EFFECT_INDEX_0] : 0;
     SpellEntry const* learnedSpellInfo = learnedSpellId ? sSpellMgr.GetSpellEntry(learnedSpellId) : nullptr;
 
-    // Trainer rows contain a service spell whose first effect teaches the real
-    // player spell. A successful prepare() only means that the service cast was
+    // Trainer rows can teach either a player spell or a pet spell. A successful
+    // prepare() only means that the service cast was
     // accepted; it does not prove that its learn effect executed. Charging on
     // that result allowed a broken or interrupted wrapper cast to take money
     // repeatedly while leaving the spell unlearned.
-    if (!proto || proto->Effect[EFFECT_INDEX_0] != SPELL_EFFECT_LEARN_SPELL ||
+    if (!proto || (proto->Effect[EFFECT_INDEX_0] != SPELL_EFFECT_LEARN_SPELL && !teachesPet) ||
             !learnedSpellInfo || !SpellMgr::IsSpellValid(learnedSpellInfo, _player, false))
     {
         sLog.outError("HandleTrainerBuySpellOpcode: trainer %s has invalid training service %u (learned spell %u).",
@@ -364,6 +365,43 @@ void WorldSession::HandleTrainerBuySpellOpcode(WorldPacket & recv_data)
     // as gray and cannot charge twice.
     _player->RemoveAurasWithInterruptFlags(AURA_INTERRUPT_FLAG_TALK);
     _player->RemoveSpellsCausingAura(SPELL_AURA_MOUNTED);
+
+    if (teachesPet)
+    {
+        Pet* pet = _player->GetPet();
+        if (!pet || pet->HasSpell(learnedSpellId))
+        {
+            SendTrainingFailure(guid, spellId, TRAIN_FAIL_UNAVAILABLE);
+            return;
+        }
+
+        // EffectLearnPetSpell requires the owner as caster. Use the native,
+        // non-triggered cast so CheckCast validates pet level, active spell
+        // capacity and training points. The effect owns learning, TP debit,
+        // pet persistence and the client's pet spellbook refresh.
+        Spell* spell = new Spell(_player, proto, false);
+        SpellCastTargets targets;
+        targets.setUnitTarget(_player);
+        SpellCastResult const result = spell->prepare(std::move(targets));
+        if (result == SPELL_CAST_OK)
+            spell->update(1); // Existing trainer path: finish instant services now.
+
+        pet = _player->GetPet();
+        if (result != SPELL_CAST_OK || !pet || !pet->HasSpell(learnedSpellId))
+        {
+            // A non-instant or otherwise incomplete service must not teach
+            // later for free after reporting failure. SpellEvent owns deletion.
+            spell->cancel();
+            sLog.outError("HandleTrainerBuySpellOpcode: %s failed pet training service %u from %s (cast result %u); no money charged.",
+                _player->GetGuidStr().c_str(), spellId, guid.GetString().c_str(), uint32(result));
+            SendTrainingFailure(guid, spellId, TRAIN_FAIL_UNAVAILABLE);
+            return;
+        }
+
+        _player->ModifyMoney(-int32(nSpellCost));
+        SendTrainingSuccess(guid, spellId);
+        return; // Native service cast already supplies its feedback.
+    }
 
     _player->LearnSpell(learnedSpellId, false);
     if (!_player->HasSpell(learnedSpellId))
