@@ -27,6 +27,7 @@
 #include "AttackersValue.h"
 #include "CellImpl.h"
 #include "Config.h"
+#include "SpellAuraDefines.h"
 #include "Creature.h"
 #include "CreatureGroups.h"
 #include "GameObject.h"
@@ -93,6 +94,79 @@ float DcPartyState::RestMinMpPct(Player* bot)
     // higher gate would strand the tank waiting on slow natural mana regen.
     return std::min(75.0f, static_cast<float>(sPlayerbotAIConfig.highMana));
 }
+namespace
+{
+    // A member whose mana is NOT coming back must not hold the run forever.
+    // Measured Maraudon 2026-09-05: "Waiting on Gikle (low mana)" 39x over 30
+    // minutes at the same spot, the yield budget released the tank once a
+    // minute for four ticks, the run died as no_progress 0/8. Track, per
+    // (leader, member), how long the member has been the mana blocker without
+    // gaining DC_MANA_WAIT_MIN_GAIN_PCT; past DC_MANA_WAIT_GIVEUP_MS the
+    // leader stops waiting on that member for DC_MANA_WAIT_EXEMPT_MS and says
+    // so once, with what the member was doing about it.
+    constexpr uint32 DC_MANA_WAIT_GIVEUP_MS    = 120000;
+    constexpr float  DC_MANA_WAIT_MIN_GAIN_PCT = 5.0f;
+    constexpr uint32 DC_MANA_WAIT_EXEMPT_MS    = 15 * 60 * 1000;
+
+    struct ManaWaitTrack
+    {
+        uint32 firstMs = 0;
+        float  firstPct = 0.0f;
+        uint32 exemptUntilMs = 0;
+    };
+
+    std::mutex& ManaWaitLock() { static std::mutex m; return m; }
+    std::map<std::pair<uint32, uint32>, ManaWaitTrack>& ManaWaitMap()
+    {
+        static std::map<std::pair<uint32, uint32>, ManaWaitTrack> m;
+        return m;
+    }
+
+    // True when `leader` should not wait on this member for mana right now.
+    bool ManaWaitExempt(Player* leader, Player* member, float mpPct, float minMpPct)
+    {
+        if (!leader || !member)
+            return false;
+        uint32 const now = WorldTimer::getMSTime();
+        std::lock_guard<std::mutex> guard(ManaWaitLock());
+        ManaWaitTrack& t = ManaWaitMap()[{leader->GetObjectGuid().GetCounter(),
+                                         member->GetObjectGuid().GetCounter()}];
+        if (mpPct >= minMpPct)
+        {
+            t = ManaWaitTrack();          // recovered: forget everything
+            return false;
+        }
+        if (t.exemptUntilMs && static_cast<int32>(t.exemptUntilMs - now) > 0)
+            return true;
+        if (!t.firstMs)
+        {
+            t.firstMs = now;
+            t.firstPct = mpPct;
+            return false;
+        }
+        if (mpPct >= t.firstPct + DC_MANA_WAIT_MIN_GAIN_PCT)
+        {
+            t.firstMs = now;              // regenerating: restart the window
+            t.firstPct = mpPct;
+            return false;
+        }
+        uint32 const heldMs = WorldTimer::getMSTimeDiff(t.firstMs, now);
+        if (heldMs < DC_MANA_WAIT_GIVEUP_MS)
+            return false;
+        t.exemptUntilMs = now + DC_MANA_WAIT_EXEMPT_MS;
+        LOG_INFO("playerbots.dungeonclear",
+                 "[DC:{}] mana of {} is not coming back ({}% -> {}% in {}s, {}{}) "
+                 "-> not waiting on it for {} min",
+                 leader->GetName(), member->GetName(), int(t.firstPct), int(mpPct),
+                 heldMs / 1000,
+                 member->HasAuraType(SPELL_AURA_MOD_POWER_REGEN) ? "drinking" : "not drinking",
+                 member->IsInCombat() ? ", in combat" : "",
+                 DC_MANA_WAIT_EXEMPT_MS / 60000);
+        t.firstMs = 0;
+        return true;
+    }
+}
+
 bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, float maxSpread,
                                 Position const* spreadAnchor, float maxTankGap)
 {
@@ -137,7 +211,8 @@ bool DcPartyState::IsPartyReady(Player* bot, float minHpPct, float minMpPct, flo
             if (maxMp > 0)
             {
                 float const mpPct = 100.0f * float(member->GetPower(POWER_MANA)) / float(maxMp);
-                if (mpPct < minMpPct)
+                bool const exempt = ManaWaitExempt(bot, member, mpPct, minMpPct);
+                if (mpPct < minMpPct && !exempt)
                     return false;
             }
         }
@@ -524,8 +599,16 @@ std::string DcPartyState::DescribePartyNotReady(Player* bot,
             if (maxMp > 0)
             {
                 float const mpPct = 100.0f * float(member->GetPower(POWER_MANA)) / float(maxMp);
-                if (mpPct < minMpPct)
-                    reason = "low mana";
+                bool const exempt = ManaWaitExempt(bot, member, mpPct, minMpPct);
+                if (mpPct < minMpPct && !exempt)
+                {
+                    // Name the number and what the member is doing about it: a
+                    // "low mana" that never ends reads the same as one that ends
+                    // in twenty seconds, and the difference is the whole story.
+                    reason = "low mana " + std::to_string(int(mpPct)) + "%" +
+                             (member->HasAuraType(SPELL_AURA_MOD_POWER_REGEN) ? ", drinking" : ", not drinking") +
+                             (member->IsInCombat() ? ", in combat" : "");
+                }
             }
         }
 
