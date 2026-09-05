@@ -1192,6 +1192,63 @@ bool DcLeaderSignal::GetLeaderScoutTrailPoint(Player* bot, float lag, Position& 
     if (found)
         return true;
 
+    // Far-behind follower. The walk above starts at the TANK and probes crumbs
+    // the follower may not be able to reach at all before it ever looks near
+    // the follower - measured Maraudon 2026-09-05: 237 "trail join failed" in
+    // 90 min, 106 of them with a crumb inside 25yd of the bot. So when the
+    // follower is well behind, look for the crumb nearest to IT; if that is
+    // walkable, join the trail there (aiming a few crumbs toward the tank so
+    // the join is progress) and let the glide take over from that point.
+    if (bot->GetExactDist(leader) > 60.0f)
+    {
+        std::size_t nearestIdx = crumbs.size();
+        float nearest = 40.0f;   // join radius
+        for (std::size_t i = 0; i < crumbs.size(); ++i)
+        {
+            float const d = bot->GetExactDist(&crumbs[i]);
+            if (d < nearest)
+            {
+                nearest = d;
+                nearestIdx = i;
+            }
+        }
+        if (nearestIdx < crumbs.size())
+        {
+            std::size_t const ahead = std::min(nearestIdx + 4, crumbs.size() - 1);
+            std::size_t const candidates[2] = { ahead, nearestIdx };
+            for (std::size_t idx : candidates)
+            {
+                Position const& c = crumbs[idx];
+                if (bot->GetExactDist(&c) < 3.0f)
+                    continue;   // already standing on it
+                if (IsNavReachable(bot, c) && !TrailOverZoneLine(bot, c))
+                {
+                    static std::mutex s_joinLogLock;
+                    static std::unordered_map<ObjectGuid, uint32> s_joinLogAt;
+                    uint32 const now = getMSTime();
+                    bool speak = false;
+                    {
+                        std::lock_guard<std::mutex> lock(s_joinLogLock);
+                        uint32& last = s_joinLogAt[bot->GetObjectGuid()];
+                        if (!last || getMSTimeDiff(last, now) > 10000)
+                        {
+                            last = now;
+                            speak = true;
+                        }
+                    }
+                    if (speak)
+                        LOG_INFO("playerbots.dungeonclear",
+                                 "[DC:{}] trail join via nearest crumb #{} of {} ({}yd away, "
+                                 "{}yd behind the tank)",
+                                 bot->GetName(), int(idx), int(crumbs.size()),
+                                 int(bot->GetExactDist(&c)), int(bot->GetExactDist(leader)));
+                    out = c;
+                    return true;
+                }
+            }
+        }
+    }
+
     // Trail shorter than the full lag (or nothing reachable past it): trail the
     // farthest reachable pre-lag crumb (the follower simply stacks a little
     // closer until more trail accrues).
