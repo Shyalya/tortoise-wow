@@ -279,3 +279,79 @@ order 109 5710 3     # Jammal'an the Prophet (key 2)
 order 109 5719 7     # Morphaz (key 6)
 order 109 5722 8     # Hazzas (key 7)
 order 109 5709 9     # Shade of Eranikus (key 8)
+
+# =============================================================================
+# Turtle WoW custom dungeons. None of these is in the compiled credit list, so
+# the order lines below ARE the roster (an order line credits its entry).
+# Bosses and coordinates from turtle_world 2026-09-05 (creature_template rank 1
+# with 10k+ health, one spawn each); the sequence follows the walk from the
+# entrance. Provisional until the owner confirms. Rares are left out.
+# =============================================================================
+
+# --- The Crescent Grove (map 802), entrance 579,91,276 -----------------------
+# Inuvias Brightlance (92133, lvl 40 in a 32-38 dungeon) looks like a rare and
+# is not ordered; Wardens Liferoot/Treeshade and the Elders are trash-sized.
+order 802 92107 1     # Grovetender Engryss        lvl 34   261,-148
+order 802 92109 2     # Keeper Ranathos            lvl 35   122,68
+order 802 92108 3     # High Priestess A'lathea    lvl 36  -309,-308
+order 802 92111 4     # Fenektis the Deceiver      lvl 37  -510,62
+order 802 92110 5     # Master Raxxieth            lvl 38  -659,-391 (end boss)
+
+# --- Stormwrought Ruins (map 818), front entrance -5633,-4393,250 -------------
+order 818 62547 1     # Dagar the Glutton          lvl 34  -5792,-4366
+order 818 62548 2     # Oronok Torn-Heart          lvl 34  -5787,-4260
+order 818 62552 3     # Librarian Theodorus        lvl 35  -5910,-4304
+order 818 62549 4     # Duke Balor the IV          lvl 36  -5993,-4363
+order 818 62551 5     # Chieftain Stormsong        lvl 36  -6068,-4153
+order 818 62550 6     # Deathlord Tidebane         lvl 38  -6324,-4007 (end boss)
+
+# --- Gilneas City (map 815), entrance -1100,2238,183 --------------------------
+# Regent-Lord Mortimer and Regent-Lady Celia Harlow stand together (a pair).
+# Horsemaster Levvin (61605, 10k hp) is not ordered.
+order 815 61419 1     # Matthias Holtz             lvl 44  -1100,2333
+order 815 61420 2     # Packmaster Ragetooth       lvl 44  -1288,2222
+order 815 61421 3     # Judge Sutherland           lvl 46  -1475,2322
+order 815 61422 4     # Dustivan Blackcowl         lvl 46  -1451,2567
+order 815 61423 5     # Marshal Magnus Greystone   lvl 47  -1062,2805
+order 815 61264 6     # Regent-Lord Mortimer Harlow lvl 47  -956,2957
+order 815 61263 7     # Regent-Lady Celia Harlow   lvl 47  -962,2949
+order 815 61418 8     # Genn Greymane              lvl 49  -943,2969 (end boss)
+
+# --- Hateforge Quarry (map 808), entrance -8174,-3121,200 ---------------------
+# 'Broody' (60715) is Figgles' companion, not ordered.
+order 808 60736 1     # Engineer Figgles           lvl 54  -8120,-3463
+order 808 60735 2     # High Foreman Bargul Blackhammer lvl 54 -8305,-3442
+order 808 60829 3     # Corrosis                   lvl 52  -8249,-3572
+order 808 60734 4     # Hatereaver Annihilator     lvl 55  -7991,-3582
+order 808 60737 5     # Har'gesh Doomcaller        lvl 57  -8307,-3742 (end boss)
+
+# --- Karazhan Crypt (map 800), entrance -11068,-1806,53 -----------------------
+# Alarus (the end boss) is summoned by the Crypt Watcher trigger
+# (trigger_summon_alarus) and has no spawn row; needs an event before it can
+# be an objective. Bosses are level 61-62 - the party is capped at 60.
+order 800 91919 1     # Commander Andreon          lvl 61  -11064,-1542
+order 800 91917 2     # Corpsemuncher              lvl 62  -11224,-1407
+order 800 92935 3     # Guard Captain Gort         lvl 62  -11217,-1697
+order 800 91929 4     # Hivaxxis                   lvl 62  -11255,-1745
+order 800 91916 5     # Archlich Enkhraz           lvl 62  -11188,-1792
+order 800 91920 6     # Marrowspike                lvl 62  -11215,-1800
+
+# --- Stormwind Vault (map 35), entrance -1,41,-24 -----------------------------
+order 35 80851 1      # Volkan Cruelblade          lvl 62  -13,52
+order 35 80852 2      # Tham'Grarr                 lvl 62  -131,71
+order 35 80850 3      # Black Bride                lvl 62  73,116
+order 35 80854 4      # Damian                     lvl 62  -13,150
+order 35 80853 5      # Aszosh Grimflame           lvl 62  -1,191
+order 35 93107 6      # Arc'tiras                  lvl 62  -100,151 (end boss)
+
+# --- Windhorn Canyon (map 820), entrance -8026,-3510,158 ----------------------
+# On the ladder since the start, 9 starts and never a clear; the auto roster
+# had nothing to go on. Full boss set, walk from the entrance.
+order 820 62778 1     # Ahgk'tos the Pure          lvl 24  -7232,-3503
+order 820 62779 2     # Pathun Duskhide            lvl 25  -7529,-3583
+order 820 62783 3     # Ambassador Vortalus        lvl 26  -7669,-3641
+order 820 62780 4     # Bonespeaker Narlgom        lvl 27  -7643,-3646
+order 820 62785 5     # Champion Rotag             lvl 27  -7640,-3636
+order 820 62784 6     # Walgan Bloodcaller         lvl 27  -7743,-3397
+order 820 62781 7     # Prophet Stormhoof          lvl 28  -7626,-3681
+order 820 62782 8     # Chieftain Shalk Blackwind  lvl 29  -7511,-3798 (end boss)
