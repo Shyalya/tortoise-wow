@@ -328,9 +328,12 @@ namespace DcStrandedRecovery
                                            /*withPet*/ true);
                     LOG_INFO("playerbots.dungeonclear",
                              "[DC:{}] stranded-recovery: {} still stuck after {} walks -> "
-                             "unwedged {}yd onto the mesh where it stood",
+                             "unwedged {}yd onto the mesh where it stood (member at {:.0f},{:.0f},{:.0f}, "
+                             "tank at {:.0f},{:.0f},{:.0f})",
                              leader->GetName(), member->GetName(),
-                             DC_STRANDED_WALK_STRIKES, int(mesh.distance));
+                             DC_STRANDED_WALK_STRIKES, int(mesh.distance),
+                             mesh.x, mesh.y, mesh.z,
+                             leader->GetPositionX(), leader->GetPositionY(), leader->GetPositionZ());
                 }
                 else if (!mesh.ok)
                 {
@@ -347,8 +350,11 @@ namespace DcStrandedRecovery
                     // than claiming a rescue that did nothing.
                     LOG_INFO("playerbots.dungeonclear",
                              "[DC:{}] stranded-recovery: {} is {}yd back but standing on "
-                             "good ground - not wedged, it simply cannot follow",
-                             leader->GetName(), member->GetName(), int(strandedDist));
+                             "good ground - not wedged, it simply cannot follow (member at "
+                             "{:.0f},{:.0f},{:.0f}, tank at {:.0f},{:.0f},{:.0f})",
+                             leader->GetName(), member->GetName(), int(strandedDist),
+                             member->GetPositionX(), member->GetPositionY(), member->GetPositionZ(),
+                             leader->GetPositionX(), leader->GetPositionY(), leader->GetPositionZ());
                 }
                 ClearStrandedStrikes(member->GetObjectGuid());
             }
@@ -372,8 +378,11 @@ namespace DcStrandedRecovery
 
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] stranded-recovery: no progress past the timeout with {} out of "
-                     "range ({}yd) -> sent running to the tank",
-                     leader->GetName(), member->GetName(), int(strandedDist));
+                     "range ({}yd) -> sent running to the tank (member at {:.0f},{:.0f},{:.0f}, "
+                     "tank at {:.0f},{:.0f},{:.0f})",
+                     leader->GetName(), member->GetName(), int(strandedDist),
+                     member->GetPositionX(), member->GetPositionY(), member->GetPositionZ(),
+                     leader->GetPositionX(), leader->GetPositionY(), leader->GetPositionZ());
         }
 
         if (moved == 0)
