@@ -12,7 +12,9 @@ bool DpsAssistAction::isUseful()
     if (bot->HasAura(23333) || bot->HasAura(23335) || bot->HasAura(34976))
         return false;
 
-    return true;
+    Unit* target = GetTarget();
+    return target && target->IsInWorld() && target->GetMapId() == bot->GetMapId() &&
+        !sServerFacade.UnitIsDead(target) && !sServerFacade.IsFriendlyTo(bot, target);
 }
 
 bool AttackAnythingAction::isUseful()

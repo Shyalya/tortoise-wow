@@ -26,6 +26,9 @@ bool IsDeadValue::Calculate()
 
 bool PetIsDeadValue::Calculate()
 {
+    if (bot->GetPet())
+        petDbCached = false;
+
 #ifdef MANGOSBOT_ZERO
 #ifdef MANGOS
     PetDatabaseStatus status = Pet::GetStatusFromDB(bot);
@@ -34,10 +37,17 @@ bool PetIsDeadValue::Calculate()
 #endif
     if (!bot->GetPet())
     {
-        uint32 ownerid = bot->GetGUIDLow();
-        auto result = CharacterDatabase.PQuery("SELECT id FROM character_pet WHERE owner = '%u'", ownerid);
-        std::unique_ptr<QueryResult> result_guard(result);
-        return result != nullptr;
+        uint32 const now = WorldTimer::getMSTime();
+        if (!petDbCached || WorldTimer::getMSTimeDiff(lastPetDbCheckMs, now) >= 30000)
+        {
+            uint32 ownerid = bot->GetGUIDLow();
+            auto result = CharacterDatabase.PQuery("SELECT id FROM character_pet WHERE owner = '%u' LIMIT 1", ownerid);
+            std::unique_ptr<QueryResult> result_guard(result);
+            hasStoredPet = result != nullptr;
+            lastPetDbCheckMs = now;
+            petDbCached = true;
+        }
+        return hasStoredPet;
     }
     if (bot->GetPetGuid() && !bot->GetPet())
         return true;

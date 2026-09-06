@@ -24,6 +24,7 @@
 #include "WorldPacket.h"
 #include "SharedDefines.h"
 #include "WorldSession.h"
+#include "ArchitectureDiagnostics.h"
 #include "Opcodes.h"
 #include "Log.h"
 #include "World.h"
@@ -186,7 +187,7 @@ void WorldSession::HandleCharEnum(QueryResult * result)
 void WorldSession::HandleCharEnumOpcode(WorldPacket & /*recv_data*/)
 {
     /// get all the data necessary for loading all characters (along with their pets) on the account
-    CharacterDatabase.AsyncPQuery(&chrHandler, &CharacterHandler::HandleCharEnumCallback, GetAccountId(),
+    CharacterDatabase.AsyncPQueryPriority(&chrHandler, &CharacterHandler::HandleCharEnumCallback, GetAccountId(),
                                   //           0               1                2                3                 4                  5                       6                        7
                                   "SELECT characters.guid, characters.name, characters.race, characters.class, characters.gender, characters.playerBytes, characters.playerBytes2, characters.level, "
                                   //   8                9               10                     11                     12                     13                    14
@@ -497,13 +498,18 @@ void WorldSession::HandlePlayerLoginOpcode(WorldPacket & recv_data)
     DEBUG_LOG("WORLD: Recvd Player Logon Message");
 
     LoginQueryHolder *holder = new LoginQueryHolder(GetAccountId(), playerGuid);
+    holder->SetLoginRequestTime(WorldTimer::getMSTime());
+    if (GetSocket() && TurtleDiagnostics::enabled.load(std::memory_order_relaxed))
+        sLog.out(LOG_PERFORMANCE, "PLAYER_LOGIN_STAGE account=%u guid=%u phase=request handler_queue_ms=%u",
+            GetAccountId(), playerGuid.GetCounter(), recv_data.GetPacketTime() ?
+            WorldTimer::getMSTimeDiff(recv_data.GetPacketTime(), holder->GetLoginRequestTime()) : 0);
     if (!holder->Initialize())
     {
         delete holder;                                      // delete all unprocessed queries
         return;
     }
     m_playerLoading = true;
-    CharacterDatabase.DelayQueryHolderUnsafe(&chrHandler, &CharacterHandler::HandlePlayerLoginCallback, holder);
+    CharacterDatabase.DelayQueryHolderUnsafePriority(&chrHandler, &CharacterHandler::HandlePlayerLoginCallback, holder);
 }
 
 //This is what most initial priority is given.
@@ -548,7 +554,7 @@ void WorldSession::LoginPlayer(ObjectGuid loginPlayerGuid)
         return;
     }
     m_playerLoading = true;
-    CharacterDatabase.DelayQueryHolderUnsafe(&chrHandler, &CharacterHandler::HandlePlayerLoginCallback, holder);
+    CharacterDatabase.DelayQueryHolderUnsafePriority(&chrHandler, &CharacterHandler::HandlePlayerLoginCallback, holder);
 }
 
 // Post-login event that fixes other players/bots rendering "naked" (base/underwear model) to a
@@ -614,6 +620,21 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
     }
     ObjectGuid playerGuid = holder->GetGuid();
     ASSERT(playerGuid.IsPlayer());
+    bool const traceLoginEnabled = GetSocket() && holder->GetLoginRequestTime() &&
+        TurtleDiagnostics::enabled.load(std::memory_order_relaxed);
+    uint32 const loginRequestedAt = holder->GetLoginRequestTime();
+    uint32 loginPreviousStage = loginRequestedAt;
+    auto traceLogin = [&](char const* phase)
+    {
+        if (!traceLoginEnabled) return;
+        uint32 const now = WorldTimer::getMSTime();
+        sLog.out(LOG_PERFORMANCE, "PLAYER_LOGIN_STAGE account=%u guid=%u phase=%s stage_ms=%u since_request_ms=%u",
+            GetAccountId(), playerGuid.GetCounter(), phase,
+            WorldTimer::getMSTimeDiff(loginPreviousStage, now), WorldTimer::getMSTimeDiff(loginRequestedAt, now));
+        loginPreviousStage = now;
+    };
+    // Includes DB queue, holder execution and callback dispatch, not SQL alone.
+    traceLogin("db_results_ready");
 
     // If the character is online (ALT-F4 logout for example)
     Player *pCurrChar = sObjectAccessor.FindPlayer(playerGuid);
@@ -685,6 +706,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
         pCurrChar->GetMotionMaster()->Initialize();
     }
 
+    traceLogin("existing_character_resolved");
     // "GetAccountId()==db stored account id" checked in LoadFromDB (prevent login not own character using cheating tools)
     if (alreadyOnline)
         pCurrChar->SendPacketsAtRelogin();
@@ -698,6 +720,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
     }
 
     ASSERT(pCurrChar->GetSession() == this);
+    traceLogin("character_loaded");
     SetPlayer(pCurrChar);
     if (m_antiCheat)
         m_antiCheat->NewPlayer();
@@ -747,6 +770,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
     sObjectAccessor.AddObject(m_masterPlayer);
 
     WorldPacket data(SMSG_LOGIN_VERIFY_WORLD, 20);
+    traceLogin("social_loaded");
     data << pCurrChar->GetMapId();
     data << pCurrChar->GetPositionX();
     data << pCurrChar->GetPositionY();
@@ -856,6 +880,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
         }
     }
 
+    traceLogin("initial_packets_queued");
     if (!alreadyOnline && !pCurrChar->GetMap()->Add(pCurrChar))
     {
         // normal delayed teleport protection not applied (and this correct) for this case (Player object just created)
@@ -880,6 +905,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
     pCurrChar->GetSocial()->SendIgnoreList();
 
     pCurrChar->SendInitialPacketsAfterAddToMap();
+    traceLogin("map_and_initial_objects_added");
     if (alreadyOnline)
         pCurrChar->SendInitWorldStates(pCurrChar->GetCachedZoneId());
 
@@ -940,6 +966,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
         pCurrChar->ContinueTaxiFlight();
         pCurrChar->LoadPet();
     }
+    traceLogin("social_corpse_and_pet_loaded");
 
     auto maskVar = pCurrChar->GetPlayerVariable(PlayerVariables::PendingChallengeMask);
     // Bot sessions must never go through challenge setup — they predate TurtleWoW's hardcore
@@ -1037,6 +1064,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
 
     m_playerLoading = false;
     m_clientMoverGuid = pCurrChar->GetObjectGuid();
+    traceLogin("login_flag_cleared");
     delete holder;
     if (alreadyOnline)
     {
@@ -1127,6 +1155,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
     {
         script->OnLogin(pCurrChar);
     });
+    traceLogin("login_hooks_finished");
 
 #ifdef ENABLE_ELUNA
     if (showedIntroCinematic)

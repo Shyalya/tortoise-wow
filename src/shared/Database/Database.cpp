@@ -20,9 +20,11 @@
  */
 
 #include "Util.h"
+#include "ArchitectureDiagnostics.h"
 #include "DatabaseEnv.h"
 #include "Config/Config.h"
 #include "Database/SqlOperations.h"
+#include "WorkMetrics.h"
 
 #include <ctime>
 #include <iostream>
@@ -246,6 +248,16 @@ void Database::HaltDelayThread()
     for (uint32 i = 0; i < m_numAsyncWorkers; ++i)
         m_delayThreads[i].join();
 
+    // A final callback may have queued work to a worker that already exited.
+    // Keep all worker/connection objects alive until that tail also drains.
+    size_t drained;
+    do
+    {
+        drained = 0;
+        for (auto const& worker : m_threadsBodies)
+            drained += worker->DrainRequests();
+    } while (drained);
+
     m_threadsBodies.clear();
     m_delayThreads.clear();
 
@@ -264,6 +276,19 @@ void Database::ProcessResultQueue(uint32 maxTime)
 {
     if (m_pResultQueue)
         m_pResultQueue->Update(maxTime);
+}
+
+size_t Database::GetPendingResultCount() const
+{
+    return m_pResultQueue ? m_pResultQueue->PendingCount() : 0;
+}
+
+size_t Database::GetPendingAsyncOperationCount() const
+{
+    size_t pending = m_delayQueue ? m_delayQueue->size() : 0;
+    for (auto const& worker : m_threadsBodies)
+        pending += worker->PendingCount();
+    return pending;
 }
 
 void Database::escape_string(std::string& str)
@@ -350,6 +375,15 @@ bool Database::PExecuteLog(const char * format,...)
     }
 
     return Execute(szQuery);
+}
+
+QueryResult* Database::Query(const char* sql)
+{
+    TurtleDiagnostics::Scope wait(TurtleDiagnostics::DatabaseWait);
+    SqlConnection::Lock guard(getQueryConnection());
+    wait.Finish();
+    TurtleDiagnostics::Scope execution(TurtleDiagnostics::DatabaseRead);
+    return guard->Query(sql);
 }
 
 QueryResult* Database::PQuery(const char *format,...)
@@ -583,6 +617,16 @@ bool Database::RollbackTransaction()
     return true;
 }
 
+void Database::AddToDelayQueue(SqlOperation* op)
+{
+    // Unkeyed writes have one FIFO lane. Reads can use all workers. Keep
+    // Turtle's explicit serial-ID affinity for keyed read-after-write chains.
+    if (m_numAsyncWorkers && !op->IsReadOnly())
+        m_threadsBodies[0]->addSerialOperation(op);
+    else
+        m_delayQueue->add(op);
+}
+
 void Database::AddToSerialDelayQueue(SqlOperation *op)
 {
     if (op->GetSerialId() == 0 || m_numAsyncWorkers == 0)
@@ -596,6 +640,18 @@ void Database::AddToSerialDelayQueue(SqlOperation *op)
     // executed sequentially, however
     int worker = op->GetSerialId() % m_numAsyncWorkers;
     m_threadsBodies[worker]->addSerialOperation(op);
+}
+
+void Database::AddToPrioritySerialDelayQueue(SqlOperation* op)
+{
+    if (op->GetSerialId() == 0 || m_numAsyncWorkers == 0)
+    {
+        AddToPriorityDelayQueue(op);
+        return;
+    }
+
+    int const worker = op->GetSerialId() % m_numAsyncWorkers;
+    m_threadsBodies[worker]->addPrioritySerialOperation(op);
 }
 
 bool Database::HasAsyncQuery()

@@ -24,6 +24,7 @@
 */
 
 #include "WorldSocket.h"                                    // must be first to make ACE happy with ACE includes in it
+#include "ArchitectureDiagnostics.h"
 #include "Common.h"
 #include "Database/DatabaseEnv.h"
 #include "Log.h"
@@ -285,17 +286,16 @@ uint32 GetChatPacketProcessingType(ChatPacketHeader* header)
     return PACKET_PROCESS_WORLD;
 }
 
-/// Bot wraps packets in unique_ptr; take ownership and forward to the raw-pointer overload.
-void WorldSession::QueuePacket(std::unique_ptr<WorldPacket> new_packet)
-{
-    QueuePacket(new_packet.release());
-}
-
 /// Bot-side convenience overload: copy a (potentially stack-allocated) inline
 /// WorldPacket onto the heap so QueuePacket(WorldPacket*) can take ownership.
 void WorldSession::QueuePacket(WorldPacket const& new_packet)
 {
     QueuePacket(new WorldPacket(new_packet));
+}
+
+void WorldSession::QueuePacket(std::unique_ptr<WorldPacket> new_packet)
+{
+    QueuePacket(new_packet.release());
 }
 
 /// Add an incoming packet to the queue
@@ -455,7 +455,29 @@ bool WorldSession::CanProcessPackets() const
     return (m_Socket && !m_Socket->IsClosed());
 }
 
-void WorldSession::ProcessPackets(PacketFilter& updater)
+void WorldSession::HandleBotPackets()
+{
+    // Match ManTech's real queue handling, while retaining Turtle's opcode
+    // validation, script hooks and delayed-teleport boundary. Never run this
+    // from a map job: some queued bot actions change groups/guilds/other maps.
+    if (m_Socket || !_player || !_player->IsInWorld() || PlayerLoading())
+        return;
+    PacketFilter filter(this);
+    for (uint32 type = 0; type < PACKET_PROCESS_MAX_TYPE; ++type)
+    {
+        if (_recvQueue[type].empty())
+        {
+            _receivedPacketType[type] = false;
+            continue;
+        }
+        filter.SetProcessType(static_cast<PacketProcessing>(type));
+        ProcessPackets(filter, true);
+        if (!_player || !_player->IsInWorld())
+            break;
+    }
+}
+
+void WorldSession::ProcessPackets(PacketFilter& updater, bool botPackets, uint32 budgetMs)
 {
     WorldPacket* packet = nullptr;
     _receivedPacketType[updater.PacketProcessType()] = false;
@@ -464,17 +486,25 @@ void WorldSession::ProcessPackets(PacketFilter& updater)
 
     std::vector<WorldPacket*> requeuePackets;
 
-    constexpr uint32 MaxPacketsPerUpdate = 200;
+    if (botPackets) budgetMs = 2;
+    uint32 const MaxPacketsPerUpdate = botPackets || budgetMs ? 32 : 200;
     uint32 totalPackets = 0;
+    uint32 const start = WorldTimer::getMSTime();
 
-    while (CanProcessPackets() && _recvQueue[updater.PacketProcessType()].next(packet, updater))
+    while ((botPackets ? !m_Socket && _player && _player->IsInWorld() : CanProcessPackets()) &&
+        totalPackets < MaxPacketsPerUpdate &&
+        (!budgetMs || !totalPackets || WorldTimer::getMSTimeDiffToNow(start) < budgetMs) &&
+        _recvQueue[updater.PacketProcessType()].next(packet, updater))
     {
         ++totalPackets;
 
         _receivedPacketType[updater.PacketProcessType()] = true;
-        auto packetAllowed = AllowPacket(packet->GetOpcode(), timeNow);
+        auto packetAllowed = botPackets ? PacketAllowResult::Allowed : AllowPacket(packet->GetOpcode(), timeNow);
         if (packetAllowed == PacketAllowResult::Denied)
+        {
+            delete packet;
             break;
+        }
 
         if (packetAllowed == PacketAllowResult::Requeue)
         {
@@ -498,6 +528,8 @@ void WorldSession::ProcessPackets(PacketFilter& updater)
             }
 
             uint32 packetTime = WorldTimer::getMSTime();
+            uint32 const queueWaitMs = packet->GetPacketTime() ?
+                WorldTimer::getMSTimeDiff(packet->GetPacketTime(), packetTime) : 0;
             switch (opHandle.status)
             {
                 case STATUS_LOGGEDIN:
@@ -571,6 +603,40 @@ void WorldSession::ProcessPackets(PacketFilter& updater)
             packetTime = WorldTimer::getMSTimeDiffToNow(packetTime);
             if (sWorld.getConfig(CONFIG_UINT32_PERFLOG_SLOW_PACKET) && packetTime > sWorld.getConfig(CONFIG_UINT32_PERFLOG_SLOW_PACKET))
                 sLog.out(LOG_PERFORMANCE, "Slow packet opcode %s: %ums. Account %u on IP %s", opHandle.name, packetTime, GetAccountId(), GetRemoteAddress().c_str());
+
+            // Handler duration alone hides time spent waiting for the map tick.
+            // Report gameplay input only, at most once per second per client.
+            bool const gameplayInput = packet->GetOpcode() == CMSG_LOOT ||
+                packet->GetOpcode() == CMSG_AUTOSTORE_LOOT_ITEM ||
+                packet->GetOpcode() == CMSG_LOOT_MONEY ||
+                packet->GetOpcode() == CMSG_LOOT_RELEASE ||
+                packet->GetOpcode() == CMSG_ATTACKSWING ||
+                packet->GetOpcode() == CMSG_ATTACKSTOP ||
+                packet->GetOpcode() == CMSG_CAST_SPELL;
+            if (gameplayInput && !botPackets)
+            {
+                TurtleDiagnostics::Record(TurtleDiagnostics::InputQueue, uint64(queueWaitMs) * 1000);
+                TurtleDiagnostics::Record(TurtleDiagnostics::InputHandler, uint64(packetTime) * 1000);
+            }
+            uint32 const reportNow = WorldTimer::getMSTime();
+            static uint32 lastSlowBotHandler = 0; // synthetic dispatch is world-owned
+            if (botPackets && TurtleDiagnostics::enabled.load(std::memory_order_relaxed) &&
+                packetTime >= 25 && WorldTimer::getMSTimeDiff(lastSlowBotHandler, reportNow) >= 1000)
+            {
+                lastSlowBotHandler = reportNow;
+                sLog.out(LOG_PERFORMANCE, "TW_BOT_HANDLER_SLOW opcode=%s handler_ms=%u player=%u",
+                    opHandle.name, packetTime, _player ? _player->GetGUIDLow() : 0);
+            }
+            if (gameplayInput && !botPackets && sWorld.getConfig(CONFIG_UINT32_PERFLOG_SLOW_PACKET) &&
+                (queueWaitMs >= 250 || packetTime >= 250) &&
+                WorldTimer::getMSTimeDiff(m_lastGameplayDelayReportMs, reportNow) >= 1000)
+            {
+                m_lastGameplayDelayReportMs = reportNow;
+                sLog.out(LOG_PERFORMANCE, "GAMEPLAY_INPUT_DELAY opcode=%s queue_ms=%u handler_ms=%u map=%u player=%u diag_map=%u diag_inst=%u diag_tick=%llu",
+                    opHandle.name, queueWaitMs, packetTime, _player ? _player->GetMapId() : 0,
+                    _player ? _player->GetGUIDLow() : 0, TurtleDiagnostics::context.map,
+                    TurtleDiagnostics::context.instance, static_cast<unsigned long long>(TurtleDiagnostics::context.tick));
+            }
         }
         catch (ByteBufferException &)
         {

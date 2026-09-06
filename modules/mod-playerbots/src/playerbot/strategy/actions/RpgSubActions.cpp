@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include "playerbot/BotDiagnostics.h"
 #include "RpgSubActions.h"
 #include "ChooseRpgTargetAction.h"
 #include "playerbot/PlayerbotAIConfig.h"
@@ -36,6 +37,7 @@ void RpgHelper::AfterExecute(bool doDelay, bool waitForGroup, std::string nextAc
         nextAction = "rpg cancel"; 
     
     SET_AI_VALUE(std::string, "next rpg action", nextAction);
+    ai::botdiag::TraceBehavior(ai, "rpg_next", nextAction.c_str());
 
     if(doDelay)
         setDelay(waitForGroup);
@@ -142,7 +144,8 @@ bool RpgEmoteAction::Execute(Event& event)
 
 bool RpgCancelAction::Execute(Event& event)
 {
-    rpg->OnCancel();  
+    ai::botdiag::TraceBehavior(ai, "rpg_cancel", event.getSource().c_str());
+    rpg->OnCancel();
 
     if (!urand(0,3) || AI_VALUE(GuidPosition, "rpg target").GetEntry() != AI_VALUE(TravelTarget*, "travel target")->GetEntry() || AI_VALUE(TravelTarget*, "travel target")->GetStatus() != TravelStatus::TRAVEL_STATUS_WORK) //1 out of 4 to ignore current travel target after cancel.
         AI_VALUE(std::set<ObjectGuid>&, "ignore rpg target").insert(AI_VALUE(GuidPosition, "rpg target")); 
@@ -196,7 +199,6 @@ bool RpgTaxiAction::Execute(Event& event)
 
     uint32 path = nodes[urand(0, nodes.size() - 1)];
     uint32 money = bot->GetMoney();
-    bot->SetMoney(money + 100000);
 
     TaxiPathEntry const* entry = sTaxiPathStore.LookupEntry(path);
     if (!entry)
@@ -213,10 +215,13 @@ bool RpgTaxiAction::Execute(Event& event)
         sLog.outError("Bot %s cannot talk to flightmaster (%zu location available)", bot->GetName(), nodes.size());
         return false;
     }
-#ifdef MANGOSBOT_TWO                
-    bot->OnTaxiFlightEject(true);
-#endif
-    if (!bot->ActivateTaxiPathTo({ entry->from, entry->to }, flightMaster, 0))
+    // Keep the existing ambient free-flight policy, but use the SAME native
+    // eligibility/discovery adapter as purposeful travel. Restore funds on
+    // rejection too; the former early return leaked the temporary credit.
+    bot->SetMoney(uint32(std::min<uint64>(uint64(money) + entry->price, UINT32_MAX)));
+    bool const activated = MovementAction::UseTaxi(ai, path, true, flightMaster);
+    bot->SetMoney(money);
+    if (!activated)
     {
         sLog.outError("Bot %s cannot fly %u (%zu location available)", bot->GetName(), path, nodes.size());
         return false;
@@ -227,8 +232,6 @@ bool RpgTaxiAction::Execute(Event& event)
 #endif
 
     sLog.outDetail("Bot #%d <%s> is flying from %s to %s (%zu location available)", bot->GetGUIDLow(), bot->GetName(), nodeFrom->name[0], nodeTo->name[0], nodes.size());
-    bot->SetMoney(money);
-
     rpg->AfterExecute();
 
     DoDelay();

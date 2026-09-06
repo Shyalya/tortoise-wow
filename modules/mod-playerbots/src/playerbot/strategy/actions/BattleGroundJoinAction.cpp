@@ -927,12 +927,9 @@ bool BGJoinAction::JoinQueue(uint32 type)
    }
 #endif
 
-   // Bot sessions are never registered in sWorld.m_sessions (created directly via
-   // "new WorldSession(...)" in PlayerbotMgr, bypassing sWorld.AddSession()), so
-   // World::UpdateSessions() never drains their recvQueue - ai->QueuePacket() here
-   // would silently vanish forever. Call the opcode handler directly instead,
-   // exactly like the arena branch above already does with HandleBattlemasterJoinArena.
-   bot->GetSession()->HandleBattlemasterJoinOpcode(packet);
+   // The world-owner bot-session pump now drains this queue. Do not mutate
+   // the global battleground queues directly from a map-owned AI action.
+   ai->QueuePacket(packet);
    return true;
 }
 

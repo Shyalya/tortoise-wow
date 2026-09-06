@@ -15,7 +15,10 @@ class LoginQueryHolder : public SqlQueryHolder
 private:
     uint32 m_accountId;
     ObjectGuid m_guid;
+    uint32 m_loginRequestTime = 0;
 public:
+    void SetLoginRequestTime(uint32 value) { m_loginRequestTime = value; }
+    uint32 GetLoginRequestTime() const { return m_loginRequestTime; }
     LoginQueryHolder(uint32 accountId, ObjectGuid guid)
         : SqlQueryHolder(guid.GetCounter()), m_accountId(accountId), m_guid(guid) { }
     ~LoginQueryHolder()

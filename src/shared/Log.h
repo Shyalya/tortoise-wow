@@ -226,10 +226,8 @@ class Log : public MaNGOS::Singleton<Log, MaNGOS::ClassLevelLockable<Log, std::m
                 fprintf(logFiles[type], "%s", log.c_str());
                 fprintf(logFiles[type], "\n");
                 fflush(logFiles[type]);
-
-                fflush(logFiles[type]);
             }
-            fflush(stdout);
+            // File-only diagnostics must not flush the interactive console.
         }
 
         template<typename... Args>

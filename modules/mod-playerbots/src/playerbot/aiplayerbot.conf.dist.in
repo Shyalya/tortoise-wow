@@ -5,6 +5,18 @@
 [AiPlayerbotConf]
 ConfVersion=2020072501
 
+# Autonomous noncombat execution-failure retries (milliseconds). Native
+# usefulness/prerequisites/possible checks ALWAYS run; combat, reactions,
+# explicit commands and human-led bots are not delayed by this cache.
+# Set either retry value to 0 to disable. Cache is per engine, bounded and
+# cleared on movement/resource recovery, reset and map/strategy transitions.
+AiPlayerbot.FailedActionRetryBase = 250
+AiPlayerbot.FailedActionRetryMax = 2000
+AiPlayerbot.FailedActionCacheTtl = 30000
+AiPlayerbot.FailedActionCacheMaxEntries = 64
+# Existing native movement failure retry remains a separate path-level check.
+AiPlayerbot.PathFailureRetryMs = 3000
+
 # Enable or disable AI Playerbot
 # The bot subsystem is built into mangosd but inert
 # unless this is flipped to 1 + the user knows what they're doing. Flip when you
@@ -74,7 +86,7 @@ AiPlayerbot.RandomBotAccountCount = 500
 # This will ingore the AiPlayerbot.botActiveAlone setting, all bots will be active regardless
 # Works best together with AiPlayerbot.DisableBotOptimizations = 1
 # (0-1), default 0
-AiPlayerbot.DisableActivityPriorities = 1
+AiPlayerbot.DisableActivityPriorities = 0
 
 # Force bots to become active when a player is nearby
 #AiPlayerbot.ForceActiveWhenNearPlayer = 0
@@ -86,7 +98,7 @@ AiPlayerbot.DisableActivityPriorities = 1
 #AiPlayerbot.LimitCombatActivity = 0
 
 # Percentage of fully active bots. Default is 10, higher numbers may affect performance
-# AiPlayerbot.botActiveAlone = 10
+AiPlayerbot.botActiveAlone = 10
 
 # Limit random bot max level to online players max level + 5 and uses reference level 1 without a player.
 # AiPlayerbot.SyncLevelWithPlayers = 0
@@ -110,7 +122,7 @@ AiPlayerbot.RandomBotArenaTeamCount = 20
 AiPlayerbot.DeleteRandomBotArenaTeams = 0
 
 # Maps to teleport random bots
-AiPlayerbot.RandomBotMaps = 0,1,530,571
+AiPlayerbot.RandomBotMaps = 0,1
 
 # Min and max intervals for random teleports, in seconds (default: 2hrs and 48hrs)
 # The comment above was right and the values below were not: they had drifted to
@@ -955,7 +967,7 @@ AiPlayerbot.PremadeSpecLink.11.2.60 = 5002012--5050013355213521
 #AiPlayerbot.CommandPrefix =
 
 # Max AI iterations per tick
-#AiPlayerbot.IterationsPerTick = 10
+AiPlayerbot.IterationsPerTick = 10
 
 # Allow/deny bots from your guild
 AiPlayerbot.AllowGuildBots = 1
@@ -970,10 +982,12 @@ AiPlayerbot.GlobalCooldown = 1500
 #AiPlayerbot.MaxWaitForMove = 5000
 
 # Delay between two bot actions (default 100)
-AiPlayerbot.ReactDelay = 100
+AiPlayerbot.ReactDelay = 500
 
 # Inactivity delay
 AiPlayerbot.PassiveDelay = 10000
+AiPlayerbot.ValueCacheCleanupInterval = 60000
+AiPlayerbot.MemoryTelemetryInterval = 60000
 
 # Minimum delay between repeating actions (chat messages, emotes etc)
 AiPlayerbot.RepeatDelay = 5000
@@ -1067,8 +1081,14 @@ AiPlayerbot.NonCombatStrategies = +grind,+loot,+custom::say,+return,+delayed rol
 #AiPlayerbot.OpenGoSpell = 6477
 
 # Intervals
-AiPlayerbot.RandomBotUpdateInterval = 500
-AiPlayerbot.RandomBotsMaxLoginsPerInterval = 30
+AiPlayerbot.RandomBotUpdateInterval = 1000
+AiPlayerbot.RandomBotsMaxLoginsPerInterval = 8
+# Stop bot login holders from filling every async DB and result queue. Real
+# player character-list and world-entry work bypasses this bot-only limit.
+AiPlayerbot.RandomBotLoginDbQueueLimit = 256
+# Maximum existing random bots whose lifecycle/maintenance state may be
+# processed in one manager pass. Keep this bounded on large populations.
+AiPlayerbot.RandomBotsPerInterval = 64
 AiPlayerbot.RandomBotCountChangeMinInterval = 1800
 AiPlayerbot.RandomBotCountChangeMaxInterval = 7200
 #AiPlayerbot.MinRandomBotInWorldTime = 3600
@@ -5049,3 +5069,14 @@ AiPlayerbot.HealDistance = 30
 # The same for battlegrounds, where tighter is better. Previously this was a hard
 # halving of the value above, which tied the two together for no good reason.
 AiPlayerbot.HealDistanceBg = 25
+
+# Temporary bounded area behavior diagnostic (disabled by default).
+# At most 12 bots concurrently, 8 lines/bot/second, 8000 total lines and
+# 10 minutes after the first eligible bot event. Output: TW_BOT_BEHAVIOR
+# in the core performance log. Inactive sample slots rotate after 30 seconds.
+# Does not enable global EnableActionLog or alter bot activity/decisions.
+AiPlayerbot.BehaviorTrace = 0
+AiPlayerbot.BehaviorTraceMap = 0
+AiPlayerbot.BehaviorTraceX = -800
+AiPlayerbot.BehaviorTraceY = -530
+AiPlayerbot.BehaviorTraceRadius = 200

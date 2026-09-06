@@ -24,6 +24,8 @@
 */
 
 #include "World.h"
+#include "ExecutionWatch.h"
+#include "ArchitectureDiagnostics.h"
 #include "Database/DatabaseEnv.h"
 #include "Config/Config.h"
 #include "CustomMerchantMgr.h"
@@ -130,9 +132,9 @@ namespace HttpApi
 
 #include <chrono>
 
-volatile bool World::m_stopEvent = false;
+std::atomic<bool> World::m_stopEvent{false};
 uint8 World::m_ExitCode = SHUTDOWN_EXIT_CODE;
-volatile uint32 World::m_worldLoopCounter = 0;
+std::atomic<uint32> World::m_worldLoopCounter{0};
 
 float World::m_MaxVisibleDistanceOnContinents = DEFAULT_VISIBILITY_DISTANCE;
 float World::m_MaxVisibleDistanceInInstances = DEFAULT_VISIBILITY_INSTANCE;
@@ -244,9 +246,8 @@ AccountDataWrapper::~AccountDataWrapper()
 
 void World::InternalShutdown()
 {
-	// ProcessAsyncPackets() iterates m_sessions on its own thread with no lock,
-	// so it must be joined before the deletion loop below starts erasing entries
-	// out from under it.
+	// Stop the reader before the final session teardown (normal updates use
+	// m_sessionUpdateMutex to drain it before removing sessions).
 	if (m_asyncPacketsThread.joinable())
 	    m_asyncPacketsThread.join();
 
@@ -323,6 +324,7 @@ void World::AddSession(WorldSession* s)
 
 void World::AddSession_(WorldSession* s)
 {
+    std::lock_guard<std::recursive_mutex> sessionLock(m_sessionUpdateMutex);
     MANGOS_ASSERT(s);
 
     //NOTE - Still there is race condition in WorldSession* being used in the Sockets
@@ -613,9 +615,6 @@ bool World::RemoveQueuedSession(WorldSession* sess)
 
 void World::LoadConfigSettingsCommonPart(bool reload)
 {
-    if (!reload)
-        m_lastDiffs.resize(50);
-
 #ifdef USE_ANTICHEAT
     sAnticheatConfig.SetSource("anticheat.conf");
     sAnticheatConfig.loadConfigSettings();
@@ -1314,15 +1313,50 @@ void World::LoadConfigSettingsFromFile(bool reload)
     setConfig(CONFIG_UINT32_EMPTY_MAPS_UPDATE_TIME, "MapUpdate.Empty.UpdateTime", 0);
     setConfigMinMax(CONFIG_UINT32_MAP_OBJECTSUPDATE_THREADS, "MapUpdate.ObjectsUpdate.MaxThreads", 4, 1, 20);
     setConfigMinMax(CONFIG_UINT32_MAP_OBJECTSUPDATE_TIMEOUT, "MapUpdate.ObjectsUpdate.Timeout", 100, 10, 2000);
-    setConfigMinMax(CONFIG_UINT32_MAP_VISIBILITYUPDATE_THREADS, "MapUpdate.VisibilityUpdate.MaxThreads", 4, 1, 20);
+    // Relocation invokes AI/visibility callbacks: keep it on the map owner.
+    setConfigMinMax(CONFIG_UINT32_MAP_VISIBILITYUPDATE_THREADS, "MapUpdate.VisibilityUpdate.MaxThreads", 1, 1, 1);
     setConfigMinMax(CONFIG_UINT32_MAP_VISIBILITYUPDATE_TIMEOUT, "MapUpdate.VisibilityUpdate.Timeout", 100, 10, 2000);
+    setConfigMinMax(CONFIG_UINT32_MAPUPDATE_WORKER_THREADS, "MapUpdate.WorkerThreads", 4, 0, 32);
+    setConfigMinMax(CONFIG_UINT32_DB_CALLBACK_BUDGET_MS, "Database.CallbackBudgetMs", 5, 1, 100);
+    setConfigMinMax(CONFIG_UINT32_WORLD_TASK_BUDGET_MS, "World.AsyncWorkBudgetMs", 5, 1, 100);
+    setConfigMinMax(CONFIG_UINT32_MAPUPDATE_IDLE_AI_BATCH, "MapUpdate.IdleBotMaxUpdatesPerTick", 128, 1, 10000);
+    setConfigMinMax(CONFIG_UINT32_MAP_IDLE_AI_BUDGET, "AdaptiveLoad.BotBudgetMs", 20, 0, 1000);
+    setConfigMinMax(CONFIG_UINT32_MAP_IDLE_AI_MIN, "AdaptiveLoad.BackgroundBotMinUpdates", 16, 1, 1000);
+    setConfigMinMax(CONFIG_UINT32_MAP_IDLE_AI_ADVANCE, "MapUpdate.IdleBotMaxTimerAdvanceMs", 250, 1, 5000);
+    setConfigMinMax(CONFIG_UINT32_MAP_IDLE_AI_MAX_DEFERRAL, "AdaptiveLoad.BackgroundBotMaxDeferralMs", 15000, 1000, 300000);
+    setConfigMinMax(CONFIG_UINT32_MAP_IDLE_AI_RECOVERY, "AdaptiveLoad.BotRecoveryTicks", 20, 1, 1000);
+    setConfigMinMax(CONFIG_UINT32_ADAPTIVE_MEMORY_SOFT, "AdaptiveLoad.MemorySoftMB", 0, 0, 1048576);
+    setConfigMinMax(CONFIG_UINT32_ADAPTIVE_MEMORY_HARD, "AdaptiveLoad.MemoryHardMB", 0, 0, 1048576);
+    setConfigMinMax(CONFIG_UINT32_ADAPTIVE_MEMORY_RECOVER, "AdaptiveLoad.MemoryRecoverMB", 0, 0, 1048576);
     setConfigMinMax(CONFIG_UINT32_MAPUPDATE_INSTANCED_UPDATE_THREADS, "MapUpdate.Instanced.UpdateThreads", 2, 0, 20);
+    static std::once_flag diagnosticSink;
+    std::call_once(diagnosticSink, [] { TurtleDiagnostics::sink = [](char const* line) { sLog.out(LOG_PERFORMANCE, "%s", line); }; });
+    TurtleDiagnostics::enabled = sConfig.GetBoolDefault("Diagnostics.Architecture.Enabled", false);
+    TurtleDiagnostics::intervalMs = std::max(1000, sConfig.GetIntDefault("Diagnostics.Architecture.IntervalMs", 30000));
+    setConfigMinMax(CONFIG_UINT32_MAP_OBJECT_BUILD_THREADS, "MapUpdate.ObjectThreads", 2, 0, 8);
+    setConfigMinMax(CONFIG_UINT32_MAP_OBJECT_BUILD_CHUNK, "MapUpdate.VisibilityChunkSize", 64, 1, 4096);
+    setConfigMinMax(CONFIG_UINT32_MAP_CELL_THREADS, "MapUpdate.CellThreads", 2, 0, 8);
+    setConfigMinMax(CONFIG_UINT32_MAP_IDLE_BOT_THREADS, "MapUpdate.IdleBotThreads", 2, 0, 8);
+    setConfigMinMax(CONFIG_UINT32_MAP_CELL_CHUNK_SIZE, "MapUpdate.CellChunkSize", 64, 1, 4096);
+    setConfigMinMax(CONFIG_UINT32_MAP_CELL_MIN_PARALLEL, "MapUpdate.CellMinParallelCells", 128, 1, 65536);
+    setConfigMinMax(CONFIG_UINT32_MAP_CELL_MAX_CHUNKS, "MapUpdate.CellMaxChunksPerMap", 8, 1, 64);
+    setConfigMinMax(CONFIG_UINT32_MAP_CELL_MAX_WAIT, "MapUpdate.CellMaxWaitMs", 75, 1, 10000);
+    setConfigMinMax(CONFIG_UINT32_MAP_CELL_FALLBACK_SECONDS, "MapUpdate.CellFallbackSeconds", 30, 1, 3600);
+    setConfigMinMax(CONFIG_UINT32_MAP_BACKGROUND_OBJECT_SKIP, "MapUpdate.BackgroundObjects.MaxSkip", 20, 1, 100);
+    // Legacy striped concurrent gameplay is superseded by read-only discovery.
     setConfigMinMax(CONFIG_UINT32_MTCELLS_THREADS, "MapUpdate.Continents.MTCells.Threads", 0, 0, 20);
     setConfigMinMax(CONFIG_UINT32_MTCELLS_SAFEDISTANCE, "MapUpdate.Continents.MTCells.SafeDistance", 1066, 0, 34112);
     setConfigMinMax(CONFIG_UINT32_MAPUPDATE_UPDATE_PACKETS_DIFF, "MapUpdate.UpdatePacketsDiff", 100, 1, 10000);
     setConfigMinMax(CONFIG_UINT32_MAPUPDATE_UPDATE_PLAYERS_DIFF, "MapUpdate.UpdatePlayersDiff", 100, 1, 10000);
     setConfigMinMax(CONFIG_UINT32_MAPUPDATE_UPDATE_CELLS_DIFF, "MapUpdate.UpdateCellsDiff", 100, 1, 10000);
     setConfigMinMax(CONFIG_UINT32_INACTIVE_PLAYERS_SKIP_UPDATES, "Continents.InactivePlayers.SkipUpdates", 0, 0, 100);
+    setConfigMinMax(CONFIG_UINT32_HIBERNATED_PLAYERS_SKIP_UPDATES, "Continents.HibernatedPlayers.SkipUpdates", 19, 0, 1000);
+    setConfigMinMax(CONFIG_UINT32_MACHINE_DRIVEN_ADAPTIVE_STRIDE, "Continents.MachineDriven.AdaptiveStride", 1, 0, 1);
+    setConfigMinMax(CONFIG_UINT32_MACHINE_DRIVEN_TARGET_DIFF, "Continents.MachineDriven.TargetDiff", 100, 10, 1000);
+    setConfigMinMax(CONFIG_UINT32_MACHINE_DRIVEN_MAX_STRIDE_MULTIPLIER, "Continents.MachineDriven.MaxStrideMultiplier", 4, 1, 20);
+    setConfigMinMax(CONFIG_UINT32_MACHINE_DRIVEN_CRITICAL_REFRESH_INTERVAL, "Continents.MachineDriven.CriticalRefreshInterval", 250, 0, 5000);
+    setConfigMinMax(CONFIG_UINT32_MACHINE_DRIVEN_MAX_CATCHUP_DIFF, "Continents.MachineDriven.MaxCatchUpDiff", 500, 0, 5000);
+    setConfigMinMax(CONFIG_UINT32_MACHINE_DRIVEN_AUTONOMOUS_ACTIVE_STRIDE, "Continents.MachineDriven.AutonomousActiveStride", 2, 1, 20);
     setConfig(CONFIG_UINT32_MAPUPDATE_TICK_LOWER_GRID_ACTIVATION_DISTANCE, "MapUpdate.ReduceGridActivationDist.Tick", 0);
     setConfig(CONFIG_UINT32_MAPUPDATE_TICK_INCREASE_GRID_ACTIVATION_DISTANCE, "MapUpdate.IncreaseGridActivationDist.Tick", 0);
     setConfig(CONFIG_UINT32_MAPUPDATE_MIN_GRID_ACTIVATION_DISTANCE, "MapUpdate.MinGridActivationDistance", 0);
@@ -1330,7 +1364,8 @@ void World::LoadConfigSettingsFromFile(bool reload)
     setConfig(CONFIG_UINT32_MAPUPDATE_TICK_INCREASE_VISIBILITY_DISTANCE, "MapUpdate.IncreaseVisDist.Tick", 0);
     setConfig(CONFIG_UINT32_MAPUPDATE_MIN_VISIBILITY_DISTANCE, "MapUpdate.MinVisibilityDistance", 0);
     setConfig(CONFIG_BOOL_CONTINENTS_INSTANCIATE, "Continents.Instanciate", false);
-    setConfig(CONFIG_UINT32_CONTINENTS_MOTIONUPDATE_THREADS, "Continents.MotionUpdate.Threads", 0);
+    // Motion mutates gameplay state; concurrency belongs to independent maps.
+    setConfigMinMax(CONFIG_UINT32_CONTINENTS_MOTIONUPDATE_THREADS, "Continents.MotionUpdate.Threads", 0, 0, 0);
     setConfig(CONFIG_BOOL_TERRAIN_PRELOAD_CONTINENTS, "Terrain.Preload.Continents", 1);
     setConfig(CONFIG_BOOL_TERRAIN_PRELOAD_INSTANCES, "Terrain.Preload.Instances", 1);
 
@@ -1355,6 +1390,7 @@ void World::LoadConfigSettingsFromFile(bool reload)
     setConfig(CONFIG_UINT32_PERFLOG_SLOW_MAP_PACKETS, "PerformanceLog.SlowMapPackets", 60);
     setConfig(CONFIG_UINT32_PERFLOG_SLOW_SESSIONS_UPDATE, "PerformanceLog.SlowSessionsUpdate", 0);
     setConfig(CONFIG_UINT32_PERFLOG_SLOW_PACKET_BCAST, "PerformanceLog.SlowPacketBroadcast", 0);
+    setConfigMinMax(CONFIG_UINT32_PERFLOG_PLAYER_SUMMARY_INTERVAL, "PerformanceLog.PlayerUpdateSummaryInterval", 30000, 0, 3600000);
     setConfig(CONFIG_UINT32_LOG_MONEY_TRADES_TRESHOLD, "LogMoneyTreshold", 10000);
 
     setConfig(CONFIG_FLOAT_DYN_RESPAWN_CHECK_RANGE, "DynamicRespawn.Range", -1.0f);
@@ -2296,10 +2332,13 @@ void LoadPlayerEggLoot();
     sScriptMgr.LoadGenericScripts();
     sLog.outString("Loading creature EventAI scripts...");
     sScriptMgr.LoadCreatureEventAIScripts();
-    sScriptMgr.CheckAllScriptTexts();
     sLog.outString("Loading creature EventAI events...");
     sEventAIMgr.LoadCreatureEventAI_Events();
     sScriptMgr.Initialize();
+    // ScriptMgr::Initialize() loads script_texts. Validate database-script text
+    // references only after that data is available, otherwise every negative
+    // ScriptDev2/Turtle text id is reported as missing during startup.
+    sScriptMgr.CheckAllScriptTexts();
     ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_LOAD_CUSTOM_DATABASE_TABLE, [](WorldScript* script)
     {
         script->OnLoadCustomDatabaseTable();
@@ -2582,6 +2621,13 @@ void World::ProcessAsyncPackets()
         if (sWorld.IsStopped())
             break;
 
+        // A stop flag alone does not drain a reader already inside a handler.
+        // Hold session lifetimes through this pass; the world pauses new passes
+        // before waiting for the lock, so it cannot be starved by chat traffic.
+        std::lock_guard<std::recursive_mutex> sessionLock(m_sessionUpdateMutex);
+        if (!m_canProcessAsyncPackets || sWorld.IsStopped())
+            continue;
+
         for (auto const& itr : m_sessions)
         {
             WorldSession* pSession = itr.second;
@@ -2684,6 +2730,12 @@ void World::UpdateWorldBuffTimer(uint32 diff, WorldBuffTimerState& state, uint32
 /// Update the World !
 void World::Update(uint32 diff)
 {
+    static TurtleDiagnostics::Summary worldDiagnostics;
+    static uint64 diagnosticTick = 0;
+    TurtleDiagnostics::Frame diagnosticFrame(worldDiagnostics, UINT32_MAX, 0, ++diagnosticTick);
+    TurtleDiagnostics::Scope diagnosticPrelude(TurtleDiagnostics::WorldPrelude);
+    ExecutionWatch::ResetOnExit watchScope;
+    ExecutionWatch::Set(ExecutionWatch::WorldStart);
     XScopeStatTimer ScopeStatTimer(sPerfMonitor.WorldTick);
 
     ///- Update the different timers
@@ -2716,8 +2768,6 @@ void World::Update(uint32 diff)
         CharacterDatabase.AsyncPQuery(&TotalMoneyCallback, money, "SELECT ROUND(SUM(money) / 10000) FROM characters");
     }
 
-    m_canProcessAsyncPackets = false;
-
     if (m_timers[WUPDATE_COMMANDS].Passed())
     {
         m_timers[WUPDATE_COMMANDS].Reset();
@@ -2725,8 +2775,12 @@ void World::Update(uint32 diff)
     }
 
     /// <li> Handle session updates
+    ExecutionWatch::Set(ExecutionWatch::Sessions);
+    diagnosticPrelude.Finish();
+    TurtleDiagnostics::Scope diagnosticSessions(TurtleDiagnostics::WorldSessions);
     UpdateSessions(diff);
-    m_canProcessAsyncPackets = true;
+    diagnosticSessions.Finish();
+    TurtleDiagnostics::Scope diagnosticTasks(TurtleDiagnostics::WorldTasks);
 
     /// <li> Update uptime table
     if (m_timers[WUPDATE_UPTIME].Passed())
@@ -2743,23 +2797,52 @@ void World::Update(uint32 diff)
 
     ///- Update objects (maps, transport, creatures,...)
     uint32 updateMapSystemTime = WorldTimer::getMSTime();
-    //TODO: find a better place for this
-    if (!m_updateThreads)
+    // Apply world-facing work only while no map owns gameplay state. The old
+    // pool ran shop inventory changes and session work concurrently with maps,
+    // then made every world tick wait for the entire batch.
+    ExecutionWatch::Set(ExecutionWatch::AsyncJoin);
     {
-        m_updateThreads = std::unique_ptr<ThreadPool>( new ThreadPool(
-                    getConfig(CONFIG_UINT32_ASYNC_TASKS_THREADS_COUNT),"WorldAsync",
-                    ThreadPool::ClearMode::UPPON_COMPLETION)
-                                             );
-        m_updateThreads->start<ThreadPool::MySQL<>>();
+        std::lock_guard<std::mutex> lock(m_asyncTaskQueueMutex);
+        _asyncTasks.swap(_asyncTasksBusy);
     }
-    std::unique_lock<std::mutex> lock(m_asyncTaskQueueMutex);
-    _asyncTasks.swap(_asyncTasksBusy);
-    std::future<void> job = m_updateThreads->processWorkload(_asyncTasksBusy);
-    _asyncTasks.clear();
-    lock.unlock();
+    uint32 const workBegin = WorldTimer::getMSTime();
+    size_t workDone = 0;
+    for (; workDone < _asyncTasksBusy.size() && workDone < 64; ++workDone)
+    {
+        if (workDone && WorldTimer::getMSTimeDiffToNow(workBegin) >= getConfig(CONFIG_UINT32_WORLD_TASK_BUDGET_MS))
+            break;
+        uint32 const taskBegin = WorldTimer::getMSTime();
+        _asyncTasksBusy[workDone]();
+        uint32 const taskElapsed = WorldTimer::getMSTimeDiffToNow(taskBegin);
+        static uint32 lastSlowTask = 0;
+        if (TurtleDiagnostics::enabled.load(std::memory_order_relaxed) && taskElapsed >= 50 &&
+            WorldTimer::getMSTimeDiffToNow(lastSlowTask) >= 1000)
+        {
+            lastSlowTask = WorldTimer::getMSTime();
+            sLog.out(LOG_PERFORMANCE, "TW_WORLD_TASK_SLOW elapsed_ms=%u remaining=%zu", taskElapsed, _asyncTasksBusy.size() - workDone - 1);
+        }
+    }
+    uint32 const asyncWorkTime = WorldTimer::getMSTimeDiffToNow(workBegin);
+    if (workDone < _asyncTasksBusy.size())
+    {
+        std::lock_guard<std::mutex> lock(m_asyncTaskQueueMutex);
+        _asyncTasks.insert(_asyncTasks.begin(),
+            std::make_move_iterator(_asyncTasksBusy.begin() + workDone),
+            std::make_move_iterator(_asyncTasksBusy.end()));
+    }
+    _asyncTasksBusy.clear();
+    diagnosticTasks.Finish();
 
+    ExecutionWatch::Set(ExecutionWatch::Transports);
+    TurtleDiagnostics::Scope diagnosticTransports(TurtleDiagnostics::WorldTransports);
     sTransportMgr.Update(diff);
+    diagnosticTransports.Finish();
+    ExecutionWatch::Set(ExecutionWatch::Maps);
+    TurtleDiagnostics::Scope diagnosticMaps(TurtleDiagnostics::WorldMaps);
     sMapMgr.Update(diff);
+    diagnosticMaps.Finish();
+    TurtleDiagnostics::Scope diagnosticServices(TurtleDiagnostics::WorldServices);
+    ExecutionWatch::Set(ExecutionWatch::Battlegrounds);
     sBattleGroundMgr.Update(diff);
     sLFGMgr.Update(diff);
     sLFTMgr.Update(diff);
@@ -2787,13 +2870,9 @@ void World::Update(uint32 diff)
         }
     }
 
-    uint32 asyncWaitBegin = WorldTimer::getMSTime();
-    if (job.valid())
-        job.wait();
-
     updateMapSystemTime = WorldTimer::getMSTimeDiffToNow(updateMapSystemTime);
     if (getConfig(CONFIG_UINT32_PERFLOG_SLOW_MAPSYSTEM_UPDATE) && updateMapSystemTime > getConfig(CONFIG_UINT32_PERFLOG_SLOW_MAPSYSTEM_UPDATE))
-        sLog.out(LOG_PERFORMANCE, "Update map system: %ums [%ums for async]", updateMapSystemTime, WorldTimer::getMSTimeDiffToNow(asyncWaitBegin));
+        sLog.out(LOG_PERFORMANCE, "Update map system: %ums [%ums for owner work]", updateMapSystemTime, asyncWorkTime);
 
     ///- Sauvegarde des variables internes (table variables) : MaJ par rapport a la DB
     if (m_timers[WUPDATE_SAVE_VAR].Passed())
@@ -2802,8 +2881,11 @@ void World::Update(uint32 diff)
         sObjectMgr.SaveVariables();
     }
 
+    diagnosticServices.Finish();
+    TurtleDiagnostics::Scope diagnosticTail(TurtleDiagnostics::WorldTail);
     // execute callbacks from sql queries that were queued recently
     uint32 asyncQueriesTime = WorldTimer::getMSTime();
+    ExecutionWatch::Set(ExecutionWatch::Callbacks);
     UpdateResultQueue();
     asyncQueriesTime = WorldTimer::getMSTimeDiffToNow(asyncQueriesTime);
     if (getConfig(CONFIG_UINT32_PERFLOG_SLOW_ASYNC_QUERIES) && asyncQueriesTime > getConfig(CONFIG_UINT32_PERFLOG_SLOW_ASYNC_QUERIES))
@@ -3718,6 +3800,8 @@ void World::SendServerMessage(ServerMessageType type, const char *text, Player* 
 
 void World::UpdateSessions(uint32 diff)
 {
+    m_canProcessAsyncPackets = false;
+    std::lock_guard<std::recursive_mutex> sessionLock(m_sessionUpdateMutex);
     XScopeStatTimer ScopeStatTimer{sPerfMonitor.UpdateSession};
     ///- Update player limit if needed
     int32 hardPlayerLimit = getConfig(CONFIG_UINT32_PLAYER_HARD_LIMIT);
@@ -3907,6 +3991,7 @@ void World::UpdateSessions(uint32 diff)
             itr++;
         }
     }
+    m_canProcessAsyncPackets = true;
 }
 
 // This handles the issued and queued CLI/RA commands
@@ -3958,10 +4043,23 @@ void World::InitResultQueue()
 
 void World::UpdateResultQueue()
 {
-    //process async result queues
-    CharacterDatabase.ProcessResultQueue(getConfig(CONFIG_UINT32_ASYNC_QUERIES_TICK_TIMEOUT));
-    WorldDatabase.ProcessResultQueue(getConfig(CONFIG_UINT32_ASYNC_QUERIES_TICK_TIMEOUT));
-    LoginDatabase.ProcessResultQueue(getConfig(CONFIG_UINT32_ASYNC_QUERIES_TICK_TIMEOUT));
+    static unsigned first = 0; // owner-thread only; rotate to avoid DB starvation
+    uint32 const begin = WorldTimer::getMSTime();
+    uint32 const budget = getConfig(CONFIG_UINT32_DB_CALLBACK_BUDGET_MS);
+    for (unsigned i = 0; i < 3; ++i)
+    {
+        uint32 const used = WorldTimer::getMSTimeDiffToNow(begin);
+        if (used >= budget)
+            break;
+        uint32 const remaining = budget - used;
+        switch ((first + i) % 3)
+        {
+            case 0: CharacterDatabase.ProcessResultQueue(remaining); break;
+            case 1: WorldDatabase.ProcessResultQueue(remaining); break;
+            case 2: LoginDatabase.ProcessResultQueue(remaining); break;
+        }
+    }
+    first = (first + 1) % 3;
 }
 
 void World::UpdateRealmCharCount(uint32 accountId)
@@ -4009,7 +4107,12 @@ void World::LoadAccountData()
         ++count;
     } while (result->NextRow());
 
-    result.reset(LoginDatabase.PQuery("SELECT account, extendedHash FROM system_fingerprint_usage GROUP BY account ORDER BY time DESC"));
+    // Pick the most recent fingerprint for each account without relying on
+    // MySQL's non-deterministic GROUP BY extension. Production servers that
+    // enable ONLY_FULL_GROUP_BY otherwise reject the old query at startup.
+    result.reset(LoginDatabase.PQuery(
+        "SELECT account, SUBSTRING_INDEX(GROUP_CONCAT(extendedHash ORDER BY `time` DESC, id DESC), ',', 1) "
+        "FROM system_fingerprint_usage GROUP BY account"));
     if (result)
     {
         do
@@ -4040,13 +4143,7 @@ void World::AddFingerprint(uint32 fingerprint, std::string accountName)
 void World::SetLastDiff(uint32 diff)
 {
     m_lastDiff = diff;
-    static uint32 currentDiffIndex = 0;
-
-    if (currentDiffIndex >= m_lastDiffs.size())
-        currentDiffIndex = 0;
-
-    m_lastDiffs[currentDiffIndex] = m_lastDiff;
-    ++currentDiffIndex;
+    m_tickDiffs.Record(diff);
 
     CheckDiffProtection();
 }
@@ -4069,11 +4166,7 @@ bool World::HitsDiffThreshold() const
 
 uint32 World::GetAverageDiff() const
 {
-    uint32 sum = 0;
-    for (auto i : m_lastDiffs)
-        sum += i;
-
-    return sum / m_lastDiffs.size();
+    return m_tickDiffs.Average();
 }
 
 void World::SetPlayerLimit(int32 limit, bool needUpdate)
@@ -4928,6 +5021,7 @@ void World::SendUpdateMultipleItems(const std::vector<uint32>& items, WorldSessi
 
 void World::SetSessionDisconnected(WorldSession* sess)
 {
+    std::lock_guard<std::recursive_mutex> sessionLock(m_sessionUpdateMutex);
     SessionMap::iterator itr = m_sessions.find(sess->GetAccountId());
     ASSERT(itr != m_sessions.end());
     if (sess->HadQueue())

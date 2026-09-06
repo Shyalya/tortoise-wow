@@ -18,7 +18,7 @@ namespace ai
         std::string GetRpgActionReason(ObjectGuid target) { auto reason = rgpActionReason.find(target); if (reason != rgpActionReason.end())  return reason->second; return ""; }
     private:        
         float getMaxRelevance(GuidPosition guidP);
-        bool HasSameTarget(ObjectGuid guid, uint32 max, std::list<ObjectGuid>& nearGuids);
+        std::unordered_map<ObjectGuid, uint32> GetTargetCounts(std::list<ObjectGuid> const& nearGuids);
 
         std::unordered_map <ObjectGuid, std::string> rgpActionReason;
     };

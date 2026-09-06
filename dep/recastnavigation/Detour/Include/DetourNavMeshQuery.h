@@ -541,6 +541,7 @@ private:
 	dtStatus getPathToNode(struct dtNode* endNode, dtPolyRef* path, int* pathCount, int maxPath) const;
 	
 	const dtNavMesh* m_nav;				///< Pointer to navmesh data.
+	unsigned long long m_slicedMeshRevision = 0;
 
 	struct dtQueryData
 	{

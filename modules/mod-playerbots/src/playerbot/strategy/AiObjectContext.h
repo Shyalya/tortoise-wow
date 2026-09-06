@@ -6,6 +6,7 @@
 #include "NamedObjectContext.h"
 #include "Strategy.h"
 #include <set>
+#include <atomic>
 
 #include "playerbot/BotSlots.h"
 namespace ai
@@ -70,6 +71,16 @@ namespace ai
             return valueContexts.GetCreated();
         }
 
+        size_t GetCreatedStrategyCount() const { return strategyContexts.GetCreatedCount(); }
+        size_t GetCreatedActionCount() const { return actionContexts.GetCreatedCount(); }
+        size_t GetCreatedTriggerCount() const { return triggerContexts.GetCreatedCount(); }
+        size_t GetCreatedValueCount() const { return valueContexts.GetCreatedCount(); }
+        size_t GetEstimatedCacheBytes() const
+        {
+            return strategyContexts.GetEstimatedCreatedBytes() + actionContexts.GetEstimatedCreatedBytes() +
+                triggerContexts.GetEstimatedCreatedBytes() + valueContexts.GetEstimatedCreatedBytes();
+        }
+
         void GetSupportedStrategies(std::set<std::string>& strategies)
         {
             return strategyContexts.GetSupportedKeys(strategies);
@@ -92,7 +103,8 @@ namespace ai
 
         void ClearValues(std::string findName = "");
 
-        void ClearExpiredValues(std::string findName = "", uint32 interval = 0);
+        size_t ClearExpiredValues(std::string findName = "", uint32 interval = 0);
+        static uint64 GetExpiredValuesReleased();
 
         std::string FormatValues(std::string findName = "");
 
@@ -116,6 +128,8 @@ namespace ai
         void Load(std::list<std::string> data);
 
         std::vector<std::string> performanceStack;
+    private:
+        static std::atomic<uint64> expiredValuesReleased;
     protected:
         NamedObjectContextList<Strategy> strategyContexts;
         NamedObjectContextList<Action> actionContexts;

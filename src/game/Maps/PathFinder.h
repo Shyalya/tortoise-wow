@@ -72,6 +72,8 @@ class PathInfo
         // bot calls PathFinder(player, true) for transport pathing.
         PathInfo(Unit const* owner, bool /*offsets*/) : PathInfo(owner) {}
         ~PathInfo();
+        // Retain scratch capacity, not previous routes/navmesh references.
+        void ResetForNewRequest();
 
         // return value : true if new path was calculated
         bool calculate(float destX, float destY, float destZ, bool forceDest = false, bool offsets = false);

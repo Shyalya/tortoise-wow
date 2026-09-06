@@ -40,6 +40,7 @@
 #include "Policies/Singleton.h"
 #include "SQLStorages.h"
 #include "Conditions.h"
+#include "BotTrainerIndex.h"
 
 #include <string>
 #include <map>
@@ -982,6 +983,7 @@ class ObjectMgr
         ObjectGuid GetLinkedRespawnGuid(ObjectGuid /*spawn*/) const { return ObjectGuid(); }
         // The ported zone-line index walks every teleport trigger once at load.
         AreaTriggerTeleportMap const& GetAllAreaTriggerTeleports() const { return m_AreaTriggerTeleportMap; }
+        std::vector<uint32> GetBotTrainerEntries(uint32 playerClass) const { return m_botTrainerIndex.Snapshot(playerClass); }
         CreatureInfo const* GetCreatureTemplate(uint32 id) const
         {
             auto itr = m_creatureInfoMap.find(id);
@@ -1840,6 +1842,7 @@ class ObjectMgr
         SoundEntryMap m_SoundEntriesMap;
         ItemPrototypeMap m_itemPrototypesMap;
         CreatureInfoMap m_creatureInfoMap;
+        BotTrainerIndex m_botTrainerIndex;
         GameObjectInfoMap m_GameObjectInfoMap;
 
         typedef std::vector<std::unique_ptr<SkillLineAbilityEntry>> SkillLineAbiilityStore;

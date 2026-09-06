@@ -254,8 +254,8 @@ class Spell
         // m_effectSkillInfo: cmangos field for per-effect skill info (lockpicking etc). Stub array.
         struct EffectSkillInfo { SkillType skillId = SKILL_NONE; int32 reqSkillValue = 0; int32 skillValue = 0; };
         EffectSkillInfo m_effectSkillInfo[MAX_EFFECT_INDEX]{};
-        // CanBeInterrupted: cmangos has it; Penqle doesn't. Stub returns true (most spells can be interrupted).
-        bool CanBeInterrupted() const { return true; }
+        // Match the interruption state boundary; never cancel a finished spell.
+        bool CanBeInterrupted() const { return m_spellState == SPELL_STATE_PREPARING || m_spellState == SPELL_STATE_CASTING || m_spellState == SPELL_STATE_DELAYED; }
         // GetDamage: cmangos exposes computed damage. Stub returns 0.
         int32 GetDamage() const { return 0; }
 

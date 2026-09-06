@@ -30,6 +30,7 @@
 #include <bitset>
 #include <list>
 #include <atomic>
+#include "Detour/Include/DetourAccessGate.h"
 
 #define MAX_HEIGHT            100000.0f                     // can be use for find ground height at surface
 #define INVALID_HEIGHT       -100000.0f                     // for check, must be equal to VMAP_INVALID_HEIGHT, real value for unknown height is VMAP_INVALID_HEIGHT_VALUE
@@ -137,6 +138,9 @@ using AtomicLong = std::atomic<long>;
 // class for sharing and managin GridMap objects
 class TerrainInfo : public Referencable<AtomicLong>
 {
+        // Readers may lazily load grids, but cleanup must wait until their
+        // complete height/area/liquid operation releases all GridMap pointers.
+        mutable dtAccessGate m_lifetimeGate;
     public:
         TerrainInfo(uint32 mapid);
         ~TerrainInfo();
@@ -173,7 +177,7 @@ class TerrainInfo : public Referencable<AtomicLong>
         // this method should be used only by TerrainManager
         // to cleanup unreferenced GridMap objects - they are too heavy
         // to destroy them dynamically, especially on highly populated servers
-        // THIS METHOD IS NOT THREAD-SAFE!!!! AND IT SHOULDN'T BE THREAD-SAFE!!!!
+        // Exclusive against terrain readers, including asynchronous bot travel.
         void CleanUpGrids(const uint32 diff);
 
     protected:
@@ -194,7 +198,7 @@ class TerrainInfo : public Referencable<AtomicLong>
 
         const uint32 m_mapId;
 
-        GridMap* m_GridMaps[MAX_NUMBER_OF_GRIDS][MAX_NUMBER_OF_GRIDS];
+        std::atomic<GridMap*> m_GridMaps[MAX_NUMBER_OF_GRIDS][MAX_NUMBER_OF_GRIDS];
         int16 m_GridRef[MAX_NUMBER_OF_GRIDS][MAX_NUMBER_OF_GRIDS];
 
         // global garbage collection timer

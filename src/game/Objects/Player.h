@@ -2018,6 +2018,10 @@ class Player final: public Unit
 
         // Current teleport data
         WorldLocation m_teleport_dest;
+        // Invalidates map-owned work, including near teleports within one map.
+        uint64 m_mapWorkGeneration = 0;
+        uint32 m_lastAIUpdateMs = 0;
+        uint32 m_backgroundAIDueSinceMs = 0;
         uint32 m_teleport_options;
         bool mSemaphoreTeleport_Near;
         bool mSemaphoreTeleport_Far;
@@ -2153,6 +2157,23 @@ class Player final: public Unit
         bool IsBeingTeleportedNear() const { return mSemaphoreTeleport_Near; }
         bool IsBeingTeleportedFar() const { return mSemaphoreTeleport_Far; }
         void SetSemaphoreTeleportNear(bool semphsetting);
+        uint64 GetMapWorkGeneration() const { return m_mapWorkGeneration; }
+        uint32 GetAIElapsed(uint32 now) const
+        {
+            return m_lastAIUpdateMs ? now - m_lastAIUpdateMs : 0;
+        }
+        uint32 ConsumeAIElapsed(uint32 now)
+        {
+            uint32 const diff = GetAIElapsed(now);
+            m_lastAIUpdateMs = now;
+            return diff;
+        }
+        uint32 BackgroundAIDueAge(uint32 now)
+        {
+            if (!m_backgroundAIDueSinceMs) m_backgroundAIDueSinceMs = now;
+            return now - m_backgroundAIDueSinceMs;
+        }
+        void ClearBackgroundAIDueAge() { m_backgroundAIDueSinceMs = 0; }
         void SetSemaphoreTeleportFar(bool semphsetting);
         void SetPendingFarTeleport(bool pending) { mPendingFarTeleport = pending; }
         void ExecuteTeleportNear();
@@ -2221,12 +2242,14 @@ class Player final: public Unit
         mutable std::mutex m_visibleGobjsQuestAct_lock;
 
         bool IsInVisibleList(WorldObject const* u) const;
+        void ClearVisibleObjects();
         bool IsInVisibleList_Unsafe(WorldObject const* u) const { return this == u || m_visibleGUIDs.find(u->GetObjectGuid()) != m_visibleGUIDs.end(); }
         bool IsVisibleInGridForPlayer(Player const* pl) const override;
         bool IsVisibleGloballyFor(Player* pl) const;
         void UpdateVisibilityOf(WorldObject const* viewPoint, WorldObject* target);
         template<class T>
         void UpdateVisibilityOf(WorldObject const* viewPoint, T* target, UpdateData& data, std::set<WorldObject*>& visibleNow);
+        void ActivateBroadcastListeners(std::set<WorldObject*> const& visibleNow);
 
         Camera& GetCamera() { return m_camera; }
         // AzerothCore spellings over this core's Camera. apply=true binds the
@@ -2811,7 +2834,8 @@ class Player final: public Unit
         bool CanInteractWithQuestGiver(Object* questGiver) const;
         Creature* FindNearestInteractableNpcWithFlag(uint32 npcFlags) const;
         Creature* GetNPCIfCanInteractWith(ObjectGuid guid, uint32 npcflagmask) const;
-        bool CanInteractWithNPC(Creature const* pCreature, uint32 npcflagmask) const;
+        // Optional read-only explanation of the same native eligibility checks.
+        bool CanInteractWithNPC(Creature const* pCreature, uint32 npcflagmask, char const** failureReason = nullptr) const;
         GameObject* GetGameObjectIfCanInteractWith(ObjectGuid guid, uint32 gameobject_type = MAX_GAMEOBJECT_TYPE) const;
         bool CanInteractWithGameObject(GameObject const* pGo, uint32 gameobject_type = MAX_GAMEOBJECT_TYPE) const;
         bool CanSeeHealthOf(Unit const* pTarget) const;

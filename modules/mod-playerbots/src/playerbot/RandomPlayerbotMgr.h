@@ -10,6 +10,11 @@
 #include "WorldPosition.h"
 #include <map>
 #include <list>
+#include <deque>
+#include "IncrementalFilter.h"
+#include "PopulationSpatialIndex.h"
+#include "WorkSlice.h"
+#include "StaticLocationIndex.h"
 
 class WorldPacket;
 class Player;
@@ -60,6 +65,7 @@ private:
 class RandomPlayerbotMgr : public PlayerbotHolder
 {
     public:
+        void UpdateTeleportPlans();
         RandomPlayerbotMgr();
         virtual ~RandomPlayerbotMgr() override;
         static RandomPlayerbotMgr& instance()
@@ -108,6 +114,7 @@ public:
         void OnPlayerLogout(Player* player);
         void OnPlayerLogin(Player* player);
         void OnPlayerLoginError(uint32 bot);
+        uint32 BackgroundLoginBudget(uint32 requested);
         Player* GetRandomPlayer();
         PlayerBotMap& GetPlayers() { return players; };
         Player* GetPlayer(uint32 playerGuid);
@@ -201,6 +208,26 @@ public:
         void ScheduleRandomize(uint32 bot, uint32 time);
         void RandomTeleport(Player* bot);
         void RandomTeleport(Player* bot, std::vector<WorldLocation> &locs, bool hearth = false, bool activeOnly = false);
+        struct TeleportPlan
+        {
+            uint32 guid = 0, map = 0, instance = 0, generation = 0;
+            uint8 level = 0, race = 0, stage = 0;
+            bool hearth = false, activeOnly = false;
+            // These cache vectors are populated once at startup and never
+            // replaced. Only the front plan materializes a candidate copy.
+            std::vector<WorldLocation> const* source = nullptr;
+            std::vector<ai::WorldPosition> candidates, friendly;
+            size_t cursor = 0, attempt = 0;
+            IncrementalFilter filter;
+            std::unique_ptr<PopulationSpatialIndex> occupancy;
+        };
+        bool AdvanceTeleportPlan(TeleportPlan& plan, WorkSlice& slice);
+        std::deque<TeleportPlan> teleportPlans;
+        std::unordered_set<uint32> pendingTeleportGuids;
+        struct TeleportArea { uint32 zone = 0, area = 0, homeTeam = 0; };
+        StaticLocationIndex<TeleportArea> teleportAreas;
+        void PrepareTeleportAreaIndex();
+        TeleportArea const* GetTeleportArea(ai::WorldPosition const& location) const;
         uint32 GetZoneLevel(uint16 mapId, float teleX, float teleY, float teleZ);
         void PrepareTeleportCache();
         typedef std::list<std::string> (RandomPlayerbotMgr::*ConsoleCommandHandler) (std::string param);
@@ -285,13 +312,25 @@ public:
         std::map<uint32, std::map<uint32, std::vector<std::pair<ObjectGuid, WorldLocation>> > > innCacheLevel;
         std::map<Team, std::map<BattleGroundTypeId, std::list<uint32> > > BattleMastersCache;
         std::map<uint32, std::map<std::string, CachedEvent> > eventCache;
+        // Shared by map-owned bot actions and world maintenance. Never hold
+        // this mutex across a synchronous database read or gameplay callback.
+        std::mutex eventCacheMutex;
+        uint64 eventCacheGeneration = 0;
+        std::unordered_set<uint32> loadedEventBots;
+        uint32 eventPruneCursor = 0;
+        uint64 expiredEventsReleased = 0;
+        void PruneEventCacheSlice();
         BarGoLink* loginProgressBar;
         std::list<uint32> currentBots;
         std::list<uint32> arenaTeamMembers;
         uint32 bgBotsCount;
         uint32 playersLevel = 0;
         uint32 botCount = 0;
-        uint32 activeBots = 0;        
+        uint32 activeBots = 0;
+        uint32 maintenanceCursorGuid = 0;
+        uint32 loginCursorGuid = 0;
+        uint32 memoryAdmissionSampleMs = 0, memoryAdmissionMb = 0;
+        bool memoryAdmissionPaused = false;
 
         std::unordered_map<uint32, std::vector<std::pair<int32,int32>>> playerBotMoveLog;
         typedef std::unordered_map <uint32, std::list<float>> botPerformanceMetric;

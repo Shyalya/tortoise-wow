@@ -20,6 +20,7 @@
  */
 
 #include "MotionMaster.h"
+#include "ArchitectureDiagnostics.h"
 #include "CreatureAISelector.h"
 #include "Creature.h"
 
@@ -161,6 +162,7 @@ MotionMaster::~MotionMaster()
 
 void MotionMaster::UpdateMotion(uint32 diff)
 {
+    TurtleDiagnostics::Scope diagnosticMotion(TurtleDiagnostics::Motion);
     if (m_owner->HasUnitState(UNIT_STAT_CAN_NOT_MOVE))
         return;
 

@@ -36,6 +36,28 @@ namespace ai
         void InitReactionTriggers(std::list<TriggerNode*>& triggers) override;
     };
 
+    class AvoidSpecificCreaturesStrategy : public Strategy
+    {
+    public:
+        AvoidSpecificCreaturesStrategy(PlayerbotAI* ai) : Strategy(ai) {}
+        std::string getName() override { return "avoid specific creatures"; }
+
+#ifdef GenerateBotHelp
+        virtual std::string GetHelpName() { return "avoid specific creatures"; } //Must equal iternal name
+        virtual std::string GetHelpDescription()
+        {
+            return "This strategy will make bots move away from specific creatures.";
+        }
+        virtual std::vector<std::string> GetRelatedStrategies() { return { }; }
+#endif
+
+    private:
+
+
+        void InitCombatTriggers(std::list<TriggerNode*>& triggers) override;
+        void InitReactionTriggers(std::list<TriggerNode*>& triggers) override;
+    };
+
     class AvoidAoeStrategyMultiplier : public Multiplier
     {
     public:

@@ -1,5 +1,6 @@
 #pragma once
 #include "PlayerbotMgr.h"
+#include <atomic>
 #include "PlayerbotAIBase.h"
 #include "strategy/AiObjectContext.h"
 #include "strategy/ReactionEngine.h"
@@ -28,6 +29,12 @@ public:
     explicit PlayerbotChatHandler(Player* pMasterPlayer) : ChatHandler(pMasterPlayer->GetSession()) {}
     void sysmessage(std::string str) { SendSysMessage(str.c_str()); }
     uint32 extractQuestId(std::string str);
+    uint32 extractCreatureId(std::string str)
+    {
+        char* source = &str[0];
+        uint32 id = 0;
+        return !str.empty() && ExtractUint32KeyFromLink(&source, "Hcreature_entry", id) ? id : 0;
+    }
     uint32 extractSpellId(std::string str)
     {
         char* source = (char*)str.c_str();
@@ -364,6 +371,8 @@ public:
 	virtual ~PlayerbotAI();
 
     virtual void UpdateAI(uint32 elapsed, bool minimal = false);
+    void CleanupExpiredValuesIfDue();
+    void RequestValueCacheCleanup() { valueCacheCleanupRequested.store(true, std::memory_order_release); }
 
     void HandleCommands();
 private:
@@ -376,6 +385,16 @@ public:
     void HandleCommand(uint32 type, const std::string& text, Player& fromPlayer, const uint32 lang = LANG_UNIVERSAL);
     void QueueChatResponse(uint32 msgType, ObjectGuid guid1, ObjectGuid guid2, std::string message, std::string chanName, std::string name, bool noDelay = false);
 	void HandleBotOutgoingPacket(const WorldPacket& packet);
+    uint32 GetTransitionGeneration() const { return transitionGeneration.load(std::memory_order_acquire); }
+    bool IsTransitionContextCurrent(uint32 generation, uint32 mapId, uint32 instanceId) const;
+    bool HasPendingTransition() const { return requestedTransition.load(std::memory_order_acquire) || transitionInProgress.load(std::memory_order_acquire); }
+    static void RecordDiscardedTransitionWork();
+    static uint64 ConsumeDiscardedTransitionWork();
+    static uint64 ConsumeTransitionRequests();
+    void RequestUrgentTransition(uint32 triggerId);
+    void PrepareForUrgentTransition();
+    bool ProcessPendingTransition();
+    void ClearPendingTransition(uint32 expectedTriggerId = 0, bool stopMovement = false);
     void HandleMasterIncomingPacket(const WorldPacket& packet);
     void HandleMasterOutgoingPacket(const WorldPacket& packet);
 	void HandleTeleportAck();
@@ -487,6 +506,8 @@ public:
 
     bool HasSpell(std::string name) const;
     bool HasSpell(uint32 spellid) const;
+    // Retain the diagnostic accessor/field for existing telemetry consumers.
+    size_t GetSpellCapabilityCacheSize() const { return 0; }
     bool HasAura(uint32 spellId, Unit* player, bool checkOwner = false);
     Aura* GetAura(uint32 spellId, Unit* player, bool checkOwner = false);
     Aura* GetAura(std::string spellName, Unit* player, bool checkOwner = false);
@@ -816,6 +837,27 @@ protected:
     std::queue<ChatCommandHolder> chatCommands;
     std::queue<ChatQueuedReply> chatReplies;
     std::mutex chatRepliesMutex;
+    std::mutex updateExecutionMutex;
+    // Map/instance transitions invalidate movement and AI work calculated in
+    // the previous world context. These atomics are also read by Arch2 worker
+    // queues without touching mutable AI state.
+    std::atomic<uint32> transitionGeneration{1};
+    std::atomic<bool> urgentTransitionPending{false};
+    struct PendingTransitionState
+    {
+        uint32 triggerId = 0;
+        uint32 sourceMapId = 0;
+        uint32 sourceInstanceId = 0;
+        uint32 startedAtMs = 0;
+        uint32 lastAttemptAtMs = 0;
+        uint32 attempts = 0;
+    };
+    std::mutex pendingTransitionMutex;
+    PendingTransitionState pendingTransition;
+    static std::atomic<uint64> discardedTransitionWork;
+    static std::atomic<uint64> transitionRequests;
+    std::atomic<bool> transitionInProgress{false};
+    std::atomic<uint32> requestedTransition{0};
     PacketHandlingHelper botOutgoingPacketHandlers;
     PacketHandlingHelper masterIncomingPacketHandlers;
     PacketHandlingHelper masterOutgoingPacketHandlers;
@@ -834,6 +876,8 @@ protected:
     uint32 jumpTime;
     bool fallAfterJump;
     uint32 faceTargetUpdateDelay;
+    uint32 lastValueCacheCleanupMs = 0;
+    std::atomic<bool> valueCacheCleanupRequested{false};
     bool isPlayerFriend = false;
     bool isMovingToTransport = false;
     bool shouldLogOut = false;

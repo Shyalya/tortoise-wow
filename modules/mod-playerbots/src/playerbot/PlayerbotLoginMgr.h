@@ -138,6 +138,8 @@ namespace ai
 		SqlQueryHolder* holder = nullptr;
 		HolderState holderState = HolderState::HOLDER_EMPTY;
 		LoginState loginState = LoginState::BOT_OFFLINE;
+        uint8 loginFailureCount = 0;
+        time_t nextLoginAttempt = 0;
 	};
 
 	class PlayerBotLoginMgr
@@ -166,7 +168,6 @@ namespace ai
 		static void SendHolders(const BotInfos& queue);
 		static void SendHolders(BotPool* pool);
 
-		std::future<BotInfos> futureQueue;
 		std::future<BotPool> futurePool;
 
 		bool debug = false;

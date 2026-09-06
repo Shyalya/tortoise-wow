@@ -457,6 +457,7 @@ class ChatHandler
         GameObject* getSelectedGameObject();
 
         bool HandleGMCommand(char* args);
+        bool HandleGMFlyCommand(char* args);
         bool HandleGMListFullCommand(char* args);
         bool HandleGMOnlineListCommand(char* args);
         bool HandleGMVisibleCommand(char* args);

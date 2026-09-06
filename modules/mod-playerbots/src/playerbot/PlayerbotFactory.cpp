@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include "playerbot/strategy/actions/AutoLearnSpellAction.h"
 #include "playerbot/PlayerbotFactory.h"
 #include "playerbot/PerformanceMonitor.h"
 
@@ -268,7 +269,7 @@ void PlayerbotFactory::Randomize(bool incremental, bool syncWithMaster)
     // minutes apart in the same pass. Runs after talents so spec-dependent
     // ranks resolve; gated exactly like the level-up path.
     if (ai && sPlayerbotAIConfig.autoLearnTrainerSpells)
-        ai->DoSpecificAction("auto learn spell");
+        AutoLearnSpellAction(ai).CatchUpTrainerSpells();
     pmo.reset();
 
     if (isRealRandomBot)
@@ -4094,11 +4095,15 @@ void PlayerbotFactory::InitTradeSkills()
                     if (proto->Effect[j] == SPELL_EFFECT_LEARN_SPELL)
                     {
                         uint32 learnedSpell = proto->EffectTriggerSpell[j];
-                        bot->learnSpell(learnedSpell, false);
-                        learned = true;
+                        if (learnedSpell && sServerFacade.LookupSpellInfo(learnedSpell))
+                        {
+                            bot->learnSpell(learnedSpell, false);
+                            learned = true;
+                        }
                     }
                 }
-                if (!learned) bot->learnSpell(tSpell->learnedSpell, false);
+                if (!learned && tSpell->learnedSpell && sServerFacade.LookupSpellInfo(tSpell->learnedSpell))
+                    bot->learnSpell(tSpell->learnedSpell, false);
             }
             else
                 ai->CastSpell(tSpell->spell, bot);

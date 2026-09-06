@@ -127,9 +127,7 @@ bool RpgAction::SetNextRpgAction()
         }
     }
 
-    std::mt19937 gen(time(0));
-
-    WeightedShuffle(actions.begin(), actions.end(), relevances.begin(), relevances.end(), gen);
+    WeightedShuffle(actions.begin(), actions.end(), relevances.begin(), relevances.end(), *GetRandomGenerator());
 
     Action* action = actions.front();
 

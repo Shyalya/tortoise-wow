@@ -42,6 +42,7 @@ ChatCommandHandlerStrategy::ChatCommandHandlerStrategy(PlayerbotAI* ai) : PassTr
     supported.push_back("corpse run");
     supported.push_back("teleport");
     supported.push_back("taxi");
+    supported.push_back("avoid creature");
     supported.push_back("repair");
     supported.push_back("talents");
     supported.push_back("spells");

@@ -10,6 +10,7 @@ namespace ai
         ChatTriggerContext()
         {
             creators["quests"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "quests"); };
+            creators["avoid creature"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "avoid creature"); };
             creators["quest reward"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "quest reward"); };
             creators["stats"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "stats"); };
             creators["leave"] = [](PlayerbotAI* ai) { return new ChatCommandTrigger(ai, "leave"); };

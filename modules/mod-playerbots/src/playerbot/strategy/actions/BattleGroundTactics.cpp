@@ -1,5 +1,7 @@
 
 #include "playerbot/playerbot.h"
+#include "BoundedBotThrottle.h"
+#include "ArchitectureDiagnostics.h"
 #include "playerbot/strategy/values/PositionValue.h"
 #include "MovementActions.h"
 #include "Battlegrounds/BattleGround.h"
@@ -4563,14 +4565,12 @@ bool BGTactics::atFlag(std::vector<BattleBotPath*> const& vPaths, std::vector<ui
         // capturing (2026-09-05); the skip reasons below were invisible.
         auto abSay = [&](char const* why)
         {
-            if (bgType != BATTLEGROUND_AB)
+            if (bgType != BATTLEGROUND_AB || !TurtleDiagnostics::enabled.load(std::memory_order_relaxed))
                 return;
-            static std::unordered_map<uint32, uint32> s_abSaidAt;
+            static BoundedBotThrottle s_abSaidAt;
             uint32 const nowAb = WorldTimer::getMSTime();
-            uint32& atAb = s_abSaidAt[bot->GetGUIDLow()];
-            if (atAb && WorldTimer::getMSTimeDiff(atAb, nowAb) < 10000)
+            if (!s_abSaidAt.Allow(bot->GetGUIDLow(), nowAb, 10000))
                 return;
-            atAb = nowAb;
             sLog.outInfo("[BG:AB] banner %u (%s) %.1fyd from %s: %s (spawned %u, inUse %u, state %u, inCombat %u)",
                          go->GetEntry(), go->GetName(), bot->GetDistance(go), bot->GetName(), why,
                          sServerFacade.isSpawned(go) ? 1u : 0u, go->IsInUse() ? 1u : 0u, uint32(go->GetGoState()),
@@ -4670,7 +4670,7 @@ bool BGTactics::atFlag(std::vector<BattleBotPath*> const& vPaths, std::vector<ui
             Spell *spell = new Spell(bot, spellInfo, false);
             spell->m_targets.setGOTarget(go);
             spell->SpellStart(&spell->m_targets);
-            if (bgType == BATTLEGROUND_AB)
+            if (bgType == BATTLEGROUND_AB && TurtleDiagnostics::enabled.load(std::memory_order_relaxed))
                 sLog.outInfo("[BG:AB] %s casts the banner spell on %u (%s) at %.1fyd, spell state %u",
                              bot->GetName(), go->GetEntry(), go->GetName(), bot->GetDistance(go), uint32(spell->getState()));
             ai->WaitForSpellCast(spell);

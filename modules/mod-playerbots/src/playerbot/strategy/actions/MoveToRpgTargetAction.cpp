@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include "playerbot/BotDiagnostics.h"
 #include "MoveToRpgTargetAction.h"
 #include "ChooseRpgTargetAction.h"
 #include "playerbot/PlayerbotAIConfig.h"
@@ -8,6 +9,7 @@
 #include "playerbot/strategy/values/PossibleRpgTargetsValue.h"
 #include "playerbot/strategy/values/FreeMoveValues.h"
 #include "playerbot/TravelMgr.h"
+#include "StableTargetPosition.h"
 
 using namespace ai;
 
@@ -26,7 +28,10 @@ bool MoveToRpgTargetAction::Execute(Event& event)
     else if(go)
         wo = go;
     else
+    {
+        RESET_AI_VALUE(GuidPosition, "rpg target");
         return false;
+    }
 
     if (guidP.IsPlayer())
     {
@@ -38,6 +43,7 @@ bool MoveToRpgTargetAction::Execute(Event& event)
 
             if (guidPP.IsPlayer())
             {
+                ai::botdiag::TraceBehavior(ai, "rpg_drop", "player target is pursuing another player");
                 AI_VALUE(std::set<ObjectGuid>&,"ignore rpg target").insert(AI_VALUE(GuidPosition, "rpg target"));
 
                 RESET_AI_VALUE(GuidPosition, "rpg target");
@@ -53,6 +59,7 @@ bool MoveToRpgTargetAction::Execute(Event& event)
 
     if (unit && unit->IsMoving() && !urand(0, 20) && guidP.sqDistance2d(bot) < INTERACTION_DISTANCE * INTERACTION_DISTANCE * 2)
     {
+        ai::botdiag::TraceBehavior(ai, "rpg_drop", "moving target random abandonment");
         AI_VALUE(std::set<ObjectGuid>&,"ignore rpg target").insert(AI_VALUE(GuidPosition, "rpg target"));
 
         RESET_AI_VALUE(GuidPosition,"rpg target");
@@ -66,6 +73,7 @@ bool MoveToRpgTargetAction::Execute(Event& event)
 
     if (!CanFreeMoveValue::CanFreeMoveTo(ai, wo))
     {
+        ai::botdiag::TraceBehavior(ai, "rpg_drop", "outside free movement range");
         AI_VALUE(std::set<ObjectGuid>&, "ignore rpg target").insert(AI_VALUE(GuidPosition, "rpg target"));
 
         RESET_AI_VALUE(GuidPosition, "rpg target");
@@ -79,6 +87,7 @@ bool MoveToRpgTargetAction::Execute(Event& event)
 
     if (guidP.distance(bot) > sPlayerbotAIConfig.reactDistance * 2)
     {
+        ai::botdiag::TraceBehavior(ai, "rpg_drop", "beyond reaction range");
         AI_VALUE(std::set<ObjectGuid>&, "ignore rpg target").insert(AI_VALUE(GuidPosition, "rpg target"));
 
         RESET_AI_VALUE(GuidPosition, "rpg target");
@@ -92,6 +101,7 @@ bool MoveToRpgTargetAction::Execute(Event& event)
 
     if (guidP.IsGameObject() && guidP.sqDistance2d(bot) < INTERACTION_DISTANCE * INTERACTION_DISTANCE && guidP.distance(bot) > INTERACTION_DISTANCE * 1.5 && !urand(0, 5))
     {
+        ai::botdiag::TraceBehavior(ai, "rpg_drop", "object height separation");
         AI_VALUE(std::set<ObjectGuid>&, "ignore rpg target").insert(AI_VALUE(GuidPosition, "rpg target"));
 
         RESET_AI_VALUE(GuidPosition, "rpg target");
@@ -105,6 +115,7 @@ bool MoveToRpgTargetAction::Execute(Event& event)
 
     if (!urand(0, 50))
     {
+        ai::botdiag::TraceBehavior(ai, "rpg_drop", "native random abandonment");
         AI_VALUE(std::set<ObjectGuid>&, "ignore rpg target").insert(AI_VALUE(GuidPosition, "rpg target"));
 
         RESET_AI_VALUE(GuidPosition, "rpg target");
@@ -134,22 +145,29 @@ bool MoveToRpgTargetAction::Execute(Event& event)
 
     float angle;
     float distance = 1.0f;
-    
-    if (bot->IsWithinLOS(x, y, z, true))
+
+    // Static service NPCs and game objects need one stable approach point per
+    // bot. Re-rolling the angle whenever movement stopped caused the visible
+    // queue-shaped oscillation at flight masters and other town services.
+    bool const movingUnit = unit && unit->IsMoving();
+    if (!movingUnit)
     {
-        if (!unit || !unit->IsMoving())
-            angle = wo->GetAngle(bot) + (M_PI * irand(-25, 25) / 100.0); //Closest 45 degrees towards the target
-        else if (!unit->HasInArc(bot))
+        StableTargetOffset const offset = GetStableTargetOffset(
+            bot->GetGUIDLow(), guidP.GetCounter(), x, y);
+        angle = offset.angle;
+        distance = offset.scale;
+    }
+    else if (bot->IsWithinLOS(x, y, z, true))
+    {
+        if (!unit->HasInArc(bot))
             angle = wo->GetOrientation() + (M_PI * irand(-10, 10) / 100.0); //20 degrees infront of target (leading it's movement)
         else
             angle = wo->GetAngle(bot); //Current approuch angle.
 
         if (guidP.sqDistance2d(bot) < INTERACTION_DISTANCE * INTERACTION_DISTANCE)
             distance = sqrt(guidP.sqDistance2d(bot)); //Stay at this distance.
-        else if(unit || !urand(0, 5)) //Stay futher away from npc's and sometimes gameobjects (for large hitbox objects).
-            distance = frand(0.5, 1);
         else
-            distance = frand(0, 0.5);
+            distance = frand(0.5, 1);
     }
     else
         angle = 2 * M_PI * urand(0, 100) / 100.0; //A circle around the target.
@@ -164,14 +182,17 @@ bool MoveToRpgTargetAction::Execute(Event& event)
         if (!movePos.ClosestCorrectPoint(5.0f, 5.0f, bot->GetInstanceId()) || abs(movePos.getZ()- z) > 10.0f)
         {
             ai->TellDebug(GetMaster(), "Can not path to desired location around " + chat->formatWorldobject(guidP.GetWorldObject(bot->GetInstanceId())) + " trying again later.", "debug move");
-
+            // Reuse native target rejection so the next choice can make progress.
+            ai::botdiag::TraceBehavior(ai, "rpg_drop", "no corrected navigation point");
+            AI_VALUE(std::set<ObjectGuid>&, "ignore rpg target").insert(guidP);
+            RESET_AI_VALUE(GuidPosition, "rpg target");
             return false;
         }
     }
 
     bool couldMove;
 
-    if (unit && unit->IsMoving() && bot->GetDistance(unit) < INTERACTION_DISTANCE * 2 && unit->GetMotionMaster()->GetCurrentMovementGeneratorType() != IDLE_MOTION_TYPE)
+    if (unit && unit->GetTypeId() == TYPEID_UNIT && unit->IsMoving() && bot->GetDistance(unit) < INTERACTION_DISTANCE * 2 && unit->GetMotionMaster()->GetCurrentMovementGeneratorType() != IDLE_MOTION_TYPE)
     {
 
         Creature* creature = static_cast<Creature*>(unit);
@@ -181,7 +202,9 @@ bool MoveToRpgTargetAction::Execute(Event& event)
             if (uint32 pauseTimer = creature->GetInteractionPauseTimer())
                 creature->GetMotionMaster()->PauseWaypoints(pauseTimer);
     }
-        couldMove = MoveTo(mapId, x, y, z, false, false);
+    // ClosestCorrectPoint modifies movePos; do not discard the navigable point.
+    couldMove = MoveTo(movePos.getMapId(), movePos.getX(), movePos.getY(), movePos.getZ(), false, false);
+    ai::botdiag::TraceBehavior(ai, "rpg_move", couldMove ? "accepted" : "rejected");
 
     if (!couldMove && movePos.distance(bot) > INTERACTION_DISTANCE)
     {
@@ -236,6 +259,7 @@ bool MoveToRpgTargetAction::isUseful()
         {
             ai->TellPlayerNoFacing(GetMaster(), "Target could not be found. Drop rpg target");
         }
+        return false;
     }
 
     if(MEM_AI_VALUE(WorldPosition, "current position")->LastChangeDelay() < 60)

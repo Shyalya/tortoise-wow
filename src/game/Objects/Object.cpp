@@ -20,6 +20,7 @@
  */
 
 #include "Object.h"
+#include "DetailedWorkDiagnostics.h"
 #include <shared_mutex>
 #include "SharedDefines.h"
 #include "WorldPacket.h"
@@ -307,7 +308,10 @@ void Object::BuildCreateUpdateBlockForPlayer(UpdateData *data, Player *target) c
     buf << GetPackGUID();
     buf << uint8(m_objectTypeId);
     
-    BuildMovementUpdate(&buf, updateFlags);
+    // The 1.12.1/5875 client can crash while evaluating an in-flight spline
+    // carried by an object's initial create block (ERROR #132 at 0x00453885).
+    // Let the next normal movement packet establish the spline instead.
+    BuildMovementUpdate(&buf, updateFlags, false);
 
     UpdateMask updateMask;
     updateMask.SetCount(m_valuesCount);
@@ -424,7 +428,7 @@ void Object::DestroyForPlayer(Player *target) const
     target->GetSession()->SendPacket(&data);
 }
 
-void Object::BuildMovementUpdate(ByteBuffer * data, uint8 updateFlags) const
+void Object::BuildMovementUpdate(ByteBuffer * data, uint8 updateFlags, bool includeSpline) const
 {
     *data << uint8(updateFlags);                            // update flags
 
@@ -434,6 +438,9 @@ void Object::BuildMovementUpdate(ByteBuffer * data, uint8 updateFlags) const
         ASSERT(unit);
         WorldObject const* wobject = (WorldObject*)this;
         MovementInfo m = wobject->m_movementInfo;
+        if (!includeSpline)
+            m.moveFlags &= ~MOVEFLAG_SPLINE_ENABLED;
+
         if (!m.ctime)
         {
             m.stime = WorldTimer::getMSTime() + 1000;
@@ -452,7 +459,7 @@ void Object::BuildMovementUpdate(ByteBuffer * data, uint8 updateFlags) const
             *data << float(unit->GetSpeed(MOVE_SWIM_BACK));
             *data << float(unit->GetSpeed(MOVE_TURN_RATE));
             // Send current movement informations
-            if (unit->m_movementInfo.moveFlags & MOVEFLAG_SPLINE_ENABLED)
+            if (includeSpline && (m.moveFlags & MOVEFLAG_SPLINE_ENABLED))
                 Movement::PacketBuilder::WriteCreate(*(unit->movespline), *data);
         }
         else
@@ -1973,6 +1980,21 @@ void WorldObject::SendObjectMessageToSet(WorldPacket *data, bool self, WorldObje
 
 void WorldObject::SendMovementMessageToSet(WorldPacket data, bool self, WorldObject const* except)
 {
+    DetailedWork::Scope deliveryWork(DetailedWork::MovementDelivery, GetGUIDLow());
+    if (IsCreature())
+    {
+        if (!IsInWorld())
+            return;
+        // CMaNGOS sends NPC movement to its existing observers instead of
+        // searching camera cells again for each spline packet. Bot sessions
+        // still receive their normal SendPacket hooks. Transport gameobjects
+        // and the native player broadcaster retain their own delivery paths.
+        for (ObjectGuid guid : m_movementViewers.Snapshot())
+            if (Player* viewer = GetMap()->GetPlayer(guid))
+                if (viewer != except && viewer->IsInWorld() && viewer->IsInVisibleList(this))
+                    viewer->GetSession()->SendPacket(&data);
+        return;
+    }
     if (!IsPlayer() || !sWorld.GetBroadcaster()->IsEnabled())
         SendObjectMessageToSet(&data, true, except);
     else
@@ -2043,6 +2065,8 @@ bool WorldObject::isWithinVisibilityDistanceOf(Unit const* viewer, WorldObject c
 void WorldObject::SetMap(Map * map)
 {
     MANGOS_ASSERT(map);
+    if (m_currMap != map)
+        m_movementViewers.Clear();
     m_currMap = map;
     //lets save current map's Id/instanceId
     m_mapId = map->GetId();
@@ -2633,7 +2657,11 @@ struct WorldObjectChangeAccumulator
         // send self fields changes in another way, otherwise
         // with new camera system when player's camera too far from player, camera wouldn't receive packets and changes from player
         if (i_object.isType(TYPEMASK_PLAYER))
-            i_object.BuildUpdateDataForPlayer((Player*)&i_object, i_updateDatas);
+        {
+            Player* player = static_cast<Player*>(&i_object);
+            if (player->GetSession() && player->GetSession()->GetSocket())
+                i_object.BuildUpdateDataForPlayer(player, i_updateDatas);
+        }
     }
 
     void Visit(CameraMapType &m)
@@ -2641,7 +2669,12 @@ struct WorldObjectChangeAccumulator
         for (const auto& iter : m)
         {
             Player* owner = iter.getSource()->GetOwner();
-            if (owner != &i_object && owner->IsInVisibleList_Unsafe(&i_object))
+            // A socketless playerbot consumes game state directly from the
+            // server and has no handler for SMSG_(COMPRESSED_)UPDATE_OBJECT.
+            // Do not spend CPU serialising and compressing client-only field
+            // updates that WorldSession would discard immediately.
+            if (owner != &i_object && owner->GetSession() && owner->GetSession()->GetSocket() &&
+                owner->IsInVisibleList_Unsafe(&i_object))
                 i_object.BuildUpdateDataForPlayer(owner, i_updateDatas);
         }
     }
@@ -2752,6 +2785,7 @@ void WorldObject::DestroyForNearbyPlayers()
         {
             std::unique_lock<std::shared_mutex> lock(plr->m_visibleGUIDs_lock);
             plr->m_visibleGUIDs.erase(GetGUID());
+            RemoveMovementViewer(plr->GetObjectGuid());
         }
 
         if (ToPlayer() && ToPlayer()->m_broadcaster)
@@ -4967,6 +5001,10 @@ uint32 WorldObject::SpellDamageBonusDone(Unit* pVictim, SpellEntry const* spellP
     }
 
     uint32 creatureTypeMask = pVictim->GetCreatureTypeMask();
+
+    // Native periodic-damage bonus: school mask from the aura, DOT only.
+    if (pUnit && damagetype == DOT)
+        DoneTotalMod *= pUnit->GetTotalAuraMultiplierByMiscMask(SPELL_AURA_MOD_PERIODIC_DAMAGE_PERCENT_DONE, spellProto->GetSpellSchoolMask());
 
     // Add pct bonus from spell damage versus
     if (pUnit)

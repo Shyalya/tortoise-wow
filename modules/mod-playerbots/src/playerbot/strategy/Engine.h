@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <unordered_map>
 
 #include "Action.h"
 #include "Queue.h"
@@ -80,6 +82,12 @@ namespace ai
 		void ChangeStrategy(const std::string& names);
 		void PrintStrategies(Player* requester, const std::string& engineType);
         std::string GetLastAction() { return lastAction; }
+        static uint64 GetSuppressedImpossibleActions();
+        static uint64 GetSuppressedFailedActions();
+        static uint64 GetActionFailureCacheEntries();
+        static uint64 GetActionFailureCachePeakEntries();
+        static uint64 GetExpiredActionFailureEntries();
+        static uint64 GetEvictedActionFailureEntries();
         const Action* GetLastExecutedAction() const { return lastExecutedAction; }
 
     public:
@@ -115,6 +123,31 @@ namespace ai
     private:
         void LogAction(const char* format, ...);
         void LogValues();
+        std::string GetFailureKey(Action* action, const Event& event, ActionResult reason) const;
+        bool IsFailureBackedOff(Action* action, const Event& event, ActionResult reason) const;
+        void RecordFailure(Action* action, const Event& event, ActionResult reason);
+        void ClearFailures(Action* action, const Event& event);
+        void PruneActionFailures(uint32 now, bool enforceLimit = false);
+        void ClearActionFailures();
+        static void UpdateActionFailureCachePeak(uint64 value);
+        bool AllowBackgroundRetry(Action* action, Event& event) const;
+        void RefreshFailureContext();
+        struct FailureState
+        {
+            uint32 failures = 0;
+            uint32 retryAfter = 0;
+            uint32 lastFailure = 0;
+        };
+        std::unordered_map<std::string, FailureState> actionFailures;
+        uint32 lastActionFailurePrune = 0;
+        float failureX = 0, failureY = 0, failureZ = 0;
+        uint32 failureMoney = 0, failureHealth = 0, failurePower = 0;
+        static std::atomic<uint64> suppressedImpossibleActions;
+        static std::atomic<uint64> suppressedFailedActions;
+        static std::atomic<uint64> actionFailureCacheEntries;
+        static std::atomic<uint64> actionFailureCachePeakEntries;
+        static std::atomic<uint64> expiredActionFailureEntries;
+        static std::atomic<uint64> evictedActionFailureEntries;
         // Cheap change-detector for the attached strategy set. A strategy
         // change that leaves the token unchanged is a no-op and must not call
         // Init(), because Init() -> Reset() empties the action queue.

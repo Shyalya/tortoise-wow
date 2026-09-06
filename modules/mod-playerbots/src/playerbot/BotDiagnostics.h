@@ -17,9 +17,11 @@
 // across ~80 call sites. Read SC_ as "bot diag".
 
 #include "Log.h"
+class PlayerbotAI;
 
 namespace ai { namespace botdiag {
     bool IsActionLogEnabled();
+    void TraceBehavior(PlayerbotAI* ai, const char* reason, const char* detail, uint32 taxiPath = 0);
     extern thread_local const char* gLastPhaseTag;
     extern thread_local const char* gLastPhaseBotName;
 }}

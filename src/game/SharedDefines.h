@@ -25,6 +25,10 @@
 #include "Platform/Define.h"
 #include <cassert>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #define MAX_SPELL_EFFECTS 3
 #define EFFECT_0          0
 #define EFFECT_1          1

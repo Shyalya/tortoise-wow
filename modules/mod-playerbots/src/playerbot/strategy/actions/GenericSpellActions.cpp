@@ -148,6 +148,11 @@ bool CastSpellAction::isPossible()
 
 bool CastSpellAction::isUseful()
 {
+    // Reject static capability misses before target/range evaluation (ManTech
+    // 407f4cd5). Mount is a dynamic pseudo-action, not one fixed learned spell.
+    if (spellName != "mount" &&
+        (!spellId || !sServerFacade.LookupSpellInfo(spellId) || !ai->HasSpell(spellId)))
+        return false;
     if (ai->IsInVehicle() && !ai->IsInVehicle(false, false, true))
         return false;
 

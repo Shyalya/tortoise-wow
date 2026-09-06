@@ -44,10 +44,23 @@ bool ChooseTravelTargetAction::Execute(Event& event)
         return false;
     }
 
-    if (futureDestinations->wait_for(std::chrono::seconds(0)) == std::future_status::timeout)
+    if (IsTravelSearchPending(*futureDestinations))
         return false;
 
-    PartitionedTravelList destinationList = futureDestinations->get();
+    PartitionedTravelList destinationList;
+    try
+    {
+        destinationList = futureDestinations->get();
+    }
+    catch (const std::exception& error)
+    {
+        // The failed future is consumed. Leave PREPARE through the native retry
+        // path instead of throwing through the owning map's update barrier.
+        sLog.outError("Playerbot travel search failed for bot %u: %s", bot->GetGUIDLow(), error.what());
+        travelTarget->SetStatus(TravelStatus::TRAVEL_STATUS_NONE);
+        context->ClearValues("no active travel destinations");
+        return false;
+    }
 
     travelTarget->SetStatus(TravelStatus::TRAVEL_STATUS_NONE);
 
@@ -733,6 +746,9 @@ bool ResetTargetAction::isUseful()
 
 bool RequestTravelTargetAction::Execute(Event& event)
 {
+    if (IsTravelSearchPending(*AI_VALUE(FutureDestinations*, "future travel destinations")))
+        return false;
+
     TravelDestinationPurpose actionPurpose = TravelDestinationPurpose(stoi(getQualifier()));
 
     WorldPosition center = event.getOwner() ? event.getOwner() : (GetMaster() ? GetMaster() : bot);
@@ -750,6 +766,9 @@ bool RequestTravelTargetAction::Execute(Event& event)
 }
 
 bool RequestTravelTargetAction::isUseful() {
+    if (IsTravelSearchPending(*AI_VALUE(FutureDestinations*, "future travel destinations")))
+        return false;
+
     if (bot->InBattleGround())
         return false;
 
@@ -815,6 +834,9 @@ bool RequestTravelTargetAction::isAllowed() const
 
 bool RequestNamedTravelTargetAction::Execute(Event& event)
 {
+    if (IsTravelSearchPending(*AI_VALUE(FutureDestinations*, "future travel destinations")))
+        return false;
+
     std::string travelName = getQualifier();
 
     WorldPosition center = event.getOwner() ? event.getOwner() : (GetMaster() ? GetMaster() : bot);
@@ -1366,6 +1388,9 @@ bool RequestNamedTravelTargetAction::isAllowed() const
 
 bool RequestQuestTravelTargetAction::Execute(Event& event)
 {
+    if (IsTravelSearchPending(*AI_VALUE(FutureDestinations*, "future travel destinations")))
+        return false;
+
     WorldPosition center = event.getOwner() ? event.getOwner() : (GetMaster() ? GetMaster() : bot);
 
     ai->TellDebug(ai->GetMaster(), "Getting new destination ranges for travel quest", "debug travel");

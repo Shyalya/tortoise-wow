@@ -3,25 +3,12 @@
 #include "PlayerbotMgr.h"
 #include "PlayerbotAIConfig.h"
 #include "RandomPlayerbotMgr.h"
+#include "Handlers/LoginQueryHolder.h"
 
 using namespace ai;
 
 // Penqle's Singleton<> requires an explicit instantiation in a .cpp file.
 INSTANTIATE_SINGLETON_1(ai::PlayerBotLoginMgr);
-
-class LoginQueryHolder : public SqlQueryHolder
-{
-private:
-    uint32 m_accountId;
-    ObjectGuid m_guid;
-public:
-    LoginQueryHolder(uint32 accountId, ObjectGuid guid)
-        : m_accountId(accountId), m_guid(guid) {
-    }
-    ObjectGuid GetGuid() const { return m_guid; }
-    uint32 GetAccountId() const { return m_accountId; }
-    bool Initialize();
-};
 
 class PlayerbotLoginQueryHolder : public LoginQueryHolder
 {
@@ -177,10 +164,21 @@ bool PlayerLoginInfo::SendHolder()
     if (!lqh->Initialize())
     {
         delete holder;                                      // delete all unprocessed queries
+        holder = nullptr;
+        holderState = HolderState::HOLDER_EMPTY;
         return false;
     }
 
-    CharacterDatabase.DelayQueryHolder(this, &PlayerLoginInfo::HandlePlayerBotLoginCallback, holder);
+    // The async login manager owns admission/backpressure, but the common
+    // PlayerbotHolder callback owns materializing the Player and attaching AI.
+    // Register this prepared holder so that callback can resolve it later.
+    // Without this handoff every async login was silently discarded as
+    // "not one of ours", which is why AsyncBotLogin produced zero bots.
+    sRandomPlayerbotMgr.RegisterPendingBotLogin(holder, guid, 0);
+
+    // This callback only marks the holder ready. Keep it on the world thread:
+    // the former callback-pool write raced LoginBot() reading holderState.
+    CharacterDatabase.DelayQueryHolderUnsafe(this, &PlayerLoginInfo::HandlePlayerBotLoginCallback, holder);
 
     return true;
 }
@@ -237,6 +235,8 @@ void PlayerLoginInfo::SetQueue(bool isWanted, LoginSpace& space)
     {
         if (loginState == LoginState::BOT_OFFLINE)
         {
+            if (nextLoginAttempt && time(nullptr) < nextLoginAttempt)
+                return;
             loginState = LoginState::BOT_ON_LOGINQUEUE;
             FillLoginSpace(space, FillStep::NEXT_STEP);
         }
@@ -299,9 +299,14 @@ bool PlayerLoginInfo::LoginBot()
     if (holderState != HolderState::HOLDER_RECEIVED)
         return false;
 
+    if (!sRandomPlayerbotMgr.BackgroundLoginBudget(1))
+        return false; // retain holder and queue state; retry after recovery
+
     if (sObjectMgr.GetPlayer(ObjectGuid(HIGHGUID_PLAYER, guid), false))
     {
         loginState = LoginState::BOT_ONLINE;
+        loginFailureCount = 0;
+        nextLoginAttempt = 0;
         return false;
     }
 
@@ -317,10 +322,18 @@ bool PlayerLoginInfo::LoginBot()
     if (!player)
     {
         loginState = LoginState::BOT_OFFLINE;
+        ++loginFailureCount;
+        uint32 const backoff = std::min<uint32>(60, 1u << std::min<uint8>(loginFailureCount, 6));
+        nextLoginAttempt = time(nullptr) + backoff;
+        if (loginFailureCount == 1 || (loginFailureCount & (loginFailureCount - 1)) == 0)
+            sLog.outBasic("[PlayerBots] Login failed for bot %u; retry %u in %u seconds",
+                guid, loginFailureCount, backoff);
         return false;
     }
 
     loginState = LoginState::BOT_ONLINE;
+    loginFailureCount = 0;
+    nextLoginAttempt = 0;
 
     Update(player);
 
@@ -385,7 +398,15 @@ void PlayerBotLoginMgr::Update(RealPlayers& realPlayers)
         return;
     }
 
-    BotInfos queue = GetFuture(FillLoginLogoutQueue, futureQueue, true, &botPool, realPlayers);
+    // FillLoginLogoutQueue mutates login state inside botPool and also reads
+    // live Player objects through realPlayers.  Running it on a detached
+    // std::async worker races the world thread, which updates the same objects
+    // immediately above and consumes the resulting pointers below.  Under a
+    // large startup wave this manifested as intermittent SIGABRT crashes while
+    // hundreds of character query holders were completing.  Queue selection
+    // is intentionally kept on the world thread; character DB holders remain
+    // asynchronous and retain the expensive I/O off-thread.
+    BotInfos queue = FillLoginLogoutQueue(&botPool, realPlayers);
 
     if (!queue.empty())
     {
@@ -461,11 +482,18 @@ void PlayerBotLoginMgr::SendHolders(const BotInfos& queue)
 {  
     CharacterDatabase.AsyncPQuery(&RandomPlayerbotMgr::DatabasePing, sWorld.GetCurrentMSTime(), std::string("CharacterDatabase"), "select 1");
 
+    size_t const pending = CharacterDatabase.GetPendingAsyncOperationCount() +
+        CharacterDatabase.GetPendingResultCount();
+    size_t available = pending < sPlayerbotAIConfig.randomBotLoginDbQueueLimit ?
+        sPlayerbotAIConfig.randomBotLoginDbQueueLimit - pending : 0;
+    available = sRandomPlayerbotMgr.BackgroundLoginBudget(uint32(available));
+
     for (auto& info : queue)
     {
-        if (sRandomPlayerbotMgr.GetDatabaseDelay("CharacterDatabase") > 100)
+        if (!available || sRandomPlayerbotMgr.GetDatabaseDelay("CharacterDatabase") > 100)
             break;
-        info->SendHolder();
+        if (info->SendHolder())
+            --available;
     }
 }
 
@@ -473,11 +501,18 @@ void PlayerBotLoginMgr::SendHolders(BotPool* pool)
 {
     CharacterDatabase.AsyncPQuery(&RandomPlayerbotMgr::DatabasePing, sWorld.GetCurrentMSTime(), std::string("CharacterDatabase"), "select 1");
 
+    size_t const pending = CharacterDatabase.GetPendingAsyncOperationCount() +
+        CharacterDatabase.GetPendingResultCount();
+    size_t available = pending < sPlayerbotAIConfig.randomBotLoginDbQueueLimit ?
+        sPlayerbotAIConfig.randomBotLoginDbQueueLimit - pending : 0;
+    available = sRandomPlayerbotMgr.BackgroundLoginBudget(uint32(available));
+
     for (auto& [guid, info] : *pool)
     {
-        if (sRandomPlayerbotMgr.GetDatabaseDelay("CharacterDatabase") > 100)
+        if (!available || sRandomPlayerbotMgr.GetDatabaseDelay("CharacterDatabase") > 100)
             break;
-        info.SendHolder();
+        if (info.SendHolder())
+            --available;
     }
 }
 
@@ -706,10 +741,20 @@ BotInfos PlayerBotLoginMgr::FillLoginLogoutQueue(BotPool* pool, const RealPlayer
 
 void PlayerBotLoginMgr::LoginLogoutBots(const BotInfos& queue)
 {
+    uint32 remaining = sRandomPlayerbotMgr.BackgroundLoginBudget(sPlayerbotAIConfig.randomBotsMaxLoginsPerInterval);
     for (auto& info : queue)
     {        
-        if (info->LoginBot())
+        // ManTech 407f4cd5: an async queue is a proposal, not an admission.
+        // Recheck the live target for each completion, including target decreases.
+        if (info->GetLoginState() == LoginState::BOT_ON_LOGINQUEUE &&
+            sRandomPlayerbotMgr.GetPlayerbotsAmount() >= GetMaxOnlineBotCount())
         {
+            info->ResetLoginState();
+            continue;
+        }
+        if (remaining && info->LoginBot())
+        {
+            --remaining;
             onlineBots.push_back(info);
         }
         if (info->LogoutBot())

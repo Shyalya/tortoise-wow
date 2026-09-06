@@ -46,6 +46,7 @@ class SqlOperation
         uint32 GetSerialId() const { return serialId; }
         virtual void OnRemove() { delete this; }
         virtual bool Execute(SqlConnection *conn) = 0;
+        virtual bool IsReadOnly() const { return false; }
         virtual ~SqlOperation() {}
 
         const auto& GetCallback() const { return callback; }
@@ -126,10 +127,20 @@ class SqlResultQueue : public LockedQueue<MaNGOS::IQueryCallback* , std::mutex>
         ~SqlResultQueue();
         void CancelAll();
         void Update(uint32 maxTime);
+        void Add(MaNGOS::IQueryCallback* callback, bool highPriority = false);
+        size_t PendingCount() const
+        {
+            return size() + _priorityWaitingQueries.size() + _threadUnsafeWaitingQueries.size() +
+                _priorityThreadUnsafeWaitingQueries.size();
+        }
         typedef LockedQueue<MaNGOS::IQueryCallback*, std::mutex> CallbackQueue;
+        CallbackQueue _priorityWaitingQueries;
+        CallbackQueue _priorityThreadUnsafeWaitingQueries;
         CallbackQueue _threadUnsafeWaitingQueries;
         uint32 numUnsafeQueries;
-        std::unique_ptr<ThreadPool> m_callbackThreads;
+    private:
+        unsigned m_priorityBurst = 0;
+        bool nextCallback(MaNGOS::IQueryCallback*& callback, bool priority);
 };
 
 class SqlQuery : public SqlOperation
@@ -139,10 +150,12 @@ class SqlQuery : public SqlOperation
         MaNGOS::IQueryCallback * m_callback;
         SqlResultQueue * m_queue;
     public:
-        SqlQuery(const char *sql, MaNGOS::IQueryCallback * callback, SqlResultQueue * queue)
-            : m_sql(mangos_strdup(sql)), m_callback(callback), m_queue(queue) {}
+        SqlQuery(const char *sql, MaNGOS::IQueryCallback * callback, SqlResultQueue * queue, bool highPriority = false)
+            : m_sql(mangos_strdup(sql)), m_callback(callback), m_queue(queue), m_highPriority(highPriority) {}
         ~SqlQuery() { char* tofree = const_cast<char*>(m_sql); delete [] tofree; }
         bool Execute(SqlConnection *conn);
+        bool IsReadOnly() const override { return true; }
+        bool m_highPriority;
 };
 
 class SqlQueryHolder
@@ -163,7 +176,7 @@ class SqlQueryHolder
         size_t GetSize() const { return m_queries.size(); }
         QueryResult* GetResult(size_t index);
         void SetResult(size_t index, QueryResult *result);
-        bool Execute(MaNGOS::IQueryCallback * callback, Database *db, SqlResultQueue *queue);
+        bool Execute(MaNGOS::IQueryCallback * callback, Database *db, SqlResultQueue *queue, bool highPriority = false);
         void DeleteAllResults();
         uint32 GetSerialId() const { return serialId; }
 };
@@ -174,9 +187,11 @@ class SqlQueryHolderEx : public SqlOperation
         SqlQueryHolder * m_holder;
         MaNGOS::IQueryCallback * m_callback;
         SqlResultQueue * m_queue;
+        bool m_highPriority;
     public:
-        SqlQueryHolderEx(SqlQueryHolder *holder, MaNGOS::IQueryCallback * callback, SqlResultQueue * queue, uint32 id)
-            : SqlOperation(id), m_holder(holder), m_callback(callback), m_queue(queue) {}
+        SqlQueryHolderEx(SqlQueryHolder *holder, MaNGOS::IQueryCallback * callback, SqlResultQueue * queue, uint32 id, bool highPriority = false)
+            : SqlOperation(id), m_holder(holder), m_callback(callback), m_queue(queue), m_highPriority(highPriority) {}
         bool Execute(SqlConnection *conn);
+        bool IsReadOnly() const override { return true; }
 };
 #endif                                                      //__SQLOPERATIONS_H

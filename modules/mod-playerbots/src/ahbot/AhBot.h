@@ -3,6 +3,7 @@
 #include <atomic>
 #include <mutex>
 #include <vector>
+#include <deque>
 #include "Category.h"
 #include "ItemBag.h"
 #include "playerbot/PlayerbotAIBase.h"
@@ -25,7 +26,7 @@ namespace ahbot
     class AhBot
     {
     public:
-        AhBot() : nextAICheckTime(0), updating(false) {}
+        AhBot() : nextAICheckTime(0), nextHouseIndex(0), updating(false) {}
         virtual ~AhBot();
         static AhBot& instance()
         {
@@ -125,6 +126,7 @@ namespace ahbot
     private:
         AvailableItemsBag availableItems;
         time_t nextAICheckTime;
+        uint32 nextHouseIndex;
         std::map<std::string, double> categoryMultipliers;
         std::map<std::string, uint32> categoryMaxAuctionCount;
         std::map<std::string, uint32> categoryMaxItemAuctionCount;
@@ -133,8 +135,9 @@ namespace ahbot
         std::set<uint32> allBidders;
         std::atomic<bool> updating;
         std::mutex queuedWorkMutex;
-        std::vector<PendingPurchase> queuedPurchases;
-        std::vector<PendingProposition> queuedPropositions;
+        std::deque<PendingPurchase> queuedPurchases;
+        std::deque<PendingProposition> queuedPropositions;
+        bool preferProposition = false; // world-thread owned; fair between queues
     };
 };
 

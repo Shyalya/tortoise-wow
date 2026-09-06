@@ -102,12 +102,6 @@ bool SummonAction::Execute(Event& event)
         return true;
     }
 
-    if (SummonUsingGos(requester, bot, requester) || SummonUsingNpcs(requester, bot, requester))
-    {
-        ai->TellPlayerNoFacing(requester, "Welcome!");
-        return true;
-    }
-
     return false;
 }
 
@@ -132,6 +126,10 @@ bool SummonAction::SummonUsingGos(Player* requester, Player *summoner, Player *p
 bool SummonAction::SummonUsingNpcs(Player* requester, Player *summoner, Player *player)
 {
     if (!sPlayerbotAIConfig.summonAtInnkeepersEnabled)
+        return false;
+    // ManTech summon direction: a bot command must not consume the human's
+    // hearthstone cooldown by falling back to a reverse summon.
+    if (!player || IsRealPlayer(player))
         return false;
 
     std::list<Unit*> targets;

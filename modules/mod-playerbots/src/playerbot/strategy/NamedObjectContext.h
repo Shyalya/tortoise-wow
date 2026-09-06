@@ -5,6 +5,7 @@
 #include <set>
 #include <list>
 #include <map>
+#include <mutex>
 
 namespace ai
 {
@@ -200,10 +201,25 @@ namespace ai
 
         T* Create(std::string name, PlayerbotAI* ai)
         {
-            if (created.find(name) == created.end())
-                return created[name] = NamedObjectFactory<T>::Create(name, ai);
+            std::lock_guard<std::recursive_mutex> lock(createdMutex);
+            auto const existing = created.find(name);
+            if (existing == created.end())
+            {
+                // Qualified lookups routinely probe unsupported combinations.
+                // Do not retain a string/map node forever when no object was
+                // created; at 4k bots those null entries consume substantial
+                // memory and can grow for the lifetime of the process.
+                T* object = NamedObjectFactory<T>::Create(name, ai);
+                if (object)
+                {
+                    estimatedCreatedBytes += sizeof(typename decltype(created)::value_type) +
+                        3 * sizeof(void*) + name.capacity() + 1 + sizeof(T);
+                    created.emplace(std::move(name), object);
+                }
+                return object;
+            }
 
-            return created[name];
+            return existing->second;
         }
 
         virtual ~NamedObjectContext()
@@ -213,6 +229,7 @@ namespace ai
 
         void Clear()
         {
+            std::lock_guard<std::recursive_mutex> lock(createdMutex);
             for (typename std::map<std::string, T*>::iterator i = created.begin(); i != created.end(); i++)
             {
                 if (i->second)
@@ -220,19 +237,49 @@ namespace ai
             }
 
             created.clear();
+            estimatedCreatedBytes = 0;
         }
 
         void Erase(const std::string& name)
         {
-            if (created.find(name) != created.end())
+            std::lock_guard<std::recursive_mutex> lock(createdMutex);
+            typename std::map<std::string, T*>::iterator existing = created.find(name);
+            if (existing != created.end())
             {
-                delete created[name];
-                created.erase(name);
+                auto const& entry = *existing;
+                estimatedCreatedBytes -= sizeof(typename decltype(created)::value_type) +
+                    3 * sizeof(void*) + entry.first.capacity() + 1 + (entry.second ? sizeof(T) : 0);
+                delete entry.second;
+                created.erase(existing);
             }
+        }
+
+        template <typename Predicate>
+        size_t EraseIf(Predicate predicate)
+        {
+            std::lock_guard<std::recursive_mutex> lock(createdMutex);
+            size_t erased = 0;
+            for (auto existing = created.begin(); existing != created.end();)
+            {
+                if (!predicate(existing->first, existing->second))
+                {
+                    ++existing;
+                    continue;
+                }
+
+                estimatedCreatedBytes -= sizeof(typename decltype(created)::value_type) +
+                    3 * sizeof(void*) + existing->first.capacity() + 1 +
+                    (existing->second ? sizeof(T) : 0);
+                delete existing->second;
+                existing = created.erase(existing);
+                ++erased;
+            }
+            return erased;
         }
 
         void Update()
         {
+            std::lock_guard<std::recursive_mutex> lock(createdMutex);
             for (typename std::map<std::string, T*>::iterator i = created.begin(); i != created.end(); i++)
             {
                 if (i->second)
@@ -242,6 +289,7 @@ namespace ai
 
         void Reset()
         {
+            std::lock_guard<std::recursive_mutex> lock(createdMutex);
             for (typename std::map<std::string, T*>::iterator i = created.begin(); i != created.end(); i++)
             {
                 if (i->second)
@@ -252,18 +300,37 @@ namespace ai
         bool IsShared() { return shared; }
         bool IsSupportsSiblings() { return supportsSiblings; }
 
-        bool IsCreated(const std::string& name) { return created.find(name) != created.end(); }
+        bool IsCreated(const std::string& name)
+        {
+            std::lock_guard<std::recursive_mutex> lock(createdMutex);
+            return created.find(name) != created.end();
+        }
 
         std::set<std::string> GetCreated()
         {
+            std::lock_guard<std::recursive_mutex> lock(createdMutex);
             std::set<std::string> keys;
             for (typename std::map<std::string, T*>::iterator it = created.begin(); it != created.end(); it++)
                 keys.insert(it->first);
             return keys;
         }
 
+        size_t GetCreatedCount() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(createdMutex);
+            return created.size();
+        }
+
+        size_t GetEstimatedCreatedBytes() const
+        {
+            std::lock_guard<std::recursive_mutex> lock(createdMutex);
+            return estimatedCreatedBytes;
+        }
+
     protected:
         std::map<std::string, T*> created;
+        mutable std::recursive_mutex createdMutex;
+        size_t estimatedCreatedBytes = 0;
         bool shared;
         bool supportsSiblings;
     };
@@ -376,12 +443,36 @@ namespace ai
             return result;
         }
 
+        size_t GetCreatedCount() const
+        {
+            size_t count = 0;
+            for (typename std::list<NamedObjectContext<T>*>::const_iterator i = contexts.begin(); i != contexts.end(); ++i)
+                count += (*i)->GetCreatedCount();
+            return count;
+        }
+
+        size_t GetEstimatedCreatedBytes() const
+        {
+            size_t bytes = 0;
+            for (auto const* context : contexts) bytes += context->GetEstimatedCreatedBytes();
+            return bytes;
+        }
+
         void Erase(const std::string& name)
         {
             for (typename std::list<NamedObjectContext<T>*>::iterator i = contexts.begin(); i != contexts.end(); i++)
             {
                 (*i)->Erase(name);
             }
+        }
+
+        template <typename Predicate>
+        size_t EraseIf(Predicate predicate)
+        {
+            size_t erased = 0;
+            for (typename std::list<NamedObjectContext<T>*>::iterator i = contexts.begin(); i != contexts.end(); ++i)
+                erased += (*i)->EraseIf(predicate);
+            return erased;
         }
 
     private:

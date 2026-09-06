@@ -17,6 +17,7 @@ public:
     virtual void UpdateAI(uint32 elapsed);
     
     uint32 GetAIInternalUpdateDelay() const { return aiInternalUpdateDelay; }
+    void AdvanceMinimalUpdateDelay(uint32 elapsed);
 
     // mod-playerbots spelling of SetAIInternalUpdateDelay: how long before this
     // AI is asked again. Public because it is public there and module code

@@ -8,6 +8,8 @@ using namespace ai;
 
 bool LfgJoinAction::Execute(Event& event)
 {
+    if (!isUseful())
+        return false;
     return JoinLFG();
 }
 
@@ -1153,6 +1155,8 @@ bool LfgTeleportAction::Execute(Event& event)
 
 bool LfgJoinAction::isUseful()
 {
+    if (!bot->IsInWorld() || bot->IsInCombat())
+        return false;
     if (!sPlayerbotAIConfig.randomBotJoinLfg)
     {
         //ai->ChangeStrategy("-lfg", BotState::BOT_STATE_NON_COMBAT);

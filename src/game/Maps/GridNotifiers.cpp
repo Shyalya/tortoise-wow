@@ -113,6 +113,9 @@ VisibleNotifier::Notify()
         }
 
         player.m_visibleGUIDs.erase(*itr);
+        if (itr->IsCreatureOrPet())
+            if (Creature* creature = player.GetMap()->GetAnyTypeCreature(*itr))
+                creature->RemoveMovementViewer(player.GetObjectGuid());
 
         DEBUG_FILTER_LOG(LOG_FILTER_VISIBILITY_CHANGES, "%s is out of range (no in active cells set) now for %s",
                          itr->GetString().c_str(), player.GetGuidStr().c_str());
@@ -123,6 +126,11 @@ VisibleNotifier::Notify()
     {
         // send create/outofrange packet to player (except player create updates that already sent using SendUpdateToPlayer)
         i_data.Send(player.GetSession());
+
+        // The async movement broadcaster must not target newly visible players
+        // until their batched create blocks are ahead of every movement packet
+        // on this socket.
+        player.ActivateBroadcastListeners(i_visibleNow);
 
         // send out of range to other players if need
         ObjectGuidSet const& oor = i_data.GetOutOfRangeGUIDs();

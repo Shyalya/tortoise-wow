@@ -5,6 +5,8 @@
 
 #include "DungeonClearActions.h"
 #include <unordered_map>
+#include "BoundedBotThrottle.h"
+#include "ArchitectureDiagnostics.h"
 #include "Ai/Dungeon/DungeonClear/Util/DcLeaderSignal.h"
 #include "Ai/Dungeon/DungeonClear/DcPullContext.h"
 
@@ -539,6 +541,7 @@ bool DungeonClearFollowTankAction::Execute(Event& /*event*/)
                 // pyramid deck, 2026-09-05: followers 100-670yd behind, "cannot
                 // follow", the run held for them until the cap).
                 if (Player* leader = DcLeaderSignal::FindLeaderTank(bot))
+                    if (leader->IsInWorld() && leader->FindMap() == bot->FindMap())
                     if (PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader))
                         if (AiObjectContext* lctx = leaderAI->GetAiObjectContext())
                         {
@@ -548,9 +551,8 @@ bool DungeonClearFollowTankAction::Execute(Event& /*event*/)
                                 getMSTimeDiff(lpc.geometrySnapMs, getMSTime()) < 20u * 60u * 1000u &&
                                 leader->GetMapId() == bot->GetMapId() && toTank > 30.0f)
                             {
-                                static std::unordered_map<uint64, uint32> s_snapSaidAt;
+                                static BoundedBotThrottle s_snapSaidAt;
                                 uint32 const nowS = getMSTime();
-                                uint32& atS = s_snapSaidAt[bot->GetObjectGuid().GetRawValue()];
                                 float const dFrom = bot->GetExactDist(&lpc.geometrySnapFrom);
                                 if (dFrom <= 4.0f)
                                 {
@@ -575,9 +577,9 @@ bool DungeonClearFollowTankAction::Execute(Event& /*event*/)
                                              lpc.geometrySnapFrom.GetPositionY(),
                                              lpc.geometrySnapFrom.GetPositionZ()))
                                 {
-                                    if (!atS || getMSTimeDiff(atS, nowS) > 10000)
+                                    if (TurtleDiagnostics::enabled.load(std::memory_order_relaxed) &&
+                                        s_snapSaidAt.Allow(bot->GetObjectGuid().GetRawValue(), nowS, 10000))
                                     {
-                                        atS = nowS;
                                         LOG_INFO("playerbots.dungeonclear",
                                                  "[DC:{}] follow-tank: no reachable crumb ({:.0f}yd behind) "
                                                  "-> walking to the tank snap point {:.0f}yd away",
@@ -1936,12 +1938,11 @@ bool DungeonClearGatherAtPointAction::Execute(Event& /*event*/)
         // Arrived: stand still and own the tick, so follow-tank cannot pull
         // the bot back into formation while the leader is still counting
         // clicks. Per-tick Hold does not spam stop packets (DcMovement).
-        static std::unordered_map<uint64, uint32> s_arrivedSaidAt;
+        static BoundedBotThrottle s_arrivedSaidAt;
         uint32 const nowA = getMSTime();
-        uint32& atA = s_arrivedSaidAt[bot->GetObjectGuid().GetRawValue()];
-        if (!atA || getMSTimeDiff(atA, nowA) > 10000)
+        if (TurtleDiagnostics::enabled.load(std::memory_order_relaxed) &&
+            s_arrivedSaidAt.Allow(bot->GetObjectGuid().GetRawValue(), nowA, 10000))
         {
-            atA = nowA;
             LOG_INFO("playerbots.dungeonclear",
                      "[DC:{}] gather: holding {:.1f}yd from the gather point", bot->GetName(), dist);
         }
@@ -1952,12 +1953,10 @@ bool DungeonClearGatherAtPointAction::Execute(Event& /*event*/)
     // tick is what the executor's forced MovePoint experiment paid for. Re-issue
     // only when the bot is standing (arrived somewhere else, or was stopped) or
     // every 3 s as a safety net against a swallowed move.
-    static std::unordered_map<uint64, uint32> s_issuedAt;
+    static BoundedBotThrottle s_issuedAt; // gameplay retry state, NOT diagnostic
     uint32 const now = getMSTime();
-    uint32& at = s_issuedAt[bot->GetObjectGuid().GetRawValue()];
-    if (bot->isMoving() && at && getMSTimeDiff(at, now) < 3000)
+    if (!s_issuedAt.Allow(bot->GetObjectGuid().GetRawValue(), now, 3000, !bot->isMoving()))
         return true;
-    at = now;
     // Spread the party around the object instead of stacking five bots on one
     // spot: a fixed per-bot bearing, 2 yd out - still well inside the 5 yd a
     // click needs.

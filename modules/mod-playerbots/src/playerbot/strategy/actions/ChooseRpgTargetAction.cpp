@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include "playerbot/BotDiagnostics.h"
 #include "ChooseRpgTargetAction.h"
 #include "playerbot/PlayerbotAIConfig.h"
 #include "playerbot/strategy/values/PossibleRpgTargetsValue.h"
@@ -15,12 +16,11 @@
 
 using namespace ai;
 
-bool ChooseRpgTargetAction::HasSameTarget(ObjectGuid guid, uint32 max, std::list<ObjectGuid>& nearGuids)
+std::unordered_map<ObjectGuid, uint32> ChooseRpgTargetAction::GetTargetCounts(std::list<ObjectGuid> const& nearGuids)
 {
+    std::unordered_map<ObjectGuid, uint32> counts;
     if (ai->HasRealPlayerMaster())
-        return false;
-
-    uint32 num = 0;
+        return counts;
 
     for (auto& i : nearGuids)
     {
@@ -32,24 +32,20 @@ bool ChooseRpgTargetAction::HasSameTarget(ObjectGuid guid, uint32 max, std::list
         if (!ai->IsSafe(player))
             continue;
 
-        PlayerbotAI* ai = GetBotAI(player);
+        PlayerbotAI* otherAI = GetBotAI(player);
 
-        if (!ai)
+        if (!otherAI)
             continue;
 
-        if (!ai->AllowActivity(GRIND_ACTIVITY))
+        if (!otherAI->AllowActivity(GRIND_ACTIVITY))
             continue;
 
-        if (PAI_VALUE(GuidPosition,"rpg target") != guid)
-            continue;
-
-        num++;
-
-        if (num >= max)
-            return true;
+        GuidPosition target = PAI_VALUE(GuidPosition, "rpg target");
+        if (target)
+            ++counts[target];
     }
 
-    return false;
+    return counts;
 }
 
 #define SkipRpgTarget(reason){ if(debug) debugTargets[guidP] = reason; continue;}
@@ -73,6 +69,9 @@ std::unordered_map<ObjectGuid, float> ChooseRpgTargetAction::GetTargets(Player* 
     std::list<ObjectGuid> possibleTargets = AI_VALUE(std::list<ObjectGuid>, "possible rpg targets");
     std::list<ObjectGuid> possibleObjects = bot->GetMap()->IsDungeon() ? AI_VALUE(std::list<ObjectGuid>, "nearest game objects") : AI_VALUE(std::list<ObjectGuid>, "nearest game objects no los");
     std::list<ObjectGuid> possiblePlayers = AI_VALUE(std::list<ObjectGuid>, "nearest friendly players");
+    // Count once before sampling players. The old per-target scan disabled
+    // crowd avoidance altogether at 200 neighbors, where it is needed most.
+    auto targetCounts = GetTargetCounts(possiblePlayers);
 
     //List of targets that we rpg'ed with before and should be ignored.
     std::set<ObjectGuid>& ignoreList = AI_VALUE(std::set<ObjectGuid>&, "ignore rpg target");
@@ -122,6 +121,8 @@ std::unordered_map<ObjectGuid, float> ChooseRpgTargetAction::GetTargets(Player* 
         ai->TellPlayerNoFacing(requester, out);
     }
 
+    // Candidate scoring temporarily bypasses proximity, not the subsequent AI tick.
+    std::string previousRpgAction = AI_VALUE(std::string, "next rpg action");
     //Force RpgTrigger to be active even if we aren't currently close to the rpg target.
     SET_AI_VALUE(std::string, "next rpg action", this->getName());
 
@@ -223,8 +224,9 @@ std::unordered_map<ObjectGuid, float> ChooseRpgTargetAction::GetTargets(Player* 
             }
         }
 
-        //Limit the amount of bots that can rpg with 1 target. Only if the calculation doesn't involve checking 200+ players.
-        if (possiblePlayers.size() < 200 && HasSameTarget(guidP, urand(5, 15), possiblePlayers))
+        // Keep the native crowd limit without rescanning neighbors per candidate.
+        auto occupancy = targetCounts.find(guidP);
+        if (occupancy != targetCounts.end() && occupancy->second >= urand(5, 15))
         {
             sametarget++;
             SkipRpgTarget("Too many bots are rpging with this npc.");
@@ -283,6 +285,7 @@ std::unordered_map<ObjectGuid, float> ChooseRpgTargetAction::GetTargets(Player* 
         }
     }
 
+    SET_AI_VALUE(std::string, "next rpg action", previousRpgAction);
     return targets;
 }
 
@@ -507,8 +510,7 @@ bool ChooseRpgTargetAction::Execute(Event& event)
     }
 
     //We pick a random target from the list with targets having a higher relevance of being picked.
-    std::mt19937 gen(time(0));
-    WeightedShuffle(guidps.begin(), guidps.end(), relevances.begin(), relevances.end(), gen);
+    WeightedShuffle(guidps.begin(), guidps.end(), relevances.begin(), relevances.end(), *GetRandomGenerator());
     GuidPosition guidP(guidps.front(),bot->GetMapId(), bot->GetInstanceId());
 
     //If we can't find a target clear ignore list and try again later.
@@ -535,6 +537,7 @@ bool ChooseRpgTargetAction::Execute(Event& event)
     //Save the current rpg target and the ignorelist.
     SET_AI_VALUE(GuidPosition, "rpg target", guidP);
     ignoreList.clear();
+    ai::botdiag::TraceBehavior(ai, "rpg_selected", rgpActionReason[guidP].c_str());
 
     return true;
 }

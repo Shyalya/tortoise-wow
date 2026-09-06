@@ -8,6 +8,9 @@ using namespace ai;
 
 void TrainerAction::Learn(uint32 cost, ObjectGuid trainerGuid, uint32 spellId, TrainerSpell const* tSpell, std::ostringstream& msg)
 {
+    SpellEntry const* proto = tSpell ? sServerFacade.LookupSpellInfo(tSpell->spell) : nullptr;
+    if (!proto)
+        return;
     if (sPlayerbotAIConfig.autoTrainSpells != "free" &&  !ai->HasCheat(BotCheatMask::gold))
     {
         if (AI_VALUE2(uint32, "free money for", (uint32)NeedMoneyFor::spells) < cost)
@@ -18,10 +21,6 @@ void TrainerAction::Learn(uint32 cost, ObjectGuid trainerGuid, uint32 spellId, T
 
         bot->ModifyMoney(-int32(cost));
     }
-
-    SpellEntry const* proto = sServerFacade.LookupSpellInfo(tSpell->spell);
-    if (!proto)
-        return;
 
 #ifdef MANGOSBOT_ZERO
     if (tSpell->learnedSpell)
@@ -34,11 +33,15 @@ void TrainerAction::Learn(uint32 cost, ObjectGuid trainerGuid, uint32 spellId, T
             if (proto->Effect[j] == SPELL_EFFECT_LEARN_SPELL)
             {
                 uint32 learnedSpell = proto->EffectTriggerSpell[j];
-                bot->learnSpell(learnedSpell, false);
-                learned = true;
+                if (learnedSpell && sServerFacade.LookupSpellInfo(learnedSpell))
+                {
+                    bot->learnSpell(learnedSpell, false);
+                    learned = true;
+                }
             }
         }
-        if (!learned) bot->learnSpell(tSpell->learnedSpell, false);
+        if (!learned && tSpell->learnedSpell && sServerFacade.LookupSpellInfo(tSpell->learnedSpell))
+            bot->learnSpell(tSpell->learnedSpell, false);
     }
     else
         ai->CastSpell(tSpell->spell, bot);

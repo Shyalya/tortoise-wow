@@ -16,6 +16,13 @@
 
 using namespace ai;
 
+std::atomic<uint64> AiObjectContext::expiredValuesReleased{0};
+
+uint64 AiObjectContext::GetExpiredValuesReleased()
+{
+    return expiredValuesReleased.load(std::memory_order_relaxed);
+}
+
 AiObjectContext::AiObjectContext(PlayerbotAI* ai) : PlayerbotAIAware(ai)
 {
     strategyContexts.Add(new StrategyContext());
@@ -39,44 +46,32 @@ AiObjectContext::AiObjectContext(PlayerbotAI* ai) : PlayerbotAIAware(ai)
 
 void AiObjectContext::ClearValues(std::string findName)
 {
-    std::set<std::string> names = valueContexts.GetCreated();
-    for (std::set<std::string>::iterator i = names.begin(); i != names.end(); ++i)
-    {
-        UntypedValue* value = GetUntypedValue(*i);
-        if (!value)
-            continue;
-
-        if (!findName.empty() && i->find(findName) != 0)
-            continue;
-
-        valueContexts.Erase(*i);
-    }
+    valueContexts.EraseIf(
+        [&findName](const std::string& name, UntypedValue*)
+        {
+            return findName.empty() || name.find(findName) == 0;
+        });
 }
 
-void AiObjectContext::ClearExpiredValues(std::string findName, uint32 interval)
+size_t AiObjectContext::ClearExpiredValues(std::string findName, uint32 interval)
 {
-    std::vector<std::string> namesToErase;
-    std::set<std::string> names = valueContexts.GetCreated();
+    // Inspect and erase under one context lock. A GetCreated/GetValue/Erase
+    // sequence leaves raw value pointers exposed between separate locks and
+    // allowed a concurrent bot update to use a value after it was deleted.
+    size_t const released = valueContexts.EraseIf(
+        [&findName, interval](const std::string& name, UntypedValue* value)
+        {
+            if (!value || value->Protected())
+                return false;
 
-    for (const auto& name : names)
-    {
-        UntypedValue* value = GetUntypedValue(name);
-        if (!value || value->Protected())
-            continue;
+            if (!findName.empty() && name.find(findName) == std::string::npos)
+                return false;
 
-        if (!findName.empty() && name.find(findName) == std::string::npos)
-            continue;
+            return interval ? value->Expired(interval) : value->Expired();
+        });
 
-        if ((!interval && !value->Expired()) || (interval && !value->Expired(interval)))
-            continue;
-
-        namesToErase.push_back(name);
-    }
-
-    for (const auto& name : namesToErase)
-    {
-        valueContexts.Erase(name);
-    }
+    expiredValuesReleased.fetch_add(released, std::memory_order_relaxed);
+    return released;
 }
 
 

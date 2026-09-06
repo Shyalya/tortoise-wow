@@ -28,6 +28,8 @@
 #include "ahbot/AhBot.h"
 #include "BotDiagnostics.h"
 #include "playerbot/BotSlots.h"
+#include "DetailedWorkDiagnostics.h"
+#include "ExecutionWatch.h"
 
 class PlayerbotWorldScript : public WorldScript
 {
@@ -51,6 +53,16 @@ class PlayerbotWorldScript : public WorldScript
             if (!sPlayerbotAIConfig.enabled)
                 return;
             sRandomPlayerbotMgr.UpdateAI(diff);
+            // ManTech session progression is independent of maintenance's
+            // timer. All packet handlers run here after map owners have joined.
+            sRandomPlayerbotMgr.UpdateSessions(diff);
+            sRandomPlayerbotMgr.UpdateTeleportPlans();
+            for (auto const& entry : sWorld.GetAllSessions())
+                if (Player* player = entry.second->GetPlayer())
+                    if (PlayerbotMgr* mgr = GetBotMgr(player))
+                        mgr->UpdateSessions(diff);
+            DetailedWork::Scope auctionWork(DetailedWork::Auctions);
+            ExecutionWatch::Scope auctionWatch(ExecutionWatch::BotAuctions);
             auctionbot.Update();
         }
 };
@@ -238,22 +250,71 @@ class PlayerbotPlayerScript : public PlayerScript
             return !IsRealPlayer(player);
         }
 
-        // Was Player::UpdatePlayerbotHooks(diff).
+        bool IsUpdateCritical(Player const* player) override
+        {
+            if (!player)
+                return false;
+
+            PlayerbotAI* ai = GetBotAI(const_cast<Player*>(player));
+            if (!ai)
+                return false;
+
+            float const playerInterestRange = WorldPosition(const_cast<Player*>(player)).getVisibilityDistance() +
+                sPlayerbotAIConfig.reactDistance;
+            if (ai->HasPendingTransition() || ai->HasRealPlayerMaster() || ai->HasPlayerNearby(playerInterestRange))
+                return true;
+
+            if (Group* group = const_cast<Player*>(player)->GetGroup())
+            {
+                for (GroupReference* ref = group->GetFirstMember(); ref; ref = ref->next())
+                {
+                    Player* member = ref->getSource();
+                    if (member && member != player && member->IsInWorld() && !GetBotAI(member))
+                        return true;
+                }
+            }
+
+            // Immediate gameplay state is checked cheaply by Map every pass.
+            // This hook is intentionally limited to the expensive module-level
+            // relationships that Map caches for a short interval.
+            return false;
+        }
+
+        // Manager bookkeeping remains a gameplay update. Bot AI is dispatched
+        // separately by the owning map, after core Player::Update has settled.
         void OnUpdate(Player* player, uint32 diff) override
         {
             if (!player || !sPlayerbotAIConfig.enabled)
                 return;
 
-            if (PlayerbotAI* ai = GetBotAI(player))
-            {
-                SC_PHASE("Player::UpdatePlayerbotHooks/ai.UpdateAI", player->GetName());
-                ai->UpdateAI(diff);
-            }
             if (PlayerbotMgr* mgr = GetBotMgr(player))
             {
                 SC_PHASE("Player::UpdatePlayerbotHooks/mgr.UpdateAI", player->GetName());
                 mgr->UpdateAI(diff);
             }
+        }
+
+        bool IsAIUpdateDue(Player* player, uint32 diff) override
+        {
+            if (!sPlayerbotAIConfig.enabled)
+                return false;
+            if (PlayerbotAI* ai = GetBotAI(player))
+            {
+                // Consume elapsed time here only when no AI call will run.
+                // Due work leaves the remaining delay for UpdateAI to consume.
+                if (ai->HasPendingTransition() || ai->GetAIInternalUpdateDelay() <= diff)
+                    return true;
+                ai->AdvanceMinimalUpdateDelay(diff);
+                return false;
+            }
+            return false;
+        }
+
+        void OnAIUpdate(Player* player, uint32 diff, bool minimal) override
+        {
+            if (sPlayerbotAIConfig.enabled)
+                if (PlayerbotAI* ai = GetBotAI(player))
+                    ai->UpdateAI(diff, minimal);
         }
 };
 

@@ -1,7 +1,9 @@
 
 #include "playerbot/playerbot.h"
+#include "playerbot/BotDiagnostics.h"
 #include "playerbot/PerformanceMonitor.h"
 #include "MovementActions.h"
+#include <cmath>
 #include "Movement/MotionMaster.h"
 #include "Movement/MovementGenerator.h"
 #include "playerbot/FleeManager.h"
@@ -251,7 +253,7 @@ bool MovementAction::FlyDirect(const WorldPosition &startPosition, const WorldPo
 #endif
 }
 
-bool MovementAction::UseTaxi(PlayerbotAI* ai, uint32 entry, bool needNpc)
+bool MovementAction::UseTaxi(PlayerbotAI* ai, uint32 entry, bool needNpc, Creature* sourceNpc)
 {
     AiObjectContext* context = ai->GetAiObjectContext();
     Player* bot = ai->GetBot();
@@ -268,20 +270,73 @@ bool MovementAction::UseTaxi(PlayerbotAI* ai, uint32 entry, bool needNpc)
         return goClick;
     }
 
-    Creature* unit = nullptr;
+    Creature* unit = sourceNpc;
 
-    if (needNpc)
+    // Turtle validates both endpoints in the native activation method (not
+    // just in the client opcode as CMaNGOS does). Discover only a legitimate
+    // source at its interactable flight master; never bypass player checks.
+    TaxiNodesEntry const* fromNode = sTaxiNodesStore.LookupEntry(tEntry->from);
+    TaxiNodesEntry const* toNode = sTaxiNodesStore.LookupEntry(tEntry->to);
+    uint32 const factionIndex = bot->GetTeam() == ALLIANCE ? 1 : 0;
+    if (!fromNode || !toNode || !fromNode->MountCreatureID[factionIndex] ||
+        !toNode->MountCreatureID[factionIndex])
     {
+        ai::botdiag::TraceBehavior(ai, "taxi_reject", "endpoint or faction mount missing", entry);
+        return false;
+    }
+    if (!bot->isTaxiCheater() && !bot->m_taxi.IsTaximaskNodeKnown(tEntry->to))
+    {
+        ai::botdiag::TraceBehavior(ai, "taxi_reject", "destination not learned", entry);
+        return false;
+    }
+
+    if (needNpc || (!bot->isTaxiCheater() && !bot->m_taxi.IsTaximaskNodeKnown(tEntry->from)))
+    {
+        // RPG taxi already resolved the precise NPC from its target GUID. Keep
+        // that established interaction result instead of discarding it and
+        // performing a second, cache-dependent lookup at a crowded hub.
+        if (unit && sObjectMgr.GetNearestTaxiNode(unit->GetPositionX(), unit->GetPositionY(),
+            unit->GetPositionZ(), unit->GetMapId(), bot->GetTeam()) != tEntry->from)
+            unit = nullptr;
+
+        // Resolve the exact interactable flight master from the AI's nearby
+        // object GUIDs first.  This is the established playerbot interaction
+        // path and, unlike a generic grid search, also sees creatures kept in
+        // the map's world-object container.  The latter distinction matters
+        // at busy hubs: Southshore's Darla was interactable by GUID while
+        // FindNearestInteractableNpcWithFlag repeatedly returned null, leaving
+        // bots queued at the node and retrying the same long travel leg.
         std::list<ObjectGuid> npcs = AI_VALUE(std::list<ObjectGuid>, "nearest npcs");
-        for (std::list<ObjectGuid>::iterator i = npcs.begin(); i != npcs.end(); i++)
+        for (ObjectGuid const& guid : npcs)
         {
-            unit = bot->GetNPCIfCanInteractWith(*i, UNIT_NPC_FLAG_FLIGHTMASTER);
             if (unit)
                 break;
+
+            Creature* candidate = bot->GetNPCIfCanInteractWith(guid, UNIT_NPC_FLAG_FLIGHTMASTER);
+            if (!candidate)
+                continue;
+
+            if (sObjectMgr.GetNearestTaxiNode(candidate->GetPositionX(), candidate->GetPositionY(),
+                candidate->GetPositionZ(), candidate->GetMapId(), bot->GetTeam()) != tEntry->from)
+                continue;
+
+            unit = candidate;
+            break;
+        }
+
+        // Retain the live spatial lookup as a fallback for callers that have
+        // not populated the nearby-NPC value yet.
+        if (!unit)
+        {
+            unit = bot->FindNearestInteractableNpcWithFlag(UNIT_NPC_FLAG_FLIGHTMASTER);
+            if (unit && sObjectMgr.GetNearestTaxiNode(unit->GetPositionX(), unit->GetPositionY(),
+                unit->GetPositionZ(), unit->GetMapId(), bot->GetTeam()) != tEntry->from)
+                unit = nullptr;
         }
 
         if (!unit)
         {
+            ai::botdiag::TraceBehavior(ai, "taxi_reject", "no matching interactable flight master", entry);
             return false;
         }
 
@@ -291,6 +346,12 @@ bool MovementAction::UseTaxi(PlayerbotAI* ai, uint32 entry, bool needNpc)
 
             unit->SetFacingTo(unit->GetAngle(bot));
         }
+    }
+
+    if (!bot->isTaxiCheater() && !bot->m_taxi.IsTaximaskNodeKnown(tEntry->from))
+    {
+        ai::botdiag::TraceBehavior(ai, "taxi_reject", "source not learned after discovery", entry);
+        return false;
     }
 
     uint32 botMoney = bot->GetMoney();
@@ -304,6 +365,7 @@ bool MovementAction::UseTaxi(PlayerbotAI* ai, uint32 entry, bool needNpc)
     ai->Unmount();
 
     bool goTaxi = bot->ActivateTaxiPathTo({tEntry->from, tEntry->to}, unit, 1);
+    ai::botdiag::TraceBehavior(ai, "taxi_activate", goTaxi ? "accepted" : "native activation rejected", entry);
 
     if (!goTaxi)
         bot->SetMoney(botMoney);
@@ -550,7 +612,8 @@ bool MovementAction::MinimalMove(PlayerbotAI* ai)
             return true;
         }
 
-        bool didTaxi = UseTaxi(ai, nextStep->entry, false);
+        if (!UseTaxi(ai, nextStep->entry, false))
+            return false; // Retain this leg; nextTeleport already bounds retries.
 
         for (auto& step : path)
         {
@@ -964,6 +1027,10 @@ void MovementAction::UpdateFlyingState(
 
 void MovementAction::DispatchMovement(TravelPath movePath, bool generatePath, bool masterWalking)
 {
+    std::vector<WorldPosition> path = movePath.getPointPath();
+    if (path.empty())
+        return;
+
     MotionMaster& mm = *bot->GetMotionMaster();
 
     mm.Clear();
@@ -974,9 +1041,10 @@ void MovementAction::DispatchMovement(TravelPath movePath, bool generatePath, bo
         moveMode = FORCED_MOVEMENT_FLIGHT;
 #endif
 
-    std::vector<WorldPosition> path = movePath.getPointPath();
-
-    if (!generatePath || !bot->IsFreeFlying())
+    // Direct movement and precomputed paths are alternatives. Launching a
+    // point generator and then replacing only its spline leaves that generator
+    // able to restart a different trajectory on a later speed change.
+    if (!generatePath || bot->IsFreeFlying() || path.size() < 2)
     {
         WorldPosition movePosition = path.back();
 
@@ -1004,16 +1072,14 @@ void MovementAction::DispatchMovement(TravelPath movePath, bool generatePath, bo
 #endif
     }
 
-    GeneratePathAvoidingHazards(path);
-
-    std::vector<G3D::Vector3> pointPath = WorldPosition().toPointsArray(path);
-    float size = WorldPosition().getPathLength(path);
-
-    bool usePath = true;
-
-    if (usePath)
+    else
     {
-        bool normalizeZ = true;
+        // MoveSplineInit::Launch replaces vertex zero with the live position.
+        // Preserve the first route vertex when the clipped path starts ahead.
+        if (path.front().distance(bot) > 0.01f)
+            path.insert(path.begin(), WorldPosition(bot));
+        GeneratePathAvoidingHazards(path);
+        std::vector<G3D::Vector3> pointPath = WorldPosition().toPointsArray(path);
 
         for (auto& p : pointPath)
         {
@@ -1025,39 +1091,13 @@ void MovementAction::DispatchMovement(TravelPath movePath, bool generatePath, bo
         }
 
 #ifndef MANGOSBOT_TWO
-        mm.MovePath(pointPath, moveMode, false, false);
+        // Turtle's compatibility MovePath reads its walk argument, not moveMode.
+        mm.MovePath(pointPath, moveMode, false, masterWalking);
 #else
         mm.MovePath(pointPath, moveMode, false);
 #endif
     }
-    else
-    {
-        WorldPosition movePosition = path.back();
-
-#ifdef MANGOSBOT_ZERO
-        // Tortoise's MovePoint signature is (id, x, y, z, options, speed, orientation),
-        // NOT cmangos's (id, x, y, z, ForcedMovement, bool generatePath). The ported call
-        // below used to pass `moveMode` into `options` and the `generatePath` bool into the
-        // `speed` float — so generatePath==true set the velocity to 1.0 yd/s, making bots
-        // crawl slower than walking. Translate the intent into proper MoveOptions instead and
-        // leave speed at its default so it is derived from the run/walk movement flags.
-        uint32 moveOptions = (moveMode == FORCED_MOVEMENT_WALK) ? MOVE_WALK_MODE : MOVE_RUN_MODE;
-        if (generatePath)
-            moveOptions |= MOVE_PATHFINDING;
-        mm.MovePoint(movePosition.getMapId(),
-            movePosition.getX(),
-            movePosition.getY(),
-            movePosition.getZ(),
-            moveOptions);
-#else
-        mm.MovePoint(movePosition.getMapId(),
-            Position(movePosition.getX(), movePosition.getY(), movePosition.getZ(), 0.f),
-            moveMode,
-            bot->IsFlying() ? bot->GetSpeed(MOVE_FLIGHT) : 0.f,
-            bot->IsFlying());
-#endif
-    }
-    WaitForReach(size);
+    WaitForReach(WorldPosition().getPathLength(path));
 }
 
 
@@ -1084,7 +1124,7 @@ Unit* MovementAction::GetMover(Player* bot)
 
 bool MovementAction::MoveTo2(const WorldPosition& endPos, bool idle, bool react, bool noPath, bool ignoreEnemyTargets)
 {
-    if (!endPos.isValid())
+    if (!endPos.isValid() || !std::isfinite(endPos.getX()) || !std::isfinite(endPos.getY()) || !std::isfinite(endPos.getZ()))
         return false;
 
     UpdateMovementState();
@@ -1095,6 +1135,17 @@ bool MovementAction::MoveTo2(const WorldPosition& endPos, bool idle, bool react,
     Unit* mover = GetMover(bot);
 
     LastMovement& lastMove = AI_VALUE(LastMovement&, "last movement");
+    int32 const destinationCellX = int32(std::floor(endPos.getX() / 8.0f));
+    int32 const destinationCellY = int32(std::floor(endPos.getY() / 8.0f));
+    int32 const destinationCellZ = int32(std::floor(endPos.getZ() / 8.0f));
+    uint32 const generation = ai->GetTransitionGeneration();
+    uint32 const nowMs = WorldTimer::getMSTime();
+    bool const sameFailure = lastMove.failedPathMap == endPos.getMapId() &&
+        lastMove.failedPathInstance == bot->GetInstanceId() && lastMove.failedPathGeneration == generation &&
+        lastMove.failedPathCellX == destinationCellX && lastMove.failedPathCellY == destinationCellY &&
+        lastMove.failedPathCellZ == destinationCellZ;
+    if (sameFailure && int32(lastMove.failedPathRetryUntil - nowMs) > 0) return false;
+    if (!sameFailure) lastMove.clearPathFailure();
 
     bool detailedMove = ai->AllowActivity(DETAILED_MOVE_ACTIVITY, true);
     if (!detailedMove && lastMove.nextTeleport)
@@ -1141,7 +1192,14 @@ bool MovementAction::MoveTo2(const WorldPosition& endPos, bool idle, bool react,
     lastMove.setPath(movePath);
 
     if (movePath.empty())
+    {
+        lastMove.failedPathMap = endPos.getMapId(); lastMove.failedPathInstance = bot->GetInstanceId();
+        lastMove.failedPathCellX = destinationCellX; lastMove.failedPathCellY = destinationCellY;
+        lastMove.failedPathCellZ = destinationCellZ; lastMove.failedPathGeneration = generation;
+        lastMove.failedPathRetryUntil = nowMs + sPlayerbotAIConfig.pathFailureRetryMs;
         return false;
+    }
+    lastMove.clearPathFailure();
 
      
     if (!bot->GetTransport())

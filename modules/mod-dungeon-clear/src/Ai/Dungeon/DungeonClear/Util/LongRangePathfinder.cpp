@@ -359,6 +359,7 @@ LongRangePathfinder::RawResult LongRangePathfinder::BuildCoreFromMesh(
             // inside the instance map - which no amount of path-log reading
             // would have revealed).
             {
+                auto navRead = navMesh->acquireRead();
                 int loaded = 0;
                 for (int i = 0; i < navMesh->getMaxTiles(); ++i)
                     if (navMesh->getTile(i) && navMesh->getTile(i)->header)

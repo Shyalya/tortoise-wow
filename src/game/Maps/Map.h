@@ -22,6 +22,7 @@
 #pragma once
 
 #include "Common.h"
+#include "ArchitectureDiagnostics.h"
 #include "Platform/Define.h"
 #include "Policies/ThreadingModel.h"
 
@@ -50,6 +51,7 @@
 #include <bitset>
 #include <list>
 #include <set>
+#include <unordered_set>
 #include <mutex>
 #include <shared_mutex>
 
@@ -120,9 +122,6 @@ struct MapEntry
     bool IsContinent() const { return id == 0 || id == 1; }
 };
 
-typedef std::map<uint32, uint32> AreaFlagByMapId;
-static AreaFlagByMapId sAreaFlagByMapId;
-
 struct AreaEntry
 {
     // anonymous unions provide cmangos
@@ -150,42 +149,15 @@ struct AreaEntry
         return areaEntry->ExploreFlag;
     }
 
-    static uint32 GetFlagByMapId(uint32 mapId)
-    {
-        auto itr = sAreaFlagByMapId.find(mapId);
-        if (itr == sAreaFlagByMapId.end())
-            return 0;
-        return itr->second;
-    }
+    static uint32 GetFlagByMapId(uint32 mapId);
+    static void RebuildLookupIndex();
 
     static const AreaEntry* GetById(uint32 id)
     {
         return sAreaStorage.LookupEntry<AreaEntry>(id);
     }
 
-    static const AreaEntry* GetByAreaFlagAndMap(uint32 areaFlag, uint32 mapId)
-    {
-        AreaEntry const* areaEntry = nullptr;
-        // 1.12.1 areatable have duplicates for areaflag
-        for (auto itr = sAreaStorage.begin<AreaEntry>(); itr < sAreaStorage.end<AreaEntry>(); ++itr)
-        {
-            if (areaFlag && areaFlag == itr->ExploreFlag)
-            {
-                if (itr->MapId == mapId)
-                    return *itr;
-
-                areaEntry = *itr;
-            }
-        }
-
-        if (areaEntry)
-            return areaEntry;
-
-        if (const auto *mapEntry = sMapStorage.LookupEntry<MapEntry>(mapId))
-            return sAreaStorage.LookupEntry<AreaEntry>(mapEntry->linkedZone);
-
-        return nullptr;
-    }
+    static const AreaEntry* GetByAreaFlagAndMap(uint32 areaFlag, uint32 mapId);
 };
 
 #if defined( __GNUC__ )
@@ -373,14 +345,16 @@ class Map : public GridRefManager<NGridType>
 
         static void DeleteFromWorld(Player* player);        // player object will deleted at call
 
-        inline void UpdateCellsAroundObject(uint32 now, uint32 diff, WorldObject const* object);
-        inline void UpdateActiveCellsSynch(uint32 now, uint32 diff);
+        void MarkUpdateQueued() { m_archQueuedAt = TurtleDiagnostics::enabled.load() ? TurtleDiagnostics::Micros() : 0; }
+        uint64 GetDiagnosticTick() const { return m_archTick; }
+        void UpdateDiscoveredCells(uint32 now, uint32 diff);
         inline void MarkCellsAroundObject(WorldObject const* object);
-        inline void UpdateActiveCellsAsynch(uint32 now, uint32 diff);
-        inline void UpdateActiveCellsCallback(uint32 diff, uint32 now, uint32 threadId, uint32 totalThreads, uint32 step);
         inline void UpdateCells(uint32 diff);
+        void MarkScheduledPlayerCells(std::vector<ObjectGuid> const& players, uint32 stride);
+        bool ShouldUpdateBotCells(Player const* player) const;
         void UpdateSync(const uint32);
-        void UpdatePlayers();
+        void UpdatePlayers(bool responsiveOnly = false);
+        void UpdatePlayerAI(bool responsiveOnly = false);
         void DoUpdate(uint32 maxDiff);
         virtual void Update(uint32);
         void UpdateSessionsMovementAndSpellsIfNeeded();
@@ -556,11 +530,9 @@ class Map : public GridRefManager<NGridType>
             WorldSafeLocsEntry const* GetClosestGraveYard(float x, float y, float z, uint32 MapId, Team team) const;
         };
         GraveyardManagerStub& GetGraveyardManager() { static GraveyardManagerStub s; return s; }
-        // HasActiveZone: cmangos has it; Penqle doesn't track active zones. Stub returns true.
-        bool HasActiveZone(uint32 /*zoneId*/) const { return true; }
-        bool HasActiveZones() const { return true; }
-        // HasRealPlayers: cmangos checks if any non-bot players are on the map. Stub returns true.
-        bool HasRealPlayers() const { return true; }
+        bool HasActiveZone(uint32 zoneId) const { return m_realPlayerZones.find(zoneId) != m_realPlayerZones.end(); }
+        bool HasActiveZones() const { return !m_realPlayerZones.empty(); }
+        bool HasRealPlayers() const { return m_hasRealPlayers; }
         // GetTransports: cmangos has Map::GetTransports returning a set/vector.
         // Note: GenericTransport is a typedef in shim; forward-decl as struct avoids "class" keyword conflict.
         //
@@ -733,6 +705,7 @@ class Map : public GridRefManager<NGridType>
         void CrashUnload();
         bool IsUpdateFinished() const { return m_updateFinished; }
         void MarkNotUpdated() { m_updateFinished = false; }
+        void CompleteUpdate();
         void SetUpdateDiffMod(int32 d) { m_updateDiffMod = d; }
         uint32 GetUpdateDiffMod() const { return m_updateDiffMod; }
         void BindToInstanceOrRaid(Player* player, time_t objectResetTime, bool permBindToRaid);
@@ -832,10 +805,14 @@ class Map : public GridRefManager<NGridType>
         void RemoveCorpses(bool unload = false);
         void RemoveOldBones(const uint32 diff);
 
-        std::unique_ptr<ThreadPool> m_objectThreads;
+        // Packet building uses MapManager::ObjectBuild().
         std::unique_ptr<ThreadPool> m_motionThreads;
         std::unique_ptr<ThreadPool> m_visibilityThreads;
-        std::unique_ptr<ThreadPool> m_cellThreads;
+        std::vector<Cell> m_discoveryCells;
+        uint32 m_cellFallbackStarted = 0;
+        TurtleDiagnostics::Summary m_archDiagnostics;
+        uint64 m_archTick = 0;
+        uint64 m_archQueuedAt = 0;
 
     protected:
         MapEntry const* i_mapEntry;
@@ -866,6 +843,7 @@ class Map : public GridRefManager<NGridType>
         TransportsContainer _transports;
         bool m_unloading = false;
         bool m_crashed = false;
+        uint32 m_pendingUpdateDiff = 0;
         bool m_updateFinished = false;
         uint32 m_updateDiffMod;
         uint32 m_lastMvtSpellsUpdate = 0;
@@ -908,8 +886,50 @@ class Map : public GridRefManager<NGridType>
         uint32 _lastMapUpdate = 0;
         uint32 _lastPlayerLeftTime = 0;
         uint32 _lastPlayersUpdate;
-        uint32 _inactivePlayersSkippedUpdates = 0;
+        uint32 m_lastAIUpdate = 0;
+        uint32 m_idleAICursorGuid = 0;
+        uint32 m_idleAIBudgetPercent = 100, m_idleAIRecoveryStreak = 0;
+        uint64 m_aiUpdates = 0, m_aiDeferred = 0, m_aiStale = 0;
+        std::bitset<TOTAL_NUMBER_OF_CELLS_PER_MAP*TOTAL_NUMBER_OF_CELLS_PER_MAP> m_realPlayerCells;
+        uint64 _playerUpdateSequence = 0;
+        uint64 _botCellUpdateSequence = 0;
         uint32 _lastCellsUpdate;
+
+        void RefreshRealPlayerActivity();
+        bool IsMachineDrivenPlayer(Player const* player) const;
+        bool IsResponsivePlayer(Player const* player) const;
+        bool IsAutonomousActivePlayer(Player const* player) const;
+
+        struct ModuleCriticalCacheEntry
+        {
+            uint32 lastCheck = 0;
+            bool critical = false;
+        };
+
+        bool m_hasRealPlayers = false;
+        std::unordered_set<uint32> m_realPlayerZones;
+        std::unordered_set<uint32> m_machineDrivenPlayers;
+        std::unordered_set<uint32> m_moduleCriticalPlayers;
+        std::unordered_map<uint32, ModuleCriticalCacheEntry> m_moduleCriticalCache;
+        std::vector<ObjectGuid> m_responsivePlayers;
+        std::vector<ObjectGuid> m_interactivePlayers;
+        std::vector<ObjectGuid> m_autonomousActivePlayers;
+        std::vector<ObjectGuid> m_activeZoneBackgroundPlayers;
+        std::vector<ObjectGuid> m_hibernatedBackgroundPlayers;
+        uint32 m_activeZoneBackgroundStride = 1;
+        uint32 m_hibernatedBackgroundStride = 1;
+        uint32 m_autonomousActiveStride = 1;
+        uint32 m_realPlayerPopulation = 0;
+        uint32 m_responsiveBotPopulation = 0;
+        uint32 m_interactiveBotPopulation = 0;
+
+        uint32 m_playerPerfReportStart = 0;
+        uint64 m_playerPerfRealUpdates = 0;
+        uint64 m_playerPerfBotUpdates = 0;
+        uint64 m_playerPerfRealMicros = 0;
+        uint64 m_playerPerfBotMicros = 0;
+        uint64 m_playerPerfDeferred = 0;
+        uint64 m_playerPerfHibernated = 0;
 
         int8 _updateIdx;
 

@@ -754,6 +754,12 @@ void RandomPlayerbotFactory::CreateRandomBots()
     sLog.outString("Creating random bot accounts...");
 
     std::vector<std::future<void>> account_creations;
+    // A target in the tens of thousands can require thousands of bot accounts.
+    // Launching one std::async thread per missing account exhausts Windows thread
+    // resources and makes a valid population change look like a hung server.
+    // Keep a small bounded creation window; this affects startup provisioning
+    // only and leaves all bot gameplay/AI scheduling unchanged.
+    constexpr size_t maxConcurrentAccountCreations = 8;
 
     BarGoLink bar(totalAccCount);
     for (uint32 accountNumber = 0; accountNumber < sPlayerbotAIConfig.randomBotAccountCount; ++accountNumber)
@@ -784,6 +790,13 @@ void RandomPlayerbotFactory::CreateRandomBots()
         account_creations.push_back(std::async([accountName, password] {sAccountMgr.CreateAccount(accountName, password); }));
 #endif
 
+        if (account_creations.size() >= maxConcurrentAccountCreations)
+        {
+            for (auto& creation : account_creations)
+                creation.get();
+            account_creations.clear();
+        }
+
         sLog.outDebug("Account %s created for random bots", accountName.c_str());
         bar.step();
     }
@@ -792,8 +805,9 @@ void RandomPlayerbotFactory::CreateRandomBots()
     for (uint32 i = 0; i < account_creations.size(); i++)
     {
         bar3.step();
-        account_creations[i].wait();
+        account_creations[i].get();
     }
+    account_creations.clear();
 
     //LoginDatabase.PExecute("UPDATE account SET expansion = '%u' where username like '%s%%'", 2, sPlayerbotAIConfig.randomBotAccountPrefix.c_str());
 
@@ -1011,19 +1025,33 @@ void RandomPlayerbotFactory::CreateRandomBots()
     }
 
     std::vector<std::future<void>> bot_creations;
+    // Character saves have their own futures: account get() has already
+    // consumed those states. Bound startup saves just like account creation,
+    // and join each batch before any player/session can be destroyed below.
+    constexpr size_t maxConcurrentBotSaves = 8;
 
     BarGoLink bar2(sObjectAccessor.GetPlayers().size());
     for (auto pl : sObjectAccessor.GetPlayers())
     {
         Player* player = pl.second;
-        account_creations.push_back(std::async([player] {player->SaveToDB(); }));
+        bot_creations.push_back(std::async([player] {player->SaveToDB(); }));
+        if (bot_creations.size() >= maxConcurrentBotSaves)
+        {
+            for (auto& creation : bot_creations)
+            {
+                creation.get();
+                bar2.step();
+            }
+            bot_creations.clear();
+        }
     }
 
-    for (uint32 i = 0; i < account_creations.size(); i++)
+    for (auto& creation : bot_creations)
     {
+        creation.get();
         bar2.step();
-        account_creations[i].wait();
     }
+    bot_creations.clear();
 
     std::vector<Player*> players;
 
@@ -1044,7 +1072,7 @@ void RandomPlayerbotFactory::CreateRandomBots()
         delete player;
         delete session;
     }
-    sLog.outString("%zu random bot accounts with %d characters available", sPlayerbotAIConfig.randomBotAccounts.size(), totalRandomBotChars+botsCreated);
+    sLog.outString("%zu random bot accounts with %d characters available", sPlayerbotAIConfig.randomBotAccounts.size(), totalRandomBotChars);
 }
 
 

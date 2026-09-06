@@ -57,6 +57,11 @@ float FreeMoveRangeValue::Calculate()
     if (ai->HasStrategy("stay", ai->GetState()))
         return INTERACTION_DISTANCE;
 
+    // CMaNGOS: permit the designated crowd-control target's spell range
+    // instead of pinning the caster to its ordinary follow radius.
+    if (AI_VALUE(Unit*, "rti cc target"))
+        return ai->GetRange("spell");
+
     Unit* followTarget = AI_VALUE(Unit*, "follow target");
 
     if (!followTarget || followTarget == bot)
