@@ -220,6 +220,36 @@ A branch cut from a different base than `-BranchName` expands to that whole line
 than to a pull request; the run refuses anything past 50 commits and says so, rather than
 grinding through a conflict storm.
 
+`-BranchName` also accepts a branch that exists only in your own checkout — an integration
+branch you assembled locally and never pushed. The run notices there is nothing to pull from
+and builds it as it stands.
+
+### The git remotes it creates
+
+The run manages two remotes of its own in the source checkout and never touches `origin`:
+
+| Remote | Points at | Used for |
+| --- | --- | --- |
+| `testlab-source` | `-RepoUrl` | Fetching and updating the branch being built |
+| `testlab-patches` | `-PatchRemoteUrl` | Fetching the `-applyPatches` commits |
+
+This matters because the source checkout is somewhere you also work. An earlier version
+pointed `origin` at `-RepoUrl` on every run, so a branch of yours tracking `origin/<name>`
+silently started tracking a different repository — and the `fetch --prune` then deleted the
+remote-tracking refs of the repository it actually came from. Whatever `origin` is in your
+checkout is now left exactly as you set it.
+
+The module checkout under `modules-source/` is the exception: the script creates it, only
+the script commits in it, so there is no configuration of yours to damage and it drives
+`origin` directly.
+
+If you ran a version before this change, `origin` in your source checkout may still be
+pointing wherever the last run left it. Put it back once:
+
+```powershell
+git -C <source checkout> remote set-url origin https://github.com/me/tortoise-wow.git
+```
+
 Full help, including every parameter and more examples:
 
 ```powershell

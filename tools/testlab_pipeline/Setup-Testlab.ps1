@@ -1795,12 +1795,28 @@ Write-Host "[OK] All required libraries (ACE and Boost modules) are fully verifi
 Write-PipelineHeader -StepName "03: Git Source Management"
 Write-Host "Managing repository source files and submodules..."
 
+# The pipeline manages a remote of its own rather than commandeering 'origin'. It used to
+# point origin at -RepoUrl on every run, which quietly rewrote the remote whoever works in
+# that checkout had configured: their branches tracking origin/<name> ended up tracking a
+# different repository, and the `fetch --prune` below then deleted the remote-tracking refs
+# of the one those branches actually came from. A separate remote makes both harmless - the
+# fetch and the prune only ever touch refs/remotes/testlab-source/*, and origin stays exactly
+# as its owner left it.
+$SourceRemote = "testlab-source"
+
 if (-not (Test-Path $SourceDir)) {
     Write-Host "Repository not found. Cloning branch '$BranchName' with all submodules..."
 
     # --recurse-submodules forces Git to automatically clone Eluna and any other nested modules
     Invoke-NativeLogged -Executable "git" -Arguments @("clone", "--branch", $BranchName, "--recurse-submodules", $RepoUrl, $SourceDir)
     Assert-LastExitCode -Message "git clone of '$BranchName' failed"
+
+    # Register the pipeline's remote alongside the origin the clone just created, so later
+    # runs find the source through it and never have a reason to touch origin.
+    Push-Location $SourceDir
+    Invoke-NativeLogged -Executable "git" -Arguments @("remote", "add", $SourceRemote, $RepoUrl)
+    Assert-LastExitCode -Message "Could not register the '$SourceRemote' git remote"
+    Pop-Location
 
     Write-Host "[OK] Repository and all nested submodules successfully cloned." -ForegroundColor Green
 } else {
@@ -1810,12 +1826,18 @@ if (-not (Test-Path $SourceDir)) {
     Push-Location $SourceDir
 
     # Make -RepoUrl authoritative for an existing checkout too. Without this it only ever
-    # applied to the first clone: every later run pulled from whatever 'origin' happened to
-    # be, so pointing the pipeline at a fork silently built the original repository instead.
-    Invoke-NativeLogged -Executable "git" -Arguments @("remote", "set-url", "origin", $RepoUrl)
-    Assert-LastExitCode -Message "Could not point 'origin' at $RepoUrl"
+    # applied to the first clone: every later run pulled from whatever the remote happened to
+    # point at, so aiming the pipeline at a fork silently built the original repository
+    # instead. A workspace left by an older run has no testlab-source yet, hence add-or-update.
+    git remote get-url $SourceRemote > $null 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Invoke-NativeLogged -Executable "git" -Arguments @("remote", "set-url", $SourceRemote, $RepoUrl)
+    } else {
+        Invoke-NativeLogged -Executable "git" -Arguments @("remote", "add", $SourceRemote, $RepoUrl)
+    }
+    Assert-LastExitCode -Message "Could not point '$SourceRemote' at $RepoUrl"
 
-    Invoke-NativeLogged -Executable "git" -Arguments @("fetch", "origin", "--prune")
+    Invoke-NativeLogged -Executable "git" -Arguments @("fetch", $SourceRemote, "--prune")
     Assert-LastExitCode -Message "git fetch from $RepoUrl failed"
 
     # Refuse to switch branches over uncommitted work rather than letting git's own
@@ -1834,21 +1856,39 @@ if (-not (Test-Path $SourceDir)) {
         }
     }
 
-    # Check out the branch, creating it from origin when it is not here yet.
+    # Does the source repository have this branch? Answered from the refs the fetch above
+    # just refreshed rather than over the network again. Three cases follow, and the
+    # local-only one is a legitimate thing to build: an integration branch assembled in this
+    # checkout and deliberately not pushed anywhere.
+    git rev-parse --verify --quiet "refs/remotes/$SourceRemote/$BranchName" > $null 2>&1
+    $BranchIsOnRemote = ($LASTEXITCODE -eq 0)
+
+    # Check out the branch, creating it from the source remote when it is not here yet.
     git rev-parse --verify --quiet "refs/heads/$BranchName" > $null 2>&1
     if ($LASTEXITCODE -eq 0) {
         Invoke-NativeLogged -Executable "git" -Arguments @("checkout", $BranchName)
+        Assert-LastExitCode -Message "git checkout of '$BranchName' failed"
+    } elseif ($BranchIsOnRemote) {
+        Invoke-NativeLogged -Executable "git" -Arguments @("checkout", "-b", $BranchName, "--track", "$SourceRemote/$BranchName")
+        Assert-LastExitCode -Message "git checkout of '$BranchName' failed"
     } else {
-        Invoke-NativeLogged -Executable "git" -Arguments @("checkout", "-b", $BranchName, "--track", "origin/$BranchName")
+        Pop-Location
+        Stop-Pipeline -Message ("Branch '$BranchName' is neither in $SourceDir nor on $RepoUrl, so there is " +
+                                "nothing to check out. Check the spelling, or push the branch to $RepoUrl first.")
     }
-    Assert-LastExitCode -Message "git checkout of '$BranchName' failed"
 
-    # Pull the remote and branch by name rather than relying on tracking configuration.
-    # A bare "git pull" needs an upstream, and a branch created locally - or checked out
-    # from a different remote - has none: "There is no tracking information for the current
-    # branch", and the run stopped before it built anything.
-    Invoke-NativeLogged -Executable "git" -Arguments @("pull", "origin", $BranchName)
-    Assert-LastExitCode -Message "git pull of '$BranchName' from $RepoUrl failed"
+    if ($BranchIsOnRemote) {
+        # Pull the remote and branch by name rather than relying on tracking configuration.
+        # A bare "git pull" needs an upstream, and a branch created locally - or checked out
+        # from a different remote - has none: "There is no tracking information for the
+        # current branch", and the run stopped before it built anything.
+        Invoke-NativeLogged -Executable "git" -Arguments @("pull", $SourceRemote, $BranchName)
+        Assert-LastExitCode -Message "git pull of '$BranchName' from $RepoUrl failed"
+    } else {
+        # There is nothing to pull from. Building the branch as it stands is the whole point
+        # of naming it; a pull here would only fail with "couldn't find remote ref".
+        Write-Host " -> '$BranchName' exists only in this checkout - building it as it stands." -ForegroundColor DarkGray
+    }
 
     Write-Host "Synchronizing and updating git submodules (Eluna engine)..."
     # Update and initialize any new or existing submodules recursively
@@ -1897,6 +1937,12 @@ if (-not (Test-Path $ModulesSourceDir)) {
     # an existing checkout too, fetch and check out -ModulesBranch by name (creating a local
     # tracking branch if this is the first time), then pull by name rather than relying on
     # tracking configuration a locally-created branch would not have.
+    #
+    # This one does drive 'origin' directly, unlike the source checkout. The reason the
+    # source needs a remote of its own is that people work in it - they have their own
+    # remotes and their own branches tracking them, and the pipeline rewriting origin
+    # underneath that breaks their pushes. modules-source is created by this script, exists
+    # for this script, and nobody commits in it, so there is no such configuration to damage.
     Invoke-NativeLogged -Executable "git" -Arguments @("remote", "set-url", "origin", $ModulesRepoUrl)
     Assert-LastExitCode -Message "Could not point the module source's 'origin' at $ModulesRepoUrl"
 
@@ -1965,19 +2011,27 @@ if (-not [string]::IsNullOrEmpty($applyPatches)) {
     Write-Host "Cleaning up any stuck or unresolved repository states..."
     git cherry-pick --abort 2>$null
 
-    # 3. Synchronize remote mapping nodes securely
-    #    ('pengle' is the misspelling this script used before - dropped too, so an existing
-    #     workspace does not keep a stale duplicate remote around.)
+    # 3. Point the pipeline's patch remote at -PatchRemoteUrl.
+    #    Named after the pipeline, not after a repository: this used to be 'penqle', a name
+    #    someone is every bit as likely to have created themselves for the same upstream, and
+    #    the run removed and recreated it on every pass. Removing a remote drops its
+    #    remote-tracking refs, which leaves every local branch tracking it with a dangling
+    #    upstream. Nothing here removes a remote any more - a 'penqle' from before this
+    #    change is left alone, and belongs to whoever wants it.
     $TargetRemoteUrl = $PatchRemoteUrl
-    git remote remove pengle 2>$null
-    git remote remove penqle 2>$null
-    git remote add penqle $TargetRemoteUrl
-    Assert-LastExitCode -Message "Could not register the 'penqle' git remote"
+    $PatchRemote = "testlab-patches"
+    git remote get-url $PatchRemote > $null 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        git remote set-url $PatchRemote $TargetRemoteUrl
+    } else {
+        git remote add $PatchRemote $TargetRemoteUrl
+    }
+    Assert-LastExitCode -Message "Could not register the '$PatchRemote' git remote"
 
-    # 4. Fetch ALL tracking branches (including 1181dev) from Penqle node explicitly
-    Write-Host "Performing deep object fetch from Penqle fork layout..."
-    git fetch penqle
-    Assert-LastExitCode -Message "git fetch from the 'penqle' remote failed"
+    # 4. Fetch the patch source, pruning what it no longer has.
+    Write-Host "Fetching patch source $TargetRemoteUrl ..."
+    git fetch $PatchRemote --prune
+    Assert-LastExitCode -Message "git fetch from the '$PatchRemote' remote failed"
 
     # 5. Preserve any work in progress. This used to be a bare `git reset --hard HEAD` per
     #    patch, which silently destroyed every uncommitted local change in the source tree.
@@ -2009,7 +2063,7 @@ if (-not [string]::IsNullOrEmpty($applyPatches)) {
         # The fetched remote copy wins over a same-named local branch: "-applyPatches my-fix"
         # should mean the remote's my-fix even when a stale local one is lying around.
         $ResolvedRef = $null
-        foreach ($RefCandidate in @("penqle/$PatchEntry", $PatchEntry)) {
+        foreach ($RefCandidate in @("$PatchRemote/$PatchEntry", $PatchEntry)) {
             git rev-parse --verify --quiet "$RefCandidate^{commit}" > $null 2>&1
             if ($LASTEXITCODE -eq 0) {
                 $ResolvedRef = $RefCandidate
