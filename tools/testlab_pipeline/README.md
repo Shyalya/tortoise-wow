@@ -1,9 +1,12 @@
 # Testlab pipeline (Windows)
 
 One PowerShell script that takes a Windows machine from "nothing set up" to a running
-Turtle-WoW testlab with playerbots: it verifies the client data, installs the vcpkg
-dependencies, clones/updates the source, builds it, lays out the server directory, creates
-and fills all four databases, writes the configuration files and generates the launchers.
+Turtle-WoW testlab: it verifies the client data, installs the vcpkg dependencies,
+clones/updates the source, builds it, lays out the server directory, creates and fills all
+four databases, writes the configuration files and generates the launchers.
+
+By default it builds the engine alone, from Penqle. Add `-WithBots` for a testlab with
+playerbots: that pulls `mod-playerbots` and `mod-dungeon-clear` from Shyalya on top of it.
 
 It is the automated form of [`INSTALL-WINDOWS.md`](../../INSTALL-WINDOWS.md). Read that
 document if you want to know *why* any particular step is there — this one only tells you
@@ -170,10 +173,10 @@ branch — every environment-specific value is a parameter.
 | `-MariaDbClientPath` | *discovered* | Explicit `mariadb.exe` / `mysql.exe`. Left out: the portable server, then `PATH`, then installed MariaDB/MySQL. Given explicitly it is used or the run fails. |
 | `-DbHost` / `-DbPort` | *client default* | Connection target. Leave empty for the bundled portable server. |
 | `-DbStartupTimeoutSeconds` | `30` | How long the preflight waits for the server to start answering. |
-| `-RepoUrl` | Shyalya/tortoise-wow | Source repository to build. |
-| `-BranchName` | `playerbots-integration-gh` | Branch to build — point it at a topic branch to test one. |
+| `-RepoUrl` | Penqle/tortoise-wow | Source repository to build — the engine. The playerbot and dungeon-clear modules come separately, from `-ModulesRepoUrl`, and only under `-WithBots`. |
+| `-BranchName` | `main` | Branch to build — point it at a topic branch to test one. |
 | `-PatchRemoteUrl` | Penqle/tortoise-wow | Remote the `-applyPatches` commits are fetched from. |
-| `-ModulesRepoUrl` / `-ModulesBranch` | Shyalya/tortoise-wow / `playerbots-integration-gh` | Independent of `-RepoUrl`: where `modules/mod-playerbots` and `modules/mod-dungeon-clear` are synced from (`sql\` included). Part of the core-to-Penqle migration — set once `-RepoUrl` itself points at Penqle. |
+| `-ModulesRepoUrl` / `-ModulesBranch` | Shyalya/tortoise-wow / `playerbots-integration-gh` | Independent of `-RepoUrl`: where `modules/mod-playerbots` and `modules/mod-dungeon-clear` are synced from (`sql\` included). Only read under `-WithBots`. |
 | `-RealmlistIPAddress` / `-RealmlistPort` | `127.0.0.1` / `8090` | Realm entry written to `tw_logon.realmlist`. The port must match `WorldServerPort`. |
 | `-MinRandomBots` / `-MaxRandomBots` | `5` / `10` | Bot population written into `aiplayerbot.conf`. |
 | `-RandomBotMinLevel` / `-RandomBotMaxLevel` | `1` / `20` | Bot level range. |
@@ -182,7 +185,7 @@ branch — every environment-specific value is a parameter.
 | `-EnableSqlLog` | off | Writes every SQL statement to a log file (`LogSQL` in `mangosd.conf`). Off by default — on, it's 94% of a normal run's log, mostly per-connection `SET NAMES`/`SET CHARACTER SET` noise. |
 | `-LogLevel` | `0` | Console/log verbosity for mangosd and realmd: `0` Minimum, `1` Basic & Error, `2` Detail, `3` Full/Debug. The shipped templates default to `1`. |
 | `-DatabaseOnly` | off | Touches only the databases — no git update, no compilation, no folder cleanup, no config file changes. Combine with `-SkipBotRegen` to reset only `tw_world` (a "first-boot" test of a new migration); without it, all four databases are dropped and rebuilt. |
-| `-WithoutBots` | off | Builds the engine alone — no `mod-playerbots`, no `mod-dungeon-clear`. Skips the module sync, the playerbot SQL import and the `aiplayerbot.conf` tuning, and configures CMake with `BUILD_PLAYERBOTS=OFF` and both modules `disabled`. |
+| `-WithBots` | off | Adds `mod-playerbots` and `mod-dungeon-clear` on top of the engine: syncs both module directories, imports the playerbot SQL, tunes `aiplayerbot.conf`, and configures CMake with `BUILD_PLAYERBOTS=ON` and both modules `static`. Without it the run builds the engine alone, which is what the default `-RepoUrl` carries. |
 | `-applyPatches` | — | Semicolon-separated commit hashes **or branch/tag names** to cherry-pick, e.g. `-applyPatches "0ee0748;abc1234"` or `-applyPatches "my-fix-branch"`. A branch expands to the commits it has and the checkout does not, oldest first. |
 
 ```powershell
@@ -201,7 +204,7 @@ through the compiler if it does:
 ```powershell
 .\Run-Testlab.bat -RepoUrl https://github.com/Penqle/tortoise-wow.git -BranchName main `
                   -PatchRemoteUrl https://github.com/me/tortoise-wow.git `
-                  -applyPatches "my-core-fix" -WithoutBots
+                  -applyPatches "my-core-fix"
 ```
 
 `-PatchRemoteUrl` takes a local path as readily as a URL, so a branch that has not been
@@ -210,7 +213,7 @@ pushed anywhere can be tested straight out of another checkout on the same machi
 ```powershell
 .\Run-Testlab.bat -RepoUrl https://github.com/Penqle/tortoise-wow.git -BranchName main `
                   -PatchRemoteUrl C:\WOW\source\tortoise-wow_AIBot\tortoise-wow `
-                  -applyPatches "my-core-fix" -WithoutBots
+                  -applyPatches "my-core-fix"
 ```
 
 A branch cut from a different base than `-BranchName` expands to that whole lineage rather
@@ -291,7 +294,7 @@ sees this machine arriving from its own address and never as `localhost`. Narrow
 | 01 | Client data present + every DBC checked against `dbc_verifier.json` |
 | 02 | `vcpkg install` for ACE and Boost |
 | 03 | Clone or pull the source, update submodules |
-| — | Sync `modules/mod-playerbots` + `modules/mod-dungeon-clear` from `-ModulesRepoUrl`; optional cherry-picks |
+| — | *(`-WithBots`)* sync `modules/mod-playerbots` + `modules/mod-dungeon-clear` from `-ModulesRepoUrl`; optional cherry-picks |
 | — | *(`-SkipBotRegen`)* verified `mysqldump` of `tw_char` + `tw_logon` |
 | 04 | Stop running servers, wipe generated server dirs, drop databases |
 | 05 | `create_databases.sql`, then all 186 world files from `sql\base` |
@@ -301,8 +304,8 @@ sees this machine arriving from its own address and never as `localhost`. Narrow
 | 08 | CMake configure + Release build → `server_build.log` |
 | 09 | Install, sort binaries into `bin\`/`tools\`, DLLs into `lib\`, configs into `etc\` |
 | 10 | Rewrite paths in `mangosd.conf` |
-| 11 | Import the playerbots module SQL |
-| 12 | Scale the bot population down in `aiplayerbot.conf` |
+| 11 | *(`-WithBots`)* import the playerbots module SQL |
+| 12 | *(`-WithBots`)* scale the bot population down in `aiplayerbot.conf` |
 | 13 | Insert the local realm into `tw_logon.realmlist` |
 | 14 | Create `logs\`, `honor\`, `pdump\`, `lua_scripts\` |
 | 15 | Generate the three launcher `.bat` files, refreshing stale ones |

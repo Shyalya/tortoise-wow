@@ -59,9 +59,9 @@
         -DatabaseOnly             skip git/build/folders/config, touch only
                                   the databases (default: off)
 
-      Core-only mode
-        -WithoutBots              build the engine with no playerbot or
-                                  dungeon-clear module (default: off)
+      Modules
+        -WithBots                 add the playerbot and dungeon-clear
+                                  modules from -ModulesRepoUrl (default: off)
 
     Use "Get-Help .\Setup-Testlab.ps1 -Parameter <name>" for the detail on any one of them,
     or -Examples for the common combinations.
@@ -92,13 +92,17 @@
     -RepoUrl at the repository it targets and naming the branch here. -PatchRemoteUrl accepts
     a local path as readily as a URL, so a branch that has not been pushed anywhere can be
     tested straight out of another checkout on the same machine.
-.PARAMETER WithoutBots
-    Builds the engine alone: no mod-playerbots, no mod-dungeon-clear. The module sync, the
-    playerbot SQL import and the aiplayerbot.conf tuning are all skipped, and CMake is given
-    BUILD_PLAYERBOTS=OFF with both modules disabled. Penqle's core carries no modules at all,
-    so this is the shape a core-only change has to be validated in - with them enabled the run
-    would sync module sources that repository never asked for, and configure modules whose
-    directories are not there.
+.PARAMETER WithBots
+    Adds mod-playerbots and mod-dungeon-clear on top of the engine: syncs both module
+    directories from -ModulesRepoUrl, imports the playerbot SQL, tunes aiplayerbot.conf, and
+    configures CMake with BUILD_PLAYERBOTS=ON and both modules static. Without it the run
+    builds the engine alone, which is what the default -RepoUrl of Penqle carries - it has no
+    modules in it at all, so a default run is a plain core build and validating a core change
+    needs nothing else.
+    Worth knowing before combining this with -DatabaseOnly: a database rebuilt without
+    -WithBots has no ai_playerbot_* tables in it, and a server binary that WAS built with the
+    modules dies on the missing tables at startup rather than reporting anything useful. The
+    run warns when it sees that combination coming.
 .PARAMETER WorkspaceRoot
     The testlab root: the folder holding 'server\' and the 'tortoise-wow\' checkout.
     Defaults to the folder this script sits in. Relative paths are resolved against your
@@ -287,10 +291,12 @@ param (
 
     # ---- what to build -----------------------------------------------------------------
 
-    # Source to build. Point these at a fork or a topic branch to test one without
-    # touching the script: -RepoUrl https://github.com/me/tortoise-wow.git -BranchName my-fix
-    [string]$RepoUrl    = "https://github.com/Shyalya/tortoise-wow.git",
-    [string]$BranchName = "playerbots-integration-gh",
+    # Source to build - the engine. Penqle holds the core; the playerbot and dungeon-clear
+    # modules live in Shyalya and are fetched separately, only under -WithBots. Point these
+    # at a fork or a topic branch to test one without touching the script:
+    # -RepoUrl https://github.com/me/tortoise-wow.git -BranchName my-fix
+    [string]$RepoUrl    = "https://github.com/Penqle/tortoise-wow.git",
+    [string]$BranchName = "main",
 
     # Remote the -applyPatches commits are fetched from
     [string]$PatchRemoteUrl = "https://github.com/Penqle/tortoise-wow.git",
@@ -382,10 +388,9 @@ param (
     # survive the run. Combined, they are the "tw_world First-Boot Reset" case.
     [switch]$DatabaseOnly,
 
-    # Builds the engine on its own, with no mod-playerbots and no mod-dungeon-clear. Penqle
-    # carries no modules at all, so this is what validating a core change against it looks
-    # like; see the parameter help.
-    [switch]$WithoutBots
+    # Adds mod-playerbots and mod-dungeon-clear on top of the engine. Off by default because
+    # the default -RepoUrl is Penqle, which carries no modules at all; see the parameter help.
+    [switch]$WithBots
 )
 
 # StrictMode turns a typo'd or never-assigned variable into a hard error instead of an
@@ -1581,6 +1586,20 @@ if (-not $DatabaseOnly) {
     }
 }
 
+# A testlab that was built with the modules, being rebuilt without them, is worth one line of
+# warning: the databases come out with no ai_playerbot_* tables in them, and a mangosd that
+# still has the modules compiled in dies in RandomPlayerbotMgr::PrepareTeleportCache() on the
+# first missing table - a crash that reads like a core bug and is not one. The module
+# directory left behind by an earlier -WithBots run is the tell.
+if (-not $WithBots) {
+    $PreviousModuleDir = Join-Path $SourceDir "modules\mod-playerbots"
+    if (Test-Path $PreviousModuleDir) {
+        Write-Warning ("This workspace has modules\mod-playerbots from an earlier run, but -WithBots was not passed. " +
+                       "The build and the databases will both come out without the bots. If the server you are about " +
+                       "to run was built with them, add -WithBots.")
+    }
+}
+
 Write-Host "[OK] Preflight passed - the run has everything it needs." -ForegroundColor Green
 
 # ==============================================================================
@@ -1855,8 +1874,8 @@ if (-not (Test-Path $SourceDir)) {
 # before it lands, when Shyalya's checkout already carries these directories itself and this
 # is a harmless, redundant mirror of content already there, and after, when -RepoUrl points
 # at Penqle and this becomes the only source for them.
-if ($WithoutBots) {
-    Write-Host "Module sync - skipped (-WithoutBots builds the engine on its own)." -ForegroundColor DarkGray
+if (-not $WithBots) {
+    Write-Host "Module sync - skipped (pass -WithBots to add the playerbot and dungeon-clear modules)." -ForegroundColor DarkGray
 } else {
 Write-Host "Syncing playerbot/dungeon-clear modules from $ModulesRepoUrl ($ModulesBranch)..."
 
@@ -2422,16 +2441,16 @@ $CmakeArguments = @(
 # "disabled" is one of the linkage values the module system itself defines (see
 # cmake/ConfigureModules.cmake), so this is the supported way to leave a module out rather
 # than something bolted on here.
-if ($WithoutBots) {
-    $CmakeArguments += @(
-        "-DBUILD_PLAYERBOTS=OFF",
-        "-DMODULE_MOD_PLAYERBOTS=disabled",
-        "-DMODULE_MOD_DUNGEON_CLEAR=disabled")
-} else {
+if ($WithBots) {
     $CmakeArguments += @(
         "-DBUILD_PLAYERBOTS=ON",
         "-DMODULE_MOD_PLAYERBOTS=static",
         "-DMODULE_MOD_DUNGEON_CLEAR=static")
+} else {
+    $CmakeArguments += @(
+        "-DBUILD_PLAYERBOTS=OFF",
+        "-DMODULE_MOD_PLAYERBOTS=disabled",
+        "-DMODULE_MOD_DUNGEON_CLEAR=disabled")
 }
 
 Invoke-NativeLogged -Executable "cmake" -Arguments $CmakeArguments
@@ -2673,8 +2692,8 @@ if (Test-Path $RealmdConf) {
 # ==============================================================================
 # PIPELINE STEP 11: PLAYERBOTS MODULE DATA IMPORT
 # ==============================================================================
-if ($WithoutBots) {
-    Write-Host "11: PlayerBots module SQL import - skipped (-WithoutBots builds the engine on its own)." -ForegroundColor DarkGray
+if (-not $WithBots) {
+    Write-Host "11: PlayerBots module SQL import - skipped (no -WithBots)." -ForegroundColor DarkGray
 } else {
 Write-PipelineHeader -StepName "11: Importing PlayerBots module SQL data..."
 Write-Host "Importing PlayerBots module SQL data..."
@@ -2710,8 +2729,8 @@ if ($SkipBotRegen) {
 # ==============================================================================
 # PIPELINE STEP 12: PLAYERBOT CONFIGURATION TUNING
 # ==============================================================================
-if ($DatabaseOnly -or $WithoutBots) {
-    $Step12SkipReason = if ($DatabaseOnly) { "-DatabaseOnly touches only the databases" } else { "-WithoutBots builds the engine on its own" }
+if ($DatabaseOnly -or (-not $WithBots)) {
+    $Step12SkipReason = if ($DatabaseOnly) { "-DatabaseOnly touches only the databases" } else { "no -WithBots" }
     Write-Host "12: PLAYERBOT CONFIGURATION TUNING - skipped ($Step12SkipReason)." -ForegroundColor DarkGray
 } else {
 $AiPlayerbotConf = Join-Path $EtcDir "aiplayerbot.conf"
