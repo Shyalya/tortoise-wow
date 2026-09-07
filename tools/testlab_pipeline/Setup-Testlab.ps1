@@ -2036,12 +2036,20 @@ if (-not [string]::IsNullOrEmpty($applyPatches)) {
     # 5. Preserve any work in progress. This used to be a bare `git reset --hard HEAD` per
     #    patch, which silently destroyed every uncommitted local change in the source tree.
     #    Stashing keeps them recoverable with `git stash pop`.
-    $WorkingTreeState = git status --porcelain
+    #
+    #    Tracked files only. Cherry-pick refuses to start over modified tracked files, which
+    #    is what this exists to clear; untracked ones do not stand in its way. Sweeping them
+    #    up as well meant every run that followed a build stashed the build itself - bin/ is
+    #    not in this repository's .gitignore - and each run left another stash behind, one of
+    #    which quietly accumulated half a gigabyte of database dumps somebody had put in the
+    #    source tree. A cherry-picked commit that adds a file already sitting there untracked
+    #    still stops the run, and git names the file when it does.
+    $WorkingTreeState = git status --porcelain --untracked-files=no
     if ($WorkingTreeState) {
         $StashLabel = "pipeline auto-stash $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-        Write-Warning "Uncommitted changes detected in the source tree. Stashing them as '$StashLabel'."
+        Write-Warning "Uncommitted changes to tracked files detected in the source tree. Stashing them as '$StashLabel'."
         Write-Warning "Recover them afterwards with: git -C `"$SourceDir`" stash pop"
-        git stash push -u -m $StashLabel
+        git stash push -m $StashLabel
         Assert-LastExitCode -Message "Could not stash local changes before applying patches"
     }
 
