@@ -3,8 +3,10 @@
 #include <boost/filesystem.hpp>
 
 #include "TravelNode.h"
+#include "TravelRoutePolicy.h"
 #include "playerbot/TravelMgr.h"
 
+#include <cmath>
 #include <iomanip>
 #include <regex>
 
@@ -90,7 +92,8 @@ void TravelNodePath::calculateCost(bool distanceOnly)
 
             if (lastPoint && point.getMapId() == lastPoint.getMapId())
             {
-                if (!distanceOnly && (point.isVmapLoaded() && point.isInWater()) || (lastPoint.isVmapLoaded() && lastPoint.isInWater()))
+                if (!distanceOnly && ((point.isVmapLoaded() && point.isInWater()) ||
+                    (lastPoint.isVmapLoaded() && lastPoint.isInWater())))
                     swimDistance += point.distance(lastPoint);
 
                 distance += point.distance(lastPoint);
@@ -105,6 +108,46 @@ void TravelNodePath::calculateCost(bool distanceOnly)
     catch (...)
     {
     }
+}
+
+// Refresh only the geometric fields that are derived from persisted path
+// points. The hostile-creature annotations remain intact. Reading terrain
+// directly avoids loading every MMAP tile as a side effect of this startup
+// normalization.
+bool TravelNodePath::recalculateGeometry()
+{
+    float refreshedDistance = 0.1f;
+    float refreshedSwimDistance = 0.0f;
+    WorldPosition lastPoint;
+
+    for (WorldPosition const& point : path)
+    {
+        if (lastPoint && point.getMapId() == lastPoint.getMapId())
+        {
+            float const segmentDistance = point.distance(lastPoint);
+            if (std::isfinite(segmentDistance) && segmentDistance >= 0.0f)
+            {
+                TerrainInfo const* terrain = sTerrainMgr.LoadTerrain(point.getMapId());
+                bool const pointInWater = terrain &&
+                    terrain->IsInWater(point.getX(), point.getY(), point.getZ());
+                bool const lastPointInWater = terrain &&
+                    terrain->IsInWater(lastPoint.getX(), lastPoint.getY(), lastPoint.getZ());
+
+                refreshedDistance += segmentDistance;
+                if (pointInWater || lastPointInWater)
+                    refreshedSwimDistance += segmentDistance;
+            }
+        }
+
+        lastPoint = point;
+    }
+
+    refreshedSwimDistance = std::min(refreshedSwimDistance, refreshedDistance);
+    bool const changed = std::fabs(distance - refreshedDistance) > 0.1f ||
+        std::fabs(swimDistance - refreshedSwimDistance) > 0.1f;
+    distance = refreshedDistance;
+    swimDistance = refreshedSwimDistance;
+    return changed;
 }
 
 //The cost to travel this path. 
@@ -218,7 +261,7 @@ float TravelNodePath::getCost(Unit* unit, uint32 cGold)
     if (getPathType() != TravelNodePathType::walk)
         timeCost = extraCost * modifier;
     else
-        timeCost = (runDistance / speed + swimDistance / swimSpeed) * modifier;
+        timeCost = GetWalkTravelTime(runDistance, swimDistance, speed, swimSpeed) * modifier;
 
     return timeCost;
 }
@@ -1685,6 +1728,19 @@ TravelNodeRoute TravelNodeMap::getRoute(TravelNode* start, TravelNode* goal, Uni
             if (linkCost <= 0)
                 continue;
 
+            if (bot)
+            {
+                uint32 routeSeed = bot->GetGUIDLow();
+                if (Group* group = bot->GetGroup())
+                    routeSeed = group->GetLeaderGuid().GetCounter();
+
+                WorldPosition const* from = currentNode->dataNode->getPosition();
+                WorldPosition const* to = linkNode->getPosition();
+                linkCost *= GetStableRouteCostMultiplier(routeSeed,
+                    from->getMapId(), from->getX(), from->getY(),
+                    to->getMapId(), to->getX(), to->getY());
+            }
+
             childNode = &m_stubs.insert(std::make_pair(linkNode, TravelNodeStub(linkNode))).first->second;
 
             g = currentNode->m_g + linkCost; // stance from start + distance between the two nodes
@@ -2975,6 +3031,9 @@ void TravelNodeMap::generateHelperNodes()
 
 void TravelNodeMap::generateTaxiPaths()
 {
+    uint32 generated = 0;
+    uint32 correctedIds = 0;
+    uint32 incomplete = 0;
     for (uint32 i = 0; i < sTaxiPathStore.GetNumRows(); ++i)
     {
         TaxiPathEntry const* taxiPath = sTaxiPathStore.LookupEntry(i);
@@ -2992,19 +3051,29 @@ void TravelNodeMap::generateTaxiPaths()
         if (!endTaxiNode)
             continue;
 
-        TaxiPathNodeList const& nodes = sTaxiPathNodesByPath[taxiPath->ID];
-
-        if (nodes.empty())
-            continue;
-
         WorldPosition startPos(startTaxiNode->map_id, startTaxiNode->x, startTaxiNode->y, startTaxiNode->z);
         WorldPosition endPos(endTaxiNode->map_id, endTaxiNode->x, endTaxiNode->y, endTaxiNode->z);
 
         TravelNode* startNode = sTravelNodeMap.getNode(startPos, nullptr, 15.0f);
         TravelNode* endNode = sTravelNodeMap.getNode(endPos, nullptr, 15.0f);
 
-        if (!startNode || !endNode)
+        if (!startNode || !endNode || startNode == endNode)
             continue;
+
+        // DBC path indexes can be sparse. Never dereference a missing point
+        // when refreshing a loaded graph (or generating one for the first time).
+        if (taxiPath->ID >= sTaxiPathNodesByPath.size())
+        {
+            ++incomplete;
+            continue;
+        }
+        TaxiPathNodeList const& nodes = sTaxiPathNodesByPath[taxiPath->ID];
+        if (nodes.empty() || std::any_of(nodes.begin(), nodes.end(),
+            [](TaxiPathNodePtr const& node) { return !node.i_ptr; }))
+        {
+            ++incomplete;
+            continue;
+        }
 
         std::vector<WorldPosition> ppath;
 
@@ -3017,13 +3086,22 @@ void TravelNodeMap::generateTaxiPaths()
         if (endNode->fDist(ppath.back()) > 0.1f)
             ppath.push_back(*endNode->getPosition());
 
-        float totalTime = startPos.getPathLength(ppath) / (450 * 8.0f);
+        if (startNode->hasPathTo(endNode))
+        {
+            TravelNodePath* cached = startNode->getPathTo(endNode);
+            if (cached->getPathType() == TravelNodePathType::flightPath &&
+                cached->getPathObject() != taxiPath->ID)
+                ++correctedIds;
+        }
 
-        TravelNodePath travelPath(0.1f, totalTime, (uint8)TravelNodePathType::flightPath, i, true);
-        travelPath.setPath(ppath);
+        TravelNodePath travelPath(0.1f, 0.0f, (uint8)TravelNodePathType::flightPath, taxiPath->ID, true);
+        travelPath.setPathAndCost(ppath, PLAYERBOT_TAXI_ROUTE_DIVISOR);
 
         startNode->setPathTo(endNode, travelPath);
+        ++generated;
     }
+    sLog.outString(">> Refreshed %u bot taxi links from native data (%u corrected cached IDs, %u incomplete paths skipped).",
+        generated, correctedIds, incomplete);
 }
 
 void TravelNodeMap::removeLowNodes()
@@ -3204,6 +3282,14 @@ void TravelNodeMap::generateAll()
         hasToGen = false;
         hasToFullGen = false;
         hasToSave = true;
+    }
+    else
+    {
+        // The bundled graph can use flight IDs from a different DBC layout.
+        // Refresh native IDs AND geometry before coverage/route queries, not
+        // only when generating walking paths. This does not dirty the SQL cache
+        // or reset bots; the small native flight pass runs once per startup.
+        generateTaxiPaths();
     }
 
     sLog.outString("-Calculating coverage"); //This prevents crashes when bots from multiple maps try to calculate this on the fly.
@@ -3586,6 +3672,44 @@ void TravelNodeMap::loadNodeStore()
                 path.setPath(newPath);
             }
         }
+
+        // Persisted walk geometry can outlive route/pathfinder corrections.
+        // Rebuild distance and water exposure from the actual stored points so
+        // A* does not keep selecting stale shortcuts through water.
+        uint32 normalizedWalkPaths = 0;
+        uint32 walkPathsWithSwimming = 0;
+        for (auto& node : getNodes())
+        {
+            for (auto& [endNode, path] : *node->getPaths())
+            {
+                if (path.getPathType() != TravelNodePathType::walk || path.getPath().size() < 2)
+                    continue;
+
+                if (path.recalculateGeometry())
+                    ++normalizedWalkPaths;
+                if (path.getSwimDistance() > 0.1f)
+                    ++walkPathsWithSwimming;
+            }
+        }
+        sLog.outString(">> Normalized %u playerbot walk-path geometries; %u paths include swimming.",
+            normalizedWalkPaths, walkPathsWithSwimming);
+
+        // Restore the native playerbot taxi preference from the loaded spline.
+        // This is intentionally much cheaper than physical flight duration so
+        // roads and ocean shortcuts do not displace an available taxi route.
+        uint32 normalizedFlightPaths = 0;
+        for (auto& node : getNodes())
+        {
+            for (auto& [endNode, path] : *node->getPaths())
+            {
+                if (path.getPathType() != TravelNodePathType::flightPath || path.getPath().size() < 2)
+                    continue;
+
+                path.setPathAndCost(path.getPath(), PLAYERBOT_TAXI_ROUTE_DIVISOR);
+                ++normalizedFlightPaths;
+            }
+        }
+        sLog.outString(">> Normalized %u playerbot flight-path costs to native route preference.", normalizedFlightPaths);
     }
 }
 

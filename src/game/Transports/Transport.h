@@ -27,7 +27,7 @@ struct CreatureData;
 
 class Transport : public GameObject
 {
-        friend Transport* TransportMgr::CreateTransport(uint32, uint32);
+        friend Transport* TransportMgr::CreateTransport(uint32);
 
         Transport();
     public:
@@ -123,7 +123,9 @@ class Transport : public GameObject
         PassengerSet _passengers;
         PassengerSet::iterator _passengerTeleportItr;
 
+        uint32 _creationTime;
         uint32 _pathProgress;
+        uint32 _startProgress;
         std::unordered_set<Map*> m_maps;
 };
 

@@ -30,6 +30,14 @@ void PlayerbotAIBase::UpdateAI(uint32 elapsed)
     YieldAIInternalThread();
 }
 
+void PlayerbotAIBase::AdvanceMinimalUpdateDelay(uint32 elapsed)
+{
+    if (aiInternalUpdateDelay > elapsed)
+        aiInternalUpdateDelay -= elapsed;
+    else
+        aiInternalUpdateDelay = 0;
+}
+
 void PlayerbotAIBase::SetAIInternalUpdateDelay(const uint32 delay)
 {
     if (aiInternalUpdateDelay < delay)

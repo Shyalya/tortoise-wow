@@ -56,6 +56,11 @@ bool PossibleRpgTargetsValue::AcceptUnit(Unit* unit)
 {
     TravelTarget* travelTarget = context->GetValue<TravelTarget*>("travel target")->Get();
 
+    // Flight masters remain available to purposeful travel/discovery, but a
+    // taxi-cheat bot must not pick one as generic nearby roleplay work.
+    if (unit->HasFlag(UNIT_NPC_FLAGS, UNIT_NPC_FLAG_FLIGHTMASTER) && bot->isTaxiCheater())
+        return false;
+
     if (travelTarget->GetDestination() && travelTarget->GetDestination()->GetEntry() == unit->GetEntry())
         return true;
 

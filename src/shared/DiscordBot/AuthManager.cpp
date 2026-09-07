@@ -114,7 +114,7 @@ namespace DiscordBot
             return AuthResult::WrongCredentials;
 
         std::unique_ptr<QueryResult> result = 
-            std::unique_ptr<QueryResult>(LoginDatabase.PQuery("SELECT id, UPPER(sha_pass_hash), rank, username, security, locked FROM account WHERE username = '%s'", safeUsername.c_str()));
+            std::unique_ptr<QueryResult>(LoginDatabase.PQuery("SELECT id, UPPER(sha_pass_hash), `rank`, username, security, locked FROM account WHERE username = '%s'", safeUsername.c_str()));
 
 
         if (!result)

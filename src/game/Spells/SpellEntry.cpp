@@ -599,6 +599,26 @@ uint32 SpellEntry::GetCastTime(WorldObject* caster, Spell* spell) const
             {
                 castTime = int32(castTime * pUnit->m_modAttackSpeedPct[RANGED_ATTACK]);
             }
+
+            // Native skill-specific cast-time auras use EffectMiscValue as
+            // the skill ID. Match the existing spell/skill index; a spell
+            // with duplicate skill rows must apply each aura only once.
+            auto const& skillCastAuras = pUnit->GetAurasByType(SPELL_AURA_MOD_SKILL_CAST_TIME);
+            if (!skillCastAuras.empty())
+            {
+                auto const skillBounds = sSpellMgr.GetSkillLineAbilityMapBoundsBySpellId(Id);
+                for (Aura const* aura : skillCastAuras)
+                {
+                    for (auto itr = skillBounds.first; itr != skillBounds.second; ++itr)
+                    {
+                        if (int32(itr->second->skillId) == aura->GetModifier()->m_miscvalue)
+                        {
+                            castTime = int32(castTime * (100.0f + aura->GetModifier()->m_amount) / 100.0f);
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 

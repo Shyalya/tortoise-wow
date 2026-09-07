@@ -223,6 +223,19 @@ bool MoveAwayFromCreature::Execute(Event& event)
     return false;
 }
 
+bool MoveAwayFromSpecificCreatures::Execute(Event& event)
+{
+    std::set<uint32>&creatureIDList = AI_VALUE(std::set<uint32>&, "avoid creature list");
+    for (const uint32 creatureToCheck : creatureIDList)
+    {
+        creatureID = creatureToCheck;
+        bool result = MoveAwayFromCreature::Execute(event);
+        if (result)
+            return result;
+    }
+    return false;
+}
+
 bool MoveAwayFromCreature::isPossible()
 {
     if (MovementAction::isPossible())

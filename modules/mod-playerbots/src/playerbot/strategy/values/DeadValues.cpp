@@ -67,11 +67,13 @@ WorldSafeLocsEntry const* GraveyardValue::GetAnotherAppropriateClosestGraveyard(
     WorldSafeLocsEntry const* entryFar = nullptr;
 
     Corpse* corpse = bot->GetCorpse();
-    if (!corpse)
+    if (!corpse || !corpse->IsPositionValid())
         return nullptr;
 
     uint32 botMapId = corpse->GetMapId();
-    uint32 botZoneId = corpse->GetZoneId();
+    // Corpses outlive their instance maps; never dereference the old Map here.
+    uint32 botZoneId = sTerrainMgr.GetZoneId(botMapId, corpse->GetPositionX(),
+        corpse->GetPositionY(), corpse->GetPositionZ());
 
     for (auto mapValues : sWorld.GetGraveyardManager().GetGraveyardMap())
     {

@@ -87,6 +87,17 @@ void WorldSession::HandleRepopRequestOpcode(WorldPacket & /*recv_data*/)
 class WhoListClientQueryTask
 {
 public:
+    struct WhoResult
+    {
+        std::string name;
+        std::string guild;
+        uint32 level;
+        uint32 playerClass;
+        uint32 race;
+        uint32 zone;
+        bool realClient;
+    };
+
     uint32 accountId;
     uint32 level_min, level_max, racemask, classmask, zones_count, str_count;
     uint32 zoneids[10];                                     // 10 is client limit
@@ -100,7 +111,8 @@ public:
         sess->SetReceivedWhoRequest(false);
         if (!sess->GetPlayer() || !sess->GetPlayer()->IsInWorld())
             return;
-        uint32 clientcount = 0;
+        static constexpr uint32 WHO_DISPLAY_LIMIT = 49;
+        std::vector<WhoResult> matches;
         Team team = sess->GetPlayer()->GetTeam();
         AccountTypes security = sess->GetSecurity();
         bool allowTwoSideWhoList = sWorld.getConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_WHO_LIST);
@@ -108,16 +120,15 @@ public:
 
         const uint32 zone = sess->GetPlayer()->GetCachedZoneId();
         const bool notInBattleground = !((zone == 2597) || (zone == 3277) || (zone == 3358));
-
-        WorldPacket data(SMSG_WHO, 50);                         // guess size
-        data << uint32(clientcount);                            // clientcount place holder, listed count
-        data << uint32(clientcount);                            // clientcount place holder, online count
-
         // TODO: Guard Player map
         HashMapHolder<Player>::MapType& m = sObjectAccessor.GetPlayers();
         for (const auto& itr : m)
         {
             Player* pPlayer = itr.second;
+
+            WorldSession* targetSession = pPlayer ? pPlayer->GetSession() : nullptr;
+            if (!targetSession)
+                continue;
 
             if (security == SEC_PLAYER)
             {
@@ -126,7 +137,7 @@ public:
                     continue;
 
                 // player can see MODERATOR, GAME MASTER, ADMINISTRATOR only if CONFIG_GM_IN_WHO_LIST
-                if (pPlayer->GetSession()->GetSecurity() > gmLevelInWhoList)
+                if (targetSession->GetSecurity() > gmLevelInWhoList)
                     continue;
 
                 if (pPlayer->HasGMDisabledSocials())
@@ -148,12 +159,14 @@ public:
 
             // check if class matches classmask
             uint32 class_ = pPlayer->GetClass();
-            if (!(classmask & (1 << class_)))
+            // Some 1.18 clients send a zero mask for "all". Only constrain
+            // the result when an actual mask was supplied.
+            if (classmask && (class_ >= 32 || !(classmask & (uint32(1) << class_))))
                 continue;
 
             // check if race matches racemask
             uint32 race = pPlayer->GetRace();
-            if (!(racemask & (1 << race)))
+            if (racemask && (race >= 32 || !(racemask & (uint32(1) << race))))
                 continue;
 
             std::string pname = pPlayer->GetName();
@@ -219,21 +232,36 @@ public:
             if (!s_show)
                 continue;
 
-            data << pname;                                      // player name
-            data << gname;                                      // guild name
-            data << uint32(lvl);                                // player level
-            data << uint32(class_);                             // player class
-            data << uint32(race);                               // player race
-            data << uint32(pzoneid);                            // player zone id
-
-            // 50 is maximum player count sent to client
-            if ((++clientcount) == 49)
-                break;
+            matches.push_back({pname, gname, lvl, class_, race, pzoneid,
+                targetSession->GetSocket() != nullptr});
         }
 
-        uint32 count = m.size();
-        data.put(0, clientcount);                               // insert right count, listed count
-        data.put(4, count > 49 ? count : clientcount);          // insert right count, online count
+        // The 1.12/1.18 client has space for 49 rows. Sending 50 produces the
+        // misleading "50 displayed" footer but leaves the list body empty on
+        // Turtle clients. Put real clients first so a bot-heavy realm remains
+        // useful, then use a stable alphabetical order for repeatable searches.
+        std::sort(matches.begin(), matches.end(), [](WhoResult const& left, WhoResult const& right)
+        {
+            if (left.realClient != right.realClient)
+                return left.realClient > right.realClient;
+            return left.name < right.name;
+        });
+
+        uint32 const clientcount = std::min<uint32>(matches.size(), WHO_DISPLAY_LIMIT);
+        uint32 const matchcount = matches.size();
+        WorldPacket data(SMSG_WHO, 8 + clientcount * 40);
+        data << clientcount;
+        data << matchcount;
+        for (uint32 i = 0; i < clientcount; ++i)
+        {
+            WhoResult const& result = matches[i];
+            data << result.name;
+            data << result.guild;
+            data << result.level;
+            data << result.playerClass;
+            data << result.race;
+            data << result.zone;
+        }
 
         sess->SendPacket(&data);
         DEBUG_LOG("WORLD: Send SMSG_WHO Message");

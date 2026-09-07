@@ -20,6 +20,7 @@
 #include "Auth/Sha1.h"
 #include "WorldSession.h"
 #include "Log.h"
+#include "WorkMetrics.h"
 #include "DBCStores.h"
 
 
@@ -87,6 +88,7 @@ void MangosSocket<SessionType, SocketName, Crypt>::CloseSocket(void)
 template <typename SessionType, typename SocketName, typename Crypt>
 int MangosSocket<SessionType, SocketName, Crypt>::SendPacket(const WorldPacket& pct)
 {
+    WorkMetrics::Probe cost(WorkMetrics::SocketQueue);
     GuardType lock(m_OutBufferLock);
 
     if (closing_)
@@ -290,6 +292,7 @@ int MangosSocket<SessionType, SocketName, Crypt>::handle_close(ACE_HANDLE h, ACE
 template <typename SessionType, typename SocketName, typename Crypt>
 int MangosSocket<SessionType, SocketName, Crypt>::Update(void)
 {
+    WorkMetrics::Flush();
     if (closing_)
         return -1;
 

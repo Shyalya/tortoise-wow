@@ -38,6 +38,16 @@ namespace ai
     public:
         PetIsDeadValue(PlayerbotAI* ai, std::string name = "pet dead") : BoolCalculatedValue(ai, name) {}
         virtual bool Calculate() override;
+        void Reset() override
+        {
+            petDbCached = false;
+            BoolCalculatedValue::Reset();
+        }
+    private:
+        // Cache only the DB fallback; live pet state keeps the native cadence.
+        bool petDbCached = false;
+        bool hasStoredPet = false;
+        uint32 lastPetDbCheckMs = 0;
     };
 
     class PetIsHappyValue : public BoolCalculatedValue

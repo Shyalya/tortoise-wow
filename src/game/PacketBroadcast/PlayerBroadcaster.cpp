@@ -7,7 +7,7 @@ uint32 PlayerBroadcaster::num_bcaster_created = 0;
 uint32 PlayerBroadcaster::num_bcaster_deleted = 0;
 
 PlayerBroadcaster::PlayerBroadcaster(WorldSocket* w_socket, const ObjectGuid& self, std::size_t max_queue) :
-    MAX_QUEUE_SIZE(max_queue), m_socket(w_socket), m_self(self), instanceId(0), lastUpdatePackets(0)
+    MAX_QUEUE_SIZE(max_queue), m_socket(w_socket), m_self(self), m_nextSequence(0), instanceId(0), lastUpdatePackets(0)
 {
     if (m_socket)
         m_socket->AddReference();
@@ -18,11 +18,12 @@ PlayerBroadcaster::PlayerBroadcaster(WorldSocket* w_socket, const ObjectGuid& se
 
 void PlayerBroadcaster::ChangeSocket(WorldSocket* new_socket)
 {
-    if (m_socket)
-        m_socket->RemoveReference();
-
+    std::lock_guard<std::mutex> socketGuard(m_socket_lock);
+    if (new_socket == m_socket) return;
     if (new_socket)
         new_socket->AddReference();
+    if (m_socket)
+        m_socket->RemoveReference();
 
     m_socket = new_socket;
 }
@@ -33,8 +34,20 @@ void PlayerBroadcaster::AddListener(Player const* player)
     if (player->GetObjectGuid() == m_self)
         return;
 
-    const std::lock_guard<std::mutex> guard(m_listeners_lock);
-    m_listeners[player->GetObjectGuid()] = player->m_broadcaster;
+    std::shared_ptr<PlayerBroadcaster> listener = player->m_broadcaster;
+    if (!listener)
+        return;
+
+    // The listener's create block has already been queued to its socket before
+    // this function is called.  Hold both locks so the activation boundary is
+    // atomic with respect to QueuePacket and ProcessQueue: packets generated
+    // before that create block must never be replayed to the new listener.
+    const std::scoped_lock guard{ m_queue_lock, m_listeners_lock };
+    auto itr = m_listeners.find(player->GetObjectGuid());
+    if (itr != m_listeners.end() && itr->second.broadcaster == listener)
+        return;
+
+    m_listeners[player->GetObjectGuid()] = { listener, m_nextSequence + 1 };
 }
 
 void PlayerBroadcaster::RemoveListener(Player const* player)
@@ -52,17 +65,18 @@ void PlayerBroadcaster::ClearListeners()
 
 void PlayerBroadcaster::SendPacket(const WorldPacket& packet)
 {
+    std::lock_guard<std::mutex> socketGuard(m_socket_lock);
     if (m_socket)
         m_socket->SendPacket(packet);
 }
 
 void PlayerBroadcaster::ProcessQueue(uint32& num_packets)
 {
+    std::scoped_lock lock{ m_queue_lock, m_listeners_lock };
+    lastUpdatePackets = 0;
     if (m_queue.empty())
         return;
-
-    std::scoped_lock lock{ m_queue_lock, m_listeners_lock };
-    auto queue = std::move(m_queue);
+    auto& queue = m_queue;
 
     lastUpdatePackets = queue.size() * m_listeners.size();
     num_packets += lastUpdatePackets;
@@ -78,9 +92,13 @@ void PlayerBroadcaster::ProcessQueue(uint32& num_packets)
             if (itr.first == data.except)
                 continue;
 
-            itr.second->SendPacket(data.packet);
+            if (data.sequence < itr.second.firstSequence)
+                continue;
+
+            itr.second.broadcaster->SendPacket(data.packet);
         }
     }
+    queue.clear(); // retain allocation; queue lock is held through the send pass
 }
 
 void PlayerBroadcaster::QueuePacket(WorldPacket packet, bool self, ObjectGuid except)
@@ -91,12 +109,14 @@ void PlayerBroadcaster::QueuePacket(WorldPacket packet, bool self, ObjectGuid ex
     data.except = except;
 
     std::scoped_lock guard(m_queue_lock);
+    data.sequence = ++m_nextSequence;
 
     // We need to drop a packet here - if possible
     if (m_queue.size() >= MAX_QUEUE_SIZE)
     {
         BroadcastData& last_in_queue = m_queue[m_queue.size() - 1];
-        if (CanSkipPacket(last_in_queue.packet.GetOpcode()) && CanSkipPacket(data.packet.GetOpcode()))
+        if (CanSkipPacket(last_in_queue.packet.GetOpcode()) && CanSkipPacket(data.packet.GetOpcode()) &&
+            last_in_queue.sendToSelf == data.sendToSelf && last_in_queue.except == data.except)
         {
             m_queue[m_queue.size() - 1] = std::move(data);
             return;
@@ -113,11 +133,7 @@ ObjectGuid PlayerBroadcaster::GetGUID() const
 
 void PlayerBroadcaster::FreeAtLogout()
 {
-    if (m_socket)
-    {
-        m_socket->RemoveReference();
-        m_socket = nullptr;
-    }
+    ChangeSocket(nullptr); // releases socket lock before taking queue/listener locks
 
     const std::scoped_lock lock{ m_queue_lock, m_listeners_lock };
     m_queue.clear();

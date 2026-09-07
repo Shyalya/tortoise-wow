@@ -7,6 +7,7 @@
 #include "Maps/PathFinder.h"
 #include "playerbot/TravelMgr.h"
 #include "playerbot/strategy/values/FreeMoveValues.h"
+#include "StableTargetPosition.h"
 #include <iomanip>
 
 using namespace ai;
@@ -119,8 +120,14 @@ bool MoveToTravelTargetAction::Execute(Event& event)
     {
         float maxDistance = target->GetDestination()->GetRadiusMin();
 
-        float angle = 2 * M_PI * urand(0, 100) / 100.0;
-        float mod = urand(50, 100) / 100.0;
+        // Re-entering this action must keep the same approach point. The old
+        // random roll on every evaluation made bots visibly shuttle back and
+        // forth around busy destinations instead of ever arriving.
+        StableTargetOffset const offset = GetStableTargetOffset(
+            bot->GetGUIDLow(), static_cast<uint32>(target->GetEntry()),
+            location.getX(), location.getY());
+        float const angle = offset.angle;
+        float const mod = offset.scale;
 
         x += cos(angle) * maxDistance * mod;
         y += sin(angle) * maxDistance * mod;
@@ -158,7 +165,9 @@ bool MoveToTravelTargetAction::Execute(Event& event)
         }
     }
     else
-        target->DecRetry(true);
+        // A successful movement command proves the route is making progress;
+        // do not carry failures from an older route leg into this one.
+        target->SetRetry(true);
 
     if (ai->HasStrategy("debug move", BotState::BOT_STATE_NON_COMBAT))
     {
@@ -225,6 +234,7 @@ bool MoveToTravelTargetAction::isUseful()
 
     if (bot->GetGroup() && !bot->GetGroup()->IsLeader(bot->GetObjectGuid()))
         if (ai->HasStrategy("follow", BotState::BOT_STATE_NON_COMBAT) ||
+            ai->HasStrategy("wander", BotState::BOT_STATE_NON_COMBAT) ||
             ai->HasStrategy("stay", BotState::BOT_STATE_NON_COMBAT) ||
             ai->HasStrategy("guard", BotState::BOT_STATE_NON_COMBAT))
             if (!travelTarget->IsForced())

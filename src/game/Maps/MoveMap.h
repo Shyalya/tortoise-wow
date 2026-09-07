@@ -29,6 +29,7 @@
 
 #include <thread>
 #include <shared_mutex>
+#include <atomic>
 
 //  memory management
 inline void* dtCustomAlloc(size_t size, dtAllocHint /*hint*/)
@@ -103,16 +104,16 @@ namespace MMAP
             dtNavMesh const* GetNavMesh(uint32 mapId);
 
             uint32 getLoadedTilesCount() const { return loadedTiles; }
-            uint32 getLoadedMapsCount() const { return loadedMMaps.size(); }
+            uint32 getLoadedMapsCount() const { std::shared_lock<std::shared_mutex> guard(loadedMMaps_lock); return loadedMMaps.size(); }
         private:
             bool loadMapData(uint32 mapId);
             static uint32 packTileID(int32 x, int32 y);
 
             MMapDataSet loadedMMaps;
-            std::shared_mutex loadedMMaps_lock;
+            mutable std::shared_mutex loadedMMaps_lock;
             MMapDataSet loadedModels;
 
-            uint32 loadedTiles;
+            std::atomic<uint32> loadedTiles;
             std::mutex lockForModels;
     };
 

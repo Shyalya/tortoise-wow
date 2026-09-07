@@ -1,5 +1,6 @@
 
 #include "playerbot/playerbot.h"
+#include <mutex>
 #include "playerbot/PerformanceMonitor.h"
 #include "AhAction.h"
 #include "playerbot/strategy/values/ItemCountValue.h"
@@ -21,12 +22,11 @@ bool AhAction::Execute(Event& event)
         if (!npc)
             continue;
 
-        if (!sRandomPlayerbotMgr.m_ahActionMutex.try_lock()) //Another bot is using the Auction right now. Try again later.
+        std::unique_lock<std::mutex> auctionGuard(sRandomPlayerbotMgr.m_ahActionMutex, std::try_to_lock);
+        if (!auctionGuard.owns_lock()) // Another bot is using the auction house. Retry later.
             return false;
 
         bool doneAuction = ExecuteCommand(requester, text, npc);
-
-        sRandomPlayerbotMgr.m_ahActionMutex.unlock();
 
         return doneAuction;
     }

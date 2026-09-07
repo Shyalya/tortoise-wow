@@ -6,6 +6,7 @@
 #include "playerbot/strategy/values/TravelValues.h"
 #include "Maps/PathFinder.h"
 #include "TravelNode.h"
+#include "TravelRoutePolicy.h"
 #include "PlayerbotAI.h"
 #include "BotTests.h"
 #include "ObjectAccessor.h"
@@ -25,6 +26,9 @@ PlayerTravelInfo::PlayerTravelInfo(Player* player)
 
     team = player->GetTeam();
     level = player->GetLevel();
+    identitySeed = player->GetGUIDLow();
+    if (Group* group = player->GetGroup())
+        identitySeed = group->GetLeaderGuid().GetCounter();
     currentSkill[SKILL_MINING] = player->GetSkillValue(SKILL_MINING);
     currentSkill[SKILL_HERBALISM] = player->GetSkillValue(SKILL_HERBALISM);
     currentSkill[SKILL_FISHING] = player->GetSkillValue(SKILL_FISHING);
@@ -488,6 +492,12 @@ bool RpgTravelDestination::IsActive(Player* bot, const PlayerTravelInfo& info) c
 
     if (!IsPossible(info))
         return false;   
+
+    // Taxi-cheat bots already use flight masters as route graph transitions.
+    // Sending them to one as an ambient roleplay destination adds a second,
+    // purposeless source of flight-master crowds and random taxi rides.
+    if (HasNpcFlag(UNIT_NPC_FLAG_FLIGHTMASTER) && bot->isTaxiCheater())
+        return false;
 
     //Once the target rpged with it is added to the ignore list. We can now move on.
     std::set<ObjectGuid>& ignoreList = AI_VALUE(std::set<ObjectGuid>&,"ignore rpg target");
@@ -2730,13 +2740,19 @@ bool TravelMgr::IsLocationLevelValid(const WorldPosition& position, const Player
 PartitionedTravelList TravelMgr::GetPartitions(const WorldPosition& center, const std::vector<uint32>& distancePartitions, const PlayerTravelInfo& info, uint32 purposeFlag, const std::vector<int32>& entries, bool onlyPossible, float maxDistance) const
 {
     sTravelMgr.GetPartitionsLock();
+    // Return the native worker permit even if destination lookup/allocation throws.
+    struct PartitionPermitRelease
+    {
+        ~PartitionPermitRelease() { sTravelMgr.GetPartitionsLock(false); }
+    } permitRelease;
 
     PartitionedTravelList pointMap;
     DestinationList destinations = GetDestinations(info, purposeFlag, entries, onlyPossible, maxDistance);
 
 
 
-    unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+    unsigned seed = GetStableTravelSelectionSeed(info.GetIdentitySeed(), purposeFlag,
+        center.getMapId(), center.getX(), center.getY());
     std::shuffle(destinations.begin(), destinations.end(), std::default_random_engine(seed));
 
     // TEMPORARY counters. Quest takers are offered to a bot and nothing comes
@@ -2761,7 +2777,9 @@ PartitionedTravelList TravelMgr::GetPartitions(const WorldPosition& center, cons
 
         MANGOS_ASSERT(pointRange.second.size());
         std::vector<WorldPosition*> points = pointRange.second;
-        std::shuffle(points.begin(), points.end(), std::default_random_engine(seed));
+        unsigned const pointSeed = MixTravelRouteSeed(seed ^
+            static_cast<uint32>(dest->GetEntry()));
+        std::shuffle(points.begin(), points.end(), std::default_random_engine(pointSeed));
 
         for (auto& position : points)
         {
@@ -2794,8 +2812,6 @@ PartitionedTravelList TravelMgr::GetPartitions(const WorldPosition& center, cons
         sLog.outBasic("PARTPROBE: level %u, %u taker destinations, none survived - %u had no partition, %u no usable point; points rejected: %u by level, %u by distance (max allowed %.0f, farthest seen %u)",
             info.GetLevel(), probeTotal, probeNoPartition, probeNoPoint,
             probeRejectLevel, probeRejectDistance, maxDistance, probeFarthest);
-
-    sTravelMgr.GetPartitionsLock(false);
 
     return pointMap;
 }

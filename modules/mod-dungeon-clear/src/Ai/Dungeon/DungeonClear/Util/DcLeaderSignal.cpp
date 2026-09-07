@@ -1573,13 +1573,13 @@ bool DcLeaderSignal::GetLeaderGatherPoint(Player* bot, DcGatherPoint& out)
     if (!bot)
         return false;
     Player* leader = FindLeaderTank(bot);
-    if (!leader || leader == bot)
+    if (!leader || leader == bot || !leader->IsInWorld() || leader->FindMap() != bot->FindMap())
         return false;
     PlayerbotAI* leaderAI = GET_PLAYERBOT_AI(leader);
     if (!leaderAI)
         return false;
     AiObjectContext* ctx = leaderAI->GetAiObjectContext();
-    if (!DcRun::Of(ctx).enabled || DcRun::Of(ctx).paused)
+    if (!ctx || !DcRun::Of(ctx).enabled || DcRun::Of(ctx).paused)
         return false;
     DcGatherPoint const& gp = ctx->GetValue<DcGatherPoint&>(DcKey::GatherPoint)->Get();
     if (!gp.Live(getMSTime()) || gp.mapId != bot->GetMapId())

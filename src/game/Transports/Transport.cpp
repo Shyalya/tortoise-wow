@@ -37,10 +37,14 @@
 
 Transport::Transport() : GameObject(),
     _transportInfo(nullptr), _isMoving(true), _pendingStop(false),
-    _passengerTeleportItr(_passengers.begin()), _pathProgress(0)
+    _passengerTeleportItr(_passengers.begin()), _creationTime(0),
+    _pathProgress(0), _startProgress(0)
 {
-    // the path progress is the only value that seem to matter
-    m_updateFlag = UPDATEFLAG_TRANSPORT;
+    // Preserve GameObject's UPDATEFLAG_ALL | UPDATEFLAG_HAS_POSITION and add
+    // the moving-transport clock. Replacing the inherited flags with only
+    // UPDATEFLAG_TRANSPORT sent path progress without an initial XYZ position,
+    // so 1.18 clients could not place or render any boat/zeppelin.
+    m_updateFlag |= UPDATEFLAG_TRANSPORT;
 }
 
 Transport::~Transport()
@@ -106,12 +110,24 @@ bool Transport::Create(uint32 guidlow, uint32 entry, uint32 mapid, float x, floa
 
     _transportInfo = tInfo;
 
+    if (tInfo->keyFrames.size() < 2 || tInfo->pathTime < IN_MILLISECONDS)
+    {
+        sLog.outErrorDb("Transport %u (name: %s) has invalid generated timing (%u frame(s), %u ms period).",
+            entry, goinfo->name.c_str(), uint32(tInfo->keyFrames.size()), tInfo->pathTime);
+        return false;
+    }
+
     // initialize waypoints
     _nextFrame = tInfo->keyFrames.begin();
     _currentFrame = _nextFrame++;
 
-    _pathProgress = time(nullptr) % (tInfo->pathTime / 1000);
-    _pathProgress *= 1000;
+    // Moving transports use an absolute monotonic clock. This is the contract
+    // used by both CMaNGOS and vMaNGOS: the client receives the same clock the
+    // server uses to resolve the current DBC path frame, including after a map
+    // transfer or a delayed world update.
+    _creationTime = WorldTimer::getMSTime();
+    _pathProgress = _currentFrame->ArriveTime;
+    _startProgress = _pathProgress;
     SetObjectScale(goinfo->size);
     SetUInt32Value(GAMEOBJECT_FACTION, goinfo->faction);
     SetUInt32Value(GAMEOBJECT_FLAGS, goinfo->flags);
@@ -150,16 +166,24 @@ void Transport::Update(uint32 update_diff, uint32 /*time_diff*/)
     if (GetKeyFrames().size() <= 1)
         return;
 
+    uint32 const currentMsTime = WorldTimer::getMSTimeDiffToNow(_creationTime) + _startProgress;
+    if (_pathProgress >= currentMsTime)
+        return;
+
+    uint32 const diff = currentMsTime - _pathProgress;
     if (IsMoving() || !_pendingStop)
-        _pathProgress = (_pathProgress + update_diff) % GetPeriod();
+        _pathProgress = currentMsTime;
+
+    uint32 const pathProgress = _pathProgress % GetPeriod();
 
     // Set current waypoint
     // Desired outcome: _currentFrame->DepartureTime < _pathProgress < _nextFrame->ArriveTime
     // ... arrive | ... delay ... | departure
     //      event /         event /
+    size_t frameSearchCount = 0;
     for (;;)
     {
-        if (_pathProgress >= _currentFrame->ArriveTime && _pathProgress < _currentFrame->DepartureTime)
+        if (pathProgress >= _currentFrame->ArriveTime && pathProgress < _currentFrame->DepartureTime)
         {
             SetMoving(false);
             break;  // its a stop frame and we are waiting
@@ -168,15 +192,22 @@ void Transport::Update(uint32 update_diff, uint32 /*time_diff*/)
         // not waiting anymore
         SetMoving(true);
 
-        if (_pathProgress >= _currentFrame->DepartureTime && _pathProgress < _currentFrame->NextArriveTime)
+        if (pathProgress >= _currentFrame->DepartureTime && pathProgress < _currentFrame->NextArriveTime)
             break;  // found current waypoint
 
         MoveToNextWaypoint();
 
+        if (++frameSearchCount > GetKeyFrames().size())
+        {
+            sLog.outError("Transport %u (%s) could not resolve path progress %u within its %u ms period; update skipped.",
+                GetEntry(), GetName(), pathProgress, GetPeriod());
+            return;
+        }
+
         DEBUG_LOG("Transport %u (%s) moved to node %u %u %f %f %f", GetEntry(), GetName(), _currentFrame->Node->index, _currentFrame->Node->mapid, _currentFrame->Node->x, _currentFrame->Node->y, _currentFrame->Node->z);
 
         // Departure event
-        if (_currentFrame->IsTeleportFrame())
+        if (_currentFrame->IsTeleportFrame() || _currentFrame->Node->mapid != GetMapId())
         {
             if (TeleportTransport(_nextFrame->Node->mapid, _nextFrame->Node->x, _nextFrame->Node->y, _nextFrame->Node->z, _nextFrame->InitialOrientation))
                 return; // Update more in new map thread
@@ -189,13 +220,13 @@ void Transport::Update(uint32 update_diff, uint32 /*time_diff*/)
     }
 
     // Set position
-    _positionChangeTimer.Update(update_diff);
+    _positionChangeTimer.Update(diff);
     if (_positionChangeTimer.Passed())
     {
         _positionChangeTimer.Reset(positionUpdateDelay);
-        if (IsMoving() && _pathProgress)
+        if (IsMoving() && pathProgress)
         {
-            float t = CalculateSegmentPos(float(_pathProgress) * 0.001f);
+            float t = CalculateSegmentPos(float(pathProgress) * 0.001f);
             G3D::Vector3 pos, dir;
             _currentFrame->Spline->evaluate_percent(_currentFrame->Index, t, pos);
             _currentFrame->Spline->evaluate_derivative(_currentFrame->Index, t, dir);
@@ -295,8 +326,6 @@ void Transport::MoveToNextWaypoint()
     _currentFrame = _nextFrame++;
     if (_nextFrame == GetKeyFrames().end())
         _nextFrame = GetKeyFrames().begin();
-    if (_currentFrame == GetKeyFrames().begin())
-        _pathProgress = 0;
 }
 
 float Transport::CalculateSegmentPos(float now)
@@ -332,7 +361,8 @@ float Transport::CalculateSegmentPos(float now)
 
 bool Transport::TeleportTransport(uint32 newMapid, float x, float y, float z, float o)
 {
-    bool const differentMap = newMapid != GetMapId();
+    uint32 const newInstanceId = sMapMgr.GetContinentInstanceId(newMapid, x, y);
+    bool const differentMap = newMapid != GetMapId() || newInstanceId != GetInstanceId();
     Map const* oldMap = GetMap();
     
     if (differentMap)
@@ -342,8 +372,6 @@ bool Transport::TeleportTransport(uint32 newMapid, float x, float y, float z, fl
             pMap->Remove<Transport>(this, false);
         MANGOS_ASSERT(m_maps.empty());
     }
-
-    uint32 newInstanceId = sMapMgr.GetContinentInstanceId(newMapid, x, y);
 
     for (_passengerTeleportItr = _passengers.begin(); _passengerTeleportItr != _passengers.end();)
     {
@@ -414,16 +442,16 @@ bool Transport::TeleportTransport(uint32 newMapid, float x, float y, float z, fl
 
     if (differentMap)
     {
-        sMapMgr.GetOrCreateContinentInstances(newMapid, this, m_maps);
-        for (auto const& pMap : m_maps)
-            pMap->Add<Transport>(this);
+        SetLocationInstanceId(newInstanceId);
+        Map* newMap = sMapMgr.CreateMap(newMapid, this);
+        MANGOS_ASSERT(newMap);
+        SetMap(newMap);
+        m_maps.insert(newMap);
+        newMap->Add<Transport>(this);
     }
 
-    // set the instance at these coordinates as the main one
-    SetLocationInstanceId(newInstanceId);
-    Map* newMap = sMapMgr.CreateMap(newMapid, this);
-    SetMap(newMap);
-    MANGOS_ASSERT(m_maps.find(newMap) != m_maps.end());
+    Map* newMap = GetMap();
+    MANGOS_ASSERT(newMap && m_maps.find(newMap) != m_maps.end());
 
     return newMap != oldMap;
 }

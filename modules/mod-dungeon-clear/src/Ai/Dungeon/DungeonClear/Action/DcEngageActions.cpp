@@ -4,6 +4,8 @@
  */
 
 #include <unordered_map>
+#include "BoundedBotThrottle.h"
+#include "ArchitectureDiagnostics.h"
 #include "Ai/Dungeon/DungeonClear/Util/NavmeshSnap.h"
 #include "CellImpl.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcNeverTargetRegistry.h"
@@ -1816,12 +1818,11 @@ bool DcObjectiveArriveAction::Execute(Event& /*event*/)
                     // One line / 10 s per leader either way: arch16 (2026-09-05)
                     // left five parties idle at the ramp with no way to tell
                     // whether this branch found nothing or was never reached.
-                    static std::unordered_map<uint64, uint32> s_holdSaidAt;
+                    static BoundedBotThrottle s_holdSaidAt;
                     uint32 const nowH = getMSTime();
-                    uint32& atH = s_holdSaidAt[bot->GetObjectGuid().GetRawValue()];
-                    if (!atH || getMSTimeDiff(atH, nowH) > 10000)
+                    if (TurtleDiagnostics::enabled.load(std::memory_order_relaxed) &&
+                        s_holdSaidAt.Allow(bot->GetObjectGuid().GetRawValue(), nowH, 10000))
                     {
-                        atH = nowH;
                         LOG_INFO("playerbots.dungeonclear",
                                  "[DC:{}] hold-engage: {} (far targets {}, radius {:.0f} around ({:.0f},{:.0f},{:.0f}))",
                                  bot->GetName(),
@@ -1920,12 +1921,10 @@ bool DcObjectiveArriveAction::Execute(Event& /*event*/)
                         holdTarget = nearestUnreachable;
                         unreachableAnyway = true;
                     }
-                    static std::unordered_map<uint64, uint32> s_fallbackSaidAt;
+                    static BoundedBotThrottle s_fallbackSaidAt;
                     uint32 const nowF = getMSTime();
-                    uint32& atF = s_fallbackSaidAt[bot->GetObjectGuid().GetRawValue()];
-                    bool const sayF = !atF || getMSTimeDiff(atF, nowF) > 10000;
-                    if (sayF)
-                        atF = nowF;
+                    bool const sayF = TurtleDiagnostics::enabled.load(std::memory_order_relaxed) &&
+                        s_fallbackSaidAt.Allow(bot->GetObjectGuid().GetRawValue(), nowF, 10000);
                     if (sayF && (holdTarget || rejectedAttack || rejectedReach))
                         LOG_INFO("playerbots.dungeonclear",
                                  "[DC:{}] hold-engage fallback: {}{} (rejected: not attackable {}, unreachable {})",
@@ -2014,12 +2013,11 @@ bool DcObjectiveArriveAction::Execute(Event& /*event*/)
                 // turns hostile.
                 if (target && !bot->IsHostileTo(target))
                 {
-                    static std::unordered_map<uint64, uint32> s_friendlySaidAt;
+                    static BoundedBotThrottle s_friendlySaidAt;
                     uint32 const nowMs = getMSTime();
-                    uint32& at = s_friendlySaidAt[bot->GetObjectGuid().GetRawValue()];
-                    if (!at || getMSTimeDiff(at, nowMs) > 30000)
+                    if (TurtleDiagnostics::enabled.load(std::memory_order_relaxed) &&
+                        s_friendlySaidAt.Allow(bot->GetObjectGuid().GetRawValue(), nowMs, 30000))
                     {
-                        at = nowMs;
                         LOG_INFO("playerbots.dungeonclear",
                                  "[DC:{}] engage step: {} (entry {}) is not hostile (faction {}) "
                                  "-> waiting for it to turn, not attacking",
@@ -2185,12 +2183,11 @@ bool DcObjectiveArriveAction::Execute(Event& /*event*/)
             // Once per bot per 30s. "Rare and singular" above was wrong: this
             // runs every tick a stall persists - 147651 lines in 5.5 hours on
             // 2026-09-03, seven a second, the whole journal drowned in it.
-            static std::unordered_map<uint64, uint32> s_stallSaidAt;
+            static BoundedBotThrottle s_stallSaidAt;
             uint32 const nowStall = getMSTime();
-            uint32& saidAt = s_stallSaidAt[bot->GetObjectGuid().GetRawValue()];
-            if (!saidAt || getMSTimeDiff(saidAt, nowStall) > 30000)
+            if (TurtleDiagnostics::enabled.load(std::memory_order_relaxed) &&
+                s_stallSaidAt.Allow(bot->GetObjectGuid().GetRawValue(), nowStall, 30000))
             {
-                saidAt = nowStall;
                 LOG_INFO("playerbots.dungeonclear",
                          "[DC:{}] event '{}' STALLED at step {}/{} kind {}",
                          bot->GetName(), ev->name, p.stepIndex,

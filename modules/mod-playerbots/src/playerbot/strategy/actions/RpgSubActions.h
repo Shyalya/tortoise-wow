@@ -108,7 +108,10 @@ namespace ai
     public:
         RpgTaxiAction(PlayerbotAI* ai, std::string name = "rpg taxi") : RpgSubAction(ai, name) {}
 
-        virtual bool isUseful() override { return rpg->InRange() && !ai->HasRealPlayerMaster() && bot->GetGroup(); }
+        // Ambient bots do not need a group in order to use a flight master.
+        // The group-only gate let solo bots select and walk to the service but
+        // made the actual taxi action impossible, leaving them parked there.
+        virtual bool isUseful() override { return rpg->InRange() && !ai->HasRealPlayerMaster(); }
 
         virtual std::string GetRpgActionName() const override { return "grabbing a taxi from"; };
 

@@ -49,8 +49,26 @@ namespace ai
         bool HasCreaturesNearby(const WorldPosition& point, const std::list<Creature*>& creatures) const;
         bool IsHazardNearby(const WorldPosition& point, const std::list<HazardPosition>& hazards) const;
 
-    private:
+    protected:
         uint32 creatureID;
         float range;
+    };
+
+    class MoveAwayFromSpecificCreatures : public MoveAwayFromCreature
+    {
+    public:
+        MoveAwayFromSpecificCreatures(PlayerbotAI* ai, float range, bool ignoreVictim = true, std::string name = "move away from specific creatures") : MoveAwayFromCreature(ai, name, 0, range) {}
+        bool Execute(Event& event) override;
+
+#ifdef GenerateBotHelp
+        virtual std::string GetHelpName() { return "move away from specific creatures"; }
+        virtual std::string GetHelpDescription()
+        {
+            return "This action makes the bot move away from specific creatures defined by the avoid creature list.\n"
+                   "It maintains a safe distance from the specified creature IDs within a defined range.";
+        }
+        virtual std::vector<std::string> GetUsedActions() { return {}; }
+        virtual std::vector<std::string> GetUsedValues() { return {"hazards"}; }
+#endif
     };
 }

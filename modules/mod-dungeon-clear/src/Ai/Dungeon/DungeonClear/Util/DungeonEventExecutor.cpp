@@ -4,6 +4,8 @@
  */
 
 #include <unordered_map>
+#include "BoundedBotThrottle.h"
+#include "ArchitectureDiagnostics.h"
 #include "Ai/Dungeon/DungeonClear/Data/DcGatherPoint.h"
 #include "DungeonEventExecutor.h"
 #include "ScriptMgr.h"
@@ -371,14 +373,13 @@ bool DungeonEventExecutor::SelectGossip(Player* bot, Creature* npc, int32 option
     // window; the bot goes straight to the handler the option would have reached.
     if (menu.MenuItemCount() == 0)
     {
-        static std::unordered_map<uint64, uint32> s_emptySaidAt;
+        static BoundedBotThrottle s_emptySaidAt;
         uint32 const nowE = getMSTime();
-        uint32& atE = s_emptySaidAt[bot->GetObjectGuid().GetRawValue()];
         bool const handled = sScriptMgr.OnGossipSelect(bot, npc, /*sender*/ 0u,
                                                        static_cast<uint32>(option), /*code*/ nullptr);
-        if (!atE || getMSTimeDiff(atE, nowE) > 10000)
+        if (TurtleDiagnostics::enabled.load(std::memory_order_relaxed) &&
+            s_emptySaidAt.Allow(bot->GetObjectGuid().GetRawValue(), nowE, 10000))
         {
-            atE = nowE;
             LOG_INFO("playerbots.dungeonclear",
                      "[dungeon-clear] {} gossip: empty menu on {} (entry {}, gossip_menu_id {}, npcflags {}, {:.1f}yd) -> script select {}",
                      bot->GetName(), npc->GetName(), npc->GetEntry(), npc->GetDefaultGossipMenuId(),
@@ -567,12 +568,11 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
             // second per leader: the step re-clicks every tick while Running,
             // which wrote ~20 lines/s per leader at the Uldaman altar (2026-09-05).
             {
-                static std::unordered_map<uint64, uint32> s_useSaidAt;
+                static BoundedBotThrottle s_useSaidAt;
                 uint32 const nowU = getMSTime();
-                uint32& atU = s_useSaidAt[bot->GetObjectGuid().GetRawValue()];
-                if (!atU || getMSTimeDiff(atU, nowU) >= 1000)
+                if (TurtleDiagnostics::enabled.load(std::memory_order_relaxed) &&
+                    s_useSaidAt.Allow(bot->GetObjectGuid().GetRawValue(), nowU, 1000))
                 {
-                    atU = nowU;
                     LOG_INFO("playerbots.dungeonclear",
                              "[dungeon-clear] {} event-step Use GO {} '{}' -> uniqueUses={} state={}",
                              bot->GetName(), go->GetObjectGuid().ToString(), go->GetName(),
@@ -603,7 +603,7 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                             continue;
                         if (!member->IsInWorld() || !member->IsAlive())
                             continue;
-                        if (member->GetMapId() != bot->GetMapId())
+                        if (member->FindMap() != bot->FindMap())
                             continue;
                         // The core's Use() does no range check of its own - the
                         // client normally enforces it - so hold the same distance
@@ -619,12 +619,11 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                         // party that genuinely cannot reach the altar.
                         if (!member->IsWithinDistInMap(go, DC_EVENT_GO_USE_RANGE))
                         {
-                            static std::unordered_map<uint64, uint32> s_farSaidAt;
+                            static BoundedBotThrottle s_farSaidAt;
                             uint32 const nowF = getMSTime();
-                            uint32& atF = s_farSaidAt[member->GetObjectGuid().GetRawValue()];
-                            if (!atF || getMSTimeDiff(atF, nowF) > 5000)
+                            if (TurtleDiagnostics::enabled.load(std::memory_order_relaxed) &&
+                                s_farSaidAt.Allow(member->GetObjectGuid().GetRawValue(), nowF, 5000))
                             {
-                                atF = nowF;
                                 LOG_INFO("playerbots.dungeonclear",
                                          "[dungeon-clear] {} ritual: {} is {:.1f}yd from the altar (need {}), moving={}",
                                          bot->GetName(), member->GetName(), member->GetDistance(go),
@@ -653,12 +652,11 @@ StepResult DungeonEventExecutor::RunStep(Player* bot, AiObjectContext* context,
                         go->Use(member);
                         ++clicked;
                         {
-                            static std::unordered_map<uint64, uint32> s_clickSaidAt;
+                            static BoundedBotThrottle s_clickSaidAt;
                             uint32 const nowC = getMSTime();
-                            uint32& atC = s_clickSaidAt[member->GetObjectGuid().GetRawValue()];
-                            if (!atC || getMSTimeDiff(atC, nowC) >= 1000)
+                            if (TurtleDiagnostics::enabled.load(std::memory_order_relaxed) &&
+                                s_clickSaidAt.Allow(member->GetObjectGuid().GetRawValue(), nowC, 1000))
                             {
-                                atC = nowC;
                                 LOG_INFO("playerbots.dungeonclear",
                                          "[dungeon-clear] {} ritual click by {} at {:.1f}yd -> uniqueUses={}",
                                          bot->GetName(), member->GetName(), member->GetDistance(go),

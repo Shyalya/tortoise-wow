@@ -143,11 +143,14 @@ enum PlayerHook
     PLAYERHOOK_ON_RELEASE_TO_CLIENT,
     PLAYERHOOK_IS_AI_CONTROLLED,
     PLAYERHOOK_IS_MACHINE_DRIVEN,
+    PLAYERHOOK_IS_UPDATE_CRITICAL,
     PLAYERHOOK_HAS_AI_FOLLOWERS,
     PLAYERHOOK_GET_ALLOWED_ROLES,
     PLAYERHOOK_SET_FORCED_ROLE,
     PLAYERHOOK_ON_CHAT_COMMAND,
     PLAYERHOOK_CAN_USE_GROUP_CHAT,
+    PLAYERHOOK_ON_AI_UPDATE,
+    PLAYERHOOK_IS_AI_UPDATE_DUE,
     PLAYERHOOK_END
 };
 
@@ -171,6 +174,9 @@ class PlayerScript : public ScriptObject
         virtual void OnTalentsReset(Player* /*player*/, bool /*noCost*/) {}
         virtual void OnBeforeUpdate(Player* /*player*/, uint32 /*diff*/) {}
         virtual void OnUpdate(Player* /*player*/, uint32 /*diff*/) {}
+        // AI has its own cadence; never throttle gameplay/module OnUpdate hooks.
+        virtual void OnAIUpdate(Player* /*player*/, uint32 /*diff*/, bool /*minimal*/) {}
+        virtual bool IsAIUpdateDue(Player* /*player*/, uint32 /*diff*/) { return false; }
         virtual void OnMoneyChanged(Player* /*player*/, int32& /*amount*/) {}
         virtual void OnGiveXP(Player* /*player*/, uint32& /*amount*/, Unit* /*victim*/) {}
         virtual void OnReputationChange(Player* /*player*/, uint32 /*factionId*/, int32& /*standing*/) {}
@@ -212,6 +218,11 @@ class PlayerScript : public ScriptObject
         // as a human here, which is what the core wants when it decides whether
         // a group member can be waited on.
         virtual bool IsMachineDriven(Player const* /*player*/) { return false; }
+
+        // Machine-driven characters normally run on a reduced cadence. Modules
+        // return true while a character is attached to a real player or doing
+        // latency-sensitive work so map catch-up passes keep it responsive.
+        virtual bool IsUpdateCritical(Player const* /*player*/) { return false; }
 
         // Whether this *human* player commands puppets of his own. Distinct from
         // IsAIControlled: the master is a real player, his followers are not.

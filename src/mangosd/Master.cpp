@@ -33,6 +33,7 @@
 
 #include "Common.h"
 #include "Master.h"
+#include "ExecutionWatch.h"
 #include "WorldSocket.h"
 #include "WorldRunnable.h"
 #include "World.h"
@@ -453,6 +454,36 @@ void freezeDetector(uint32 _delaytime)
     }
 };
 
+static void WatchWorldProgress(uint32 thresholdMs, std::string logPath)
+{
+    uint32 loop = World::m_worldLoopCounter.load();
+    uint64 lastProgress = ExecutionWatch::Now();
+    bool reported = false;
+    while (!World::IsStopped())
+    {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        uint64 const now = ExecutionWatch::Now();
+        uint32 const current = World::m_worldLoopCounter.load();
+        if (current != loop)
+        {
+            loop = current;
+            lastProgress = now;
+            reported = false;
+        }
+        else if (!reported && now - lastProgress >= thresholdMs)
+        {
+            if (FILE* file = fopen(logPath.c_str(), "a"))
+            {
+                fprintf(file, "\nSTALL epoch=%llu (diagnostic only; no restart or termination)\n",
+                    static_cast<unsigned long long>(time(nullptr)));
+                ExecutionWatch::Dump(file, loop, now - lastProgress);
+                fclose(file);
+            }
+            reported = true;
+        }
+    }
+}
+
 Master::Master()
 {
     
@@ -473,6 +504,13 @@ int Master::Run()
     // that bypass SetUnhandledExceptionFilter. See
     // MangosdInstallCrashHandlers above for the full hook inventory.
     MangosdInstallCrashHandlers();
+    if (sConfig.GetBoolDefault("Console.DisableQuickEdit", true))
+    {
+        HANDLE const input = GetStdHandle(STD_INPUT_HANDLE);
+        DWORD mode = 0;
+        if (GetConsoleMode(input, &mode))
+            SetConsoleMode(input, (mode | ENABLE_EXTENDED_FLAGS) & ~ENABLE_QUICK_EDIT_MODE);
+    }
 #endif
 
     /// worldd PID file creation
@@ -545,6 +583,15 @@ int Master::Run()
 
     ///- Launch WorldRunnable thread
     std::thread world_thread{WorldRunnable()};
+    std::thread progress_thread;
+    if (uint32 seconds = sConfig.GetIntDefault("Diagnostics.StallSeconds", 10))
+    {
+        std::string directory = sConfig.GetStringDefault("LogsDir", ".");
+        if (directory.empty())
+            directory = ".";
+        progress_thread = std::thread(WatchWorldProgress, std::min<uint32>(seconds, 3600) * 1000,
+            directory + "/StallBreadcrumb.log");
+    }
 
     // set realmbuilds depend on mangosd expected builds, and set server online
     {
@@ -643,6 +690,8 @@ int Master::Run()
     // when the main thread closes the singletons get unloaded
     // since worldrunnable uses them, it will crash if unloaded after master
     world_thread.join();
+    if (progress_thread.joinable())
+        progress_thread.join();
 
     ///- Stop freeze protection before shutdown tasks
     if (freeze_thread)

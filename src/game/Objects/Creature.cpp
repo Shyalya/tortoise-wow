@@ -20,6 +20,7 @@
  */
 
 #include "Creature.h"
+#include "ArchitectureDiagnostics.h"
 #include "Database/DatabaseEnv.h"
 #include "WorldPacket.h"
 #include "World.h"
@@ -714,6 +715,8 @@ uint32 Creature::ChooseDisplayId(CreatureInfo const* cinfo, CreatureData const* 
 
 void Creature::Update(uint32 update_diff, uint32 diff)
 {
+    TurtleDiagnostics::CreatureProbe diagnosticCreature(this, GetGUIDLow(), GetEntry(),
+        uint32(m_deathState), IsInCombat(), update_diff);
     update_diff *= sWorld.GetTimeRate();
     diff *= sWorld.GetTimeRate();
 
@@ -722,6 +725,7 @@ void Creature::Update(uint32 update_diff, uint32 diff)
         script->OnAllCreatureUpdate(this, update_diff);
     });
 
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::CreatureState);
     // AI was locked and switch was delayed to next update.
     if (HasCreatureState(CSTATE_INIT_AI_ON_UPDATE))
     {
@@ -833,6 +837,7 @@ void Creature::Update(uint32 update_diff, uint32 diff)
         case CORPSE:
         {
             Unit::Update(update_diff, diff);
+            TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::CreatureState);
             if (IsDeadByDefault())
                 break;
 
@@ -903,6 +908,7 @@ void Creature::Update(uint32 update_diff, uint32 diff)
             }
 
             Unit::Update(update_diff, diff);
+            TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::CreatureCombat);
 
             // creature can be dead after Unit::Update call
             // CORPSE/DEAD state will processed at next tick (in other case death timer will be updated unexpectedly)
@@ -974,6 +980,7 @@ void Creature::Update(uint32 update_diff, uint32 diff)
 
             if (AI())
             {
+                TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::CreatureScriptAI);
                 // do not allow the AI to be changed during update
                 m_AI_locked = true;
                 try
@@ -982,7 +989,10 @@ void Creature::Update(uint32 update_diff, uint32 diff)
                     if (leash || (m_TargetNotReachableTimer > 24000))
                         AI()->EnterEvadeMode();
                     else if (!IsEvadeBecauseTargetNotReachable())
-                        AI()->UpdateAI(diff);   // AI not react good at real update delays (while freeze in non-active part of map)
+                    {
+                        TurtleDiagnostics::Scope diagnosticAI(TurtleDiagnostics::CreatureAI);
+                        AI()->UpdateAI(diff);
+                    }
                 }
                 catch (std::runtime_error& e)
                 {
@@ -992,6 +1002,7 @@ void Creature::Update(uint32 update_diff, uint32 diff)
                 m_AI_locked = false;
             }
 
+            TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::CreatureRegen);
             // creature can be dead after UpdateAI call
             // CORPSE/DEAD state will processed at next tick (in other case death timer will be updated unexpectedly)
             if (!IsAlive())

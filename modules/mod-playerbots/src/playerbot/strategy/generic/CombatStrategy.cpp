@@ -82,6 +82,18 @@ void AvoidAoeStrategy::InitReactionMultipliers(std::list<Multiplier*>& multiplie
     InitCombatMultipliers(multipliers);
 }
 
+void AvoidSpecificCreaturesStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
+{
+    triggers.push_back(new TriggerNode(
+        "specific creature too close",
+        NextAction::array(0, new NextAction("move away from specific creatures", ACTION_EMERGENCY + 5), NULL)));
+}
+
+void AvoidSpecificCreaturesStrategy::InitReactionTriggers(std::list<TriggerNode*>& triggers)
+{
+    InitCombatTriggers(triggers);
+}
+
 void WaitForAttackStrategy::InitCombatTriggers(std::list<TriggerNode*>& triggers)
 {
     triggers.push_back(new TriggerNode(
@@ -150,7 +162,8 @@ float WaitForAttackMultiplier::GetValue(Action* action)
         (actionName != "pull rti target") &&
         (actionName != "pull start") &&
         (actionName != "pull action") &&
-        (actionName != "pull end"))
+        (actionName != "pull end") &&
+        (action->getThreatType() != ActionThreatType::ACTION_THREAT_NONE))
     {
         return WaitForAttackStrategy::ShouldWait(ai) ? 0.0f : 1.0f;
     }

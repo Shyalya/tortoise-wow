@@ -19,6 +19,7 @@
  */
 
 #include "Unit.h"
+#include "ArchitectureDiagnostics.h"
 #include "Log.h"
 #include "Opcodes.h"
 #include "WorldPacket.h"
@@ -258,12 +259,15 @@ void Unit::Update(uint32 update_diff, uint32 p_time)
     if (!IsInWorld())
         return;
 
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitHooks);
     ScriptRegistry<UnitScript>::ForEachEnabledHook(UNITHOOK_ON_UNIT_UPDATE, [&](UnitScript* script)
     {
         script->OnUnitUpdate(this, update_diff);
     });
 
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitVisibility);
     CheckPendingVisibilityAndViewUpdate();
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitCombat);
 
     // Nostalrius : systeme de contresort des mobs.
     // Boucle 1 pour regler les timers
@@ -289,11 +293,15 @@ void Unit::Update(uint32 update_diff, uint32 p_time)
     // WARNING! Order of execution here is important, do not change.
     // Spells must be processed with event system BEFORE they go to _UpdateSpells.
     // Or else we may have some SPELL_STATE_FINISHED spells stalled in pointers, that is bad.
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitEvents);
     m_Events.Update(update_diff);
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitSpells);
     _UpdateSpells(update_diff);
 
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitAuraCleanup);
     CleanupDeletedAuras();    
 
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitCombat);
     if (m_lastManaUseTimer)
     {
         if (update_diff >= m_lastManaUseTimer)
@@ -363,6 +371,7 @@ void Unit::Update(uint32 update_diff, uint32 p_time)
         SetAttackTimer(RANGED_ATTACK, (update_diff >= ranged_att ? 0 : ranged_att - update_diff));
 
     // update abilities available only for fraction of time
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitReactives);
     UpdateReactives(update_diff);
 
     if (IsAlive())
@@ -371,9 +380,13 @@ void Unit::Update(uint32 update_diff, uint32 p_time)
         ModifyAuraState(AURA_STATE_HEALTHLESS_35_PERCENT, GetHealth() < GetMaxHealth() * 0.35f);
     }
 
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitMovementChecks);
     CheckPendingMovementChanges();
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitSpline);
     UpdateSplineMovement(p_time);
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitMotion);
     GetMotionMaster()->UpdateMotion(p_time);
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitDeferredMotion);
     if (GetMotionMaster()->NeedsAsyncUpdate() && IsInWorld())
     {
         if (sWorld.getConfig(CONFIG_UINT32_CONTINENTS_MOTIONUPDATE_THREADS) && GetMap()->IsContinent())
@@ -381,6 +394,7 @@ void Unit::Update(uint32 update_diff, uint32 p_time)
         else
             GetMotionMaster()->UpdateMotionAsync(p_time);
     }
+    TurtleDiagnostics::CreatureProbe::Stage(this, TurtleDiagnostics::UnitWorld);
     WorldObject::Update(update_diff, p_time);
     if (_delayedActions & OBJECT_DELAYED_ADD_TO_RELOCATED_LIST)
     {
@@ -915,12 +929,6 @@ uint32 Unit::DealDamage(Unit* pVictim, uint32 damage, CleanDamage const* cleanDa
         damage /= 10;
     else if (IsPlayer() && ToPlayer()->IsHardcore() && pVictim->IsCreature() && (pVictim->GetEntry() == 89 || GetEntry() == 14385))
         damage *= 10;
-
-    if (HasSpell(46023) || HasSpell(46024)) // Passive : AVOIDANCE for Pets.
-    {
-        if (spellProto && (spellProto->IsAreaOfEffectSpell() || spellProto->HasAreaAuraEffect()))
-            damage *= 0.5f;
-    }
 
     if (damage > 0 && sWorld.getConfig(CONFIG_BOOL_LEECH_ENABLE))
     {
@@ -5867,6 +5875,9 @@ uint32 Unit::SpellDamageBonusTaken(WorldObject* pCaster, SpellEntry const* spell
     takenTotalMod *= GetTotalAuraMultiplierByMiscMask(SPELL_AURA_MOD_DAMAGE_PERCENT_TAKEN, schoolMask);
     if (spellProto->IsAreaOfEffectSpell())
         takenTotalMod *= GetTotalAuraMultiplier(SPELL_AURA_MOD_AOE_DAMAGE_PERCENT_TAKEN);
+    // Native chain avoidance is school-filtered and applies to the recipient.
+    if (spellProto->EffectChainTarget[effectIndex] > 1)
+        takenTotalMod *= GetTotalAuraMultiplierByMiscMask(SPELL_AURA_MOD_CHAIN_DAMAGE_PERCENT_TAKEN, schoolMask);
     if (damagetype == DOT)
         takenTotalMod *= GetTotalAuraMultiplier(SPELL_AURA_MOD_PERIODIC_DAMAGE_PERCENT_TAKEN);
 
@@ -6427,6 +6438,9 @@ uint32 Unit::MeleeDamageBonusTaken(WorldObject* pCaster, uint32 pdamage, WeaponA
     TakenPercent *= GetTotalAuraMultiplierByMiscMask(SPELL_AURA_MOD_DAMAGE_PERCENT_TAKEN, schoolMask);
     if (spellProto && spellProto->IsAreaOfEffectSpell())
         TakenPercent *= GetTotalAuraMultiplier(SPELL_AURA_MOD_AOE_DAMAGE_PERCENT_TAKEN);
+    // Weapon-based chain spells use the same recipient-side aura contract.
+    if (spellProto && spellProto->EffectChainTarget[effectIndex] > 1)
+        TakenPercent *= GetTotalAuraMultiplierByMiscMask(SPELL_AURA_MOD_CHAIN_DAMAGE_PERCENT_TAKEN, schoolMask);
     if (spellProto && damagetype == DOT)
         TakenPercent *= GetTotalAuraMultiplier(SPELL_AURA_MOD_PERIODIC_DAMAGE_PERCENT_TAKEN);
 

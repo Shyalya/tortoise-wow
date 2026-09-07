@@ -105,6 +105,8 @@
 #include "FishValues.h"
 #include "RuneForgeValues.h"
 #include "WorldBuffTravelValues.h"
+#include "AvoidCreatureListValue.h"
+#include "CreatureIdValue.h"
 
 namespace ai
 {
@@ -114,6 +116,8 @@ namespace ai
         ValueContext()
         {
             creators["active spell"] = [](PlayerbotAI* ai) { return new ActiveSpellValue(ai); };
+            creators["avoid creature list"] = [](PlayerbotAI* ai) { return new AvoidCreatureListValue(ai); };
+            creators["creature id"] = [](PlayerbotAI* ai) { return new CreatureIdValue(ai); };
             creators["craft"] = [](PlayerbotAI* ai) { return new CraftValue(ai); };
             creators["collision"] = [](PlayerbotAI* ai) { return new CollisionValue(ai); };
             creators["skip spells list"] = [](PlayerbotAI* ai) { return new SkipSpellsListValue(ai); };

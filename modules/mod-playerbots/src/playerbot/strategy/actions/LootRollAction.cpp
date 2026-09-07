@@ -353,7 +353,9 @@ bool LootRollAction::Execute(Event& event)
 bool AutoLootRollAction::Execute(Event& event)
 {
     LootRollMap lootRolls = AI_VALUE(LootRollMap, "active rolls");
-    if (lootRolls.empty())
+    ActiveRolls::CleanUp(bot, lootRolls);
+    SET_AI_VALUE(LootRollMap, "active rolls", lootRolls);
+    if (!bot->GetGroup() || lootRolls.empty() || AI_VALUE(uint8, "bag space") >= 100)
         return false;
 
     auto currentRoll = std::next(lootRolls.begin(), urand(0, lootRolls.size() - 1));
@@ -363,5 +365,10 @@ bool AutoLootRollAction::Execute(Event& event)
 
 bool AutoLootRollAction::isPossible()
 {
-    return bot->GetGroup() && !AI_VALUE(LootRollMap, "active rolls").empty() && AI_VALUE(uint8, "bag space") < 100;
+    if (!bot->GetGroup() || AI_VALUE(uint8, "bag space") >= 100)
+        return false;
+    LootRollMap rolls = AI_VALUE(LootRollMap, "active rolls");
+    ActiveRolls::CleanUp(bot, rolls);
+    SET_AI_VALUE(LootRollMap, "active rolls", rolls);
+    return !rolls.empty();
 }

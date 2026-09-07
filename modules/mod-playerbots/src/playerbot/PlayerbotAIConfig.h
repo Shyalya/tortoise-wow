@@ -126,8 +126,11 @@ public:
     uint32 autoGearQualityLimit = 0;  // like autoGearScoreLimit: 0 = no cap (mod-dungeon-clear reads it for its test sidecar)
     bool allowGuildBots;
     bool allowMultiAccountAltBots;
+    uint32 pathFailureRetryMs = 3000;
+    uint32 failedActionRetryBase = 250, failedActionRetryMax = 2000;
+    uint32 failedActionCacheTtl = 30000, failedActionCacheMaxEntries = 64;
     uint32 globalCoolDown, reactDelay, maxWaitForMove, expireActionTime, dispelAuraDuration, passiveDelay, repeatDelay,
-        errorDelay, rpgDelay, sitDelay, returnDelay, lootDelay;
+        errorDelay, rpgDelay, sitDelay, returnDelay, lootDelay, valueCacheCleanupInterval, memoryTelemetryInterval;
     float sightDistance, spellDistance, reactDistance, grindDistance, lootDistance, groupMemberLootDistance, groupMemberLootDistanceWithActiveMaster,
         gatheringDistance, groupMemberGatheringDistance, groupMemberGatheringDistanceWithActiveMaster, shootDistance,
         fleeDistance, tooCloseDistance, meleeDistance, followDistance, raidFollowDistance, wanderMinDistance, wanderMaxDistance, whisperDistance, contactDistance,
@@ -183,6 +186,7 @@ public:
     uint32 minRandomBotReviveTime, maxRandomBotReviveTime;
     uint32 minRandomBotPvpTime, maxRandomBotPvpTime;
     uint32 randomBotsMaxLoginsPerInterval;
+    uint32 randomBotLoginDbQueueLimit;
     uint32 randomBotsPerInterval;
     uint32 minRandomBotsPriceChangeInterval, maxRandomBotsPriceChangeInterval;
     //Auction house settings
@@ -289,6 +293,9 @@ public:
     // log files (logs/bots/<name>_acc<id>_<timestamp>.log) are emitted. Default
     // off so production servers don't pay disk I/O / branch overhead.
     bool enableActionLog;
+    bool behaviorTrace = false;
+    uint32 behaviorTraceMap = 0;
+    float behaviorTraceX = -800.0f, behaviorTraceY = -530.0f, behaviorTraceRadius = 200.0f;
     // Filename (relative to LogsDir) for the bot subsystem log. When set,
     // all sLog calls from bot .cpp files are redirected there instead of
     // writing to the main server log. Default: "bots.log". Empty = disabled.

@@ -703,7 +703,11 @@ Player::Player(WorldSession *session) : Unit(),
 
     m_areaUpdateId = 0;
 
-    m_nextSave = sWorld.getConfig(CONFIG_UINT32_INTERVAL_SAVE);
+    uint32 const saveInterval = sWorld.getConfig(CONFIG_UINT32_INTERVAL_SAVE);
+    // Keep thousands of bot saves from re-forming into one periodic DB spike
+    // after a forced save or shutdown. Real-player timing remains unchanged.
+    m_nextSave = Script_IsMachineDriven(this) && saveInterval ?
+        urand(saveInterval * 3 / 4, saveInterval * 5 / 4) : saveInterval;
 
     // randomize first save time in range [CONFIG_UINT32_INTERVAL_SAVE] around [CONFIG_UINT32_INTERVAL_SAVE]
     // this must help in case next save after mass player load after server startup
@@ -2587,6 +2591,7 @@ bool Player::SwitchInstance(uint32 newInstanceId)
         return false;
 
     Map* oldmap = GetMap();
+    ++m_mapWorkGeneration;
 
     // Leave transport if absent from new instance
     // normally it should have switched before the player
@@ -3106,6 +3111,11 @@ void Player::RewardRage(uint32 damage, bool attacker)
 
     addRage *= sWorld.getConfig(CONFIG_FLOAT_RATE_POWER_RAGE_INCOME);
 
+    // Native 1.18.1 aura 227 modifies generated attacking rage, not rage from
+    // incoming damage or the separate damage-to-rage proc (aura 226).
+    if (attacker)
+        addRage *= GetTotalAuraMultiplier(SPELL_AURA_MOD_ATTACKING_RAGE_PERCENT);
+
     ModifyPower(POWER_RAGE, uint32(addRage * 10));
 }
 
@@ -3376,64 +3386,73 @@ void Player::RecallPvPGear()
     }
 }
 
-bool Player::CanInteractWithNPC(Creature const* pCreature, uint32 npcflagmask) const
+bool Player::CanInteractWithNPC(Creature const* pCreature, uint32 npcflagmask, char const** failureReason) const
 {
-    if (!pCreature)
+    if (failureReason)
+        *failureReason = "accepted";
+    auto reject = [failureReason](char const* reason)
+    {
+        if (failureReason)
+            *failureReason = reason;
         return false;
+    };
+
+    if (!pCreature)
+        return reject("npc_missing");
 
     // some basic checks
     if (!IsInWorld() || IsTaxiFlying())
-        return false;
+        return reject("player_not_in_world_or_on_taxi");
 
     // not in interactive state
     if (HasUnitState(UNIT_STAT_CAN_NOT_REACT_OR_LOST_CONTROL))
-        return false;
+        return reject("player_cannot_react");
 
     // appropriate npc type
     if (npcflagmask && !pCreature->HasFlag(UNIT_NPC_FLAGS, npcflagmask))
-        return false;
+        return reject("npc_service_flag_missing");
 
     if (npcflagmask == UNIT_NPC_FLAG_STABLEMASTER)
     {
         if (GetClass() != CLASS_HUNTER)
-            return false;
+            return reject("stable_requires_hunter");
     }
 
     if (!pCreature->IsAlive())
-        return false;
+        return reject("npc_dead");
 
     if (IsAlive() && pCreature->IsInvisibleForAlive())
-        return false;
+        return reject("npc_invisible_for_alive");
 
     if (!IsAlive() && !pCreature->HasTypeFlag(CREATURE_TYPEFLAGS_GHOST_VISIBLE))
-        return false;
+        return reject("npc_not_ghost_visible");
 
     // not allow interaction under control, but allow with own pets
     if (pCreature->GetCharmerGuid())
-        return false;
+        return reject("npc_charmed");
 
     // not enemy
    if (pCreature->IsHostileTo(this))
-        return false;
+        return reject("npc_hostile");
 
     // combat check
     if (pCreature->IsInCombat())
-        return false;
+        return reject("npc_in_combat");
 
     // not interactable
     if (pCreature->HasFlag(UNIT_FIELD_FLAGS, UNIT_FLAG_NOT_SELECTABLE))
-        return false;
+        return reject("npc_not_selectable");
 
     // not unfriendly
     if (FactionTemplateEntry const* factionTemplate = sObjectMgr.GetFactionTemplateEntry(pCreature->GetFactionTemplateId()))
         if (factionTemplate->faction)
             if (FactionEntry const* faction = sObjectMgr.GetFactionEntry(factionTemplate->faction))
                 if (faction->reputationListID >= 0 && GetReputationMgr().GetRank(faction) <= REP_UNFRIENDLY)
-                    return false;
+                    return reject("reputation_unfriendly");
 
     // not too far
     if (!pCreature->IsWithinDistInMap(this, INTERACTION_DISTANCE))
-        return false;
+        return reject("npc_out_of_range_or_map");
 
     return true;
 }
@@ -16662,7 +16681,7 @@ void Player::SendPushToPartyResponse(Player *pPlayer, uint8 msg) const
     }
 }
 
-void Player::SendQuestUpdateAddItem(Quest const* pQuest, uint32 item_idx, uint32 current, uint32 count)
+void Player::SendQuestUpdateAddItem(Quest const* pQuest, uint32 item_idx, uint32 /*current*/, uint32 count)
 {
     DEBUG_LOG("WORLD: Sent SMSG_QUESTUPDATE_ADD_ITEM");
     WorldPacket data(SMSG_QUESTUPDATE_ADD_ITEM, (4 + 4));
@@ -16670,10 +16689,10 @@ void Player::SendQuestUpdateAddItem(Quest const* pQuest, uint32 item_idx, uint32
     data << count;
     GetSession()->SendPacket(&data);
 
-    // Update player field and fire UNIT_QUEST_LOG_CHANGED for self
-    uint16 slot = FindQuestSlot(pQuest->GetQuestId());
-    if (slot < MAX_QUEST_LOG_SIZE)
-        SetQuestSlotCounter(slot + pQuest->GetReqCreatureOrGOcount(), uint8(item_idx), uint8(current + count));
+    // ItemAddedQuestCheck already updates/persists m_itemcount. The packet
+    // updates the quest watcher; packed quest-log counters belong to creature/
+    // GO objectives, not items. Writing slot + objective count corrupts another
+    // quest (or fields beyond the quest log when this is the last slot).
 }
 
 void Player::SendQuestUpdateAddCreatureOrGo(Quest const* pQuest, ObjectGuid guid, uint32 creatureOrGO_idx, uint32 count)
@@ -21079,6 +21098,7 @@ void Player::UpdateVisibilityOf(WorldObject const* viewPoint, WorldObject* targe
             target->DestroyForPlayer(this);
             std::unique_lock<std::shared_mutex> lock(m_visibleGUIDs_lock);
             m_visibleGUIDs.erase(t_guid);
+            target->RemoveMovementViewer(GetObjectGuid());
             lock.unlock();
 
             if (Player* plTarget = target->ToPlayer())
@@ -21097,6 +21117,7 @@ void Player::UpdateVisibilityOf(WorldObject const* viewPoint, WorldObject* targe
             {
                 std::unique_lock<std::shared_mutex> lock(m_visibleGUIDs_lock);
                 m_visibleGUIDs.insert(target->GetObjectGuid());
+                target->AddMovementViewer(GetObjectGuid());
                 lock.unlock();
 
                 if (Player* plTarget = target->ToPlayer())
@@ -21129,17 +21150,6 @@ inline void UpdateVisibilityOf_helper(ObjectGuidSet& s64, GameObject* target)
 }
 
 template<class T>
-void AddBroadcastListener(T* target, Player* me)
-{
-}
-template<>
-void AddBroadcastListener(Player* target, Player* me)
-{
-    if (target->m_broadcaster)
-        target->m_broadcaster->AddListener(me);
-}
-
-template<class T>
 void RemoveBroadcastListener(T* target, Player* me)
 {
 }
@@ -21148,6 +21158,21 @@ void RemoveBroadcastListener(Player* target, Player* me)
 {
     if (target->m_broadcaster)
         target->m_broadcaster->RemoveListener(me);
+}
+
+void Player::ActivateBroadcastListeners(std::set<WorldObject*> const& visibleNow)
+{
+    // The caller sends the complete create/out-of-range UpdateData first.  Only
+    // then may the async movement broadcaster target this client; otherwise a
+    // busy player or bot can deliver SMSG_MONSTER_MOVE ahead of its create block.
+    for (WorldObject* object : visibleNow)
+    {
+        if (object)
+            object->AddMovementViewer(GetObjectGuid());
+        if (Player* target = object ? object->ToPlayer() : nullptr)
+            if (target->m_broadcaster)
+                target->m_broadcaster->AddListener(this);
+    }
 }
 
 template<class T>
@@ -21167,6 +21192,7 @@ void Player::UpdateVisibilityOf(WorldObject const* viewPoint, T* target, UpdateD
             target->BuildOutOfRangeUpdateBlock(&data);
             std::unique_lock<std::shared_mutex> lock(m_visibleGUIDs_lock);
             m_visibleGUIDs.erase(t_guid);
+            target->RemoveMovementViewer(GetObjectGuid());
             lock.unlock();
 
             RemoveBroadcastListener(target, this);
@@ -21183,7 +21209,6 @@ void Player::UpdateVisibilityOf(WorldObject const* viewPoint, T* target, UpdateD
             UpdateVisibilityOf_helper(m_visibleGUIDs, target);
             lock.unlock();
 
-            AddBroadcastListener(target, this);
             DEBUG_FILTER_LOG(LOG_FILTER_VISIBILITY_CHANGES, "%s is visible now for %s. Distance = %f", target->GetGuidStr().c_str(), GetGuidStr().c_str(), GetDistance(target));
         }
     }
@@ -21659,11 +21684,15 @@ void Player::LearnGameMasterSpells()
 
 void Player::SetSemaphoreTeleportNear(bool semphsetting)
 {
+    if (semphsetting)
+        ++m_mapWorkGeneration;
     mSemaphoreTeleport_Near = semphsetting;
 }
 
 void Player::SetSemaphoreTeleportFar(bool semphsetting)
 {
+    if (semphsetting)
+        ++m_mapWorkGeneration;
     mSemaphoreTeleport_Far = semphsetting;
 }
 
@@ -24295,6 +24324,10 @@ void Player::RefreshVisiblePlayersForClient()
 
     for (const ObjectGuid& guid : players)
     {
+        if (Player* target = GetMap()->GetPlayer(guid))
+            if (target->m_broadcaster)
+                target->m_broadcaster->RemoveListener(this);
+
         WorldPacket data(SMSG_DESTROY_OBJECT, 8);
         data << guid;
         GetSession()->SendPacket(&data);
@@ -24693,10 +24726,6 @@ void Player::HandleStealthedUnitsDetection()
         {
             if (!IsInVisibleList_Unsafe(stealthedUnit))
             {
-                if (Player* i_player = stealthedUnit->ToPlayer())
-                    if (i_player->m_broadcaster)
-                        i_player->m_broadcaster->AddListener(this);
-
                 // LOCKED. Every other writer of m_visibleGUIDs takes the
                 // unique_lock; these two in the stealth sweep did not, and a
                 // reader on another thread holding the shared_lock then died
@@ -24709,6 +24738,13 @@ void Player::HandleStealthedUnitsDetection()
                     m_visibleGUIDs.insert(stealthedUnit->GetObjectGuid());
                 }
                 stealthedUnit->SendCreateUpdateToPlayer(this);
+                stealthedUnit->AddMovementViewer(GetObjectGuid());
+
+                // Do not expose this socket to the asynchronous movement queue
+                // until the object's create block has been queued first.
+                if (Player* i_player = stealthedUnit->ToPlayer())
+                    if (i_player->m_broadcaster)
+                        i_player->m_broadcaster->AddListener(this);
             }
         }
         else
@@ -24724,6 +24760,7 @@ void Player::HandleStealthedUnitsDetection()
                 {
                     std::unique_lock<std::shared_mutex> lock(m_visibleGUIDs_lock);
                     m_visibleGUIDs.erase(stealthedUnit->GetObjectGuid());
+                    stealthedUnit->RemoveMovementViewer(GetObjectGuid());
                 }
             }
         }
@@ -24738,6 +24775,17 @@ bool Player::IsInVisibleList(WorldObject const* u) const
     std::shared_lock<std::shared_mutex> lock(m_visibleGUIDs_lock);
     bool atClient = m_visibleGUIDs.find(u->GetObjectGuid()) != m_visibleGUIDs.end();
     return atClient; 
+}
+
+void Player::ClearVisibleObjects()
+{
+    std::unique_lock<std::shared_mutex> lock(m_visibleGUIDs_lock);
+    if (Map* map = FindMap())
+        for (ObjectGuid guid : m_visibleGUIDs)
+            if (guid.IsCreatureOrPet())
+                if (Creature* creature = map->GetAnyTypeCreature(guid))
+                    creature->RemoveMovementViewer(GetObjectGuid());
+    m_visibleGUIDs.clear();
 }
 
 
