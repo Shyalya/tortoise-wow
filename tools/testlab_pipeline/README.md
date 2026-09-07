@@ -173,6 +173,7 @@ branch — every environment-specific value is a parameter.
 | `-RepoUrl` | Shyalya/tortoise-wow | Source repository to build. |
 | `-BranchName` | `playerbots-integration-gh` | Branch to build — point it at a topic branch to test one. |
 | `-PatchRemoteUrl` | Penqle/tortoise-wow | Remote the `-applyPatches` commits are fetched from. |
+| `-ModulesRepoUrl` / `-ModulesBranch` | Shyalya/tortoise-wow / `playerbots-integration-gh` | Independent of `-RepoUrl`: where `modules/mod-playerbots` and `modules/mod-dungeon-clear` are synced from (`sql\` included). Part of the core-to-Penqle migration — set once `-RepoUrl` itself points at Penqle. |
 | `-RealmlistIPAddress` / `-RealmlistPort` | `127.0.0.1` / `8090` | Realm entry written to `tw_logon.realmlist`. The port must match `WorldServerPort`. |
 | `-MinRandomBots` / `-MaxRandomBots` | `5` / `10` | Bot population written into `aiplayerbot.conf`. |
 | `-RandomBotMinLevel` / `-RandomBotMaxLevel` | `1` / `20` | Bot level range. |
@@ -263,7 +264,8 @@ sees this machine arriving from its own address and never as `localhost`. Narrow
 | 00b | **Preflight** — git, cmake, vcpkg, mysql (and mysqldump for `-SkipBotRegen`), MariaDB reachable, VS C++ toolset |
 | 01 | Client data present + every DBC checked against `dbc_verifier.json` |
 | 02 | `vcpkg install` for ACE and Boost |
-| 03 | Clone or pull the source, update submodules; optional cherry-picks |
+| 03 | Clone or pull the source, update submodules |
+| — | Sync `modules/mod-playerbots` + `modules/mod-dungeon-clear` from `-ModulesRepoUrl`; optional cherry-picks |
 | — | *(`-SkipBotRegen`)* verified `mysqldump` of `tw_char` + `tw_logon` |
 | 04 | Stop running servers, wipe generated server dirs, drop databases |
 | 05 | `create_databases.sql`, then all 186 world files from `sql\base` |

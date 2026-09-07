@@ -23,6 +23,9 @@
         -RepoUrl                  repository              (default: Shyalya/tortoise-wow)
         -BranchName               branch                  (default: playerbots-integration-gh)
         -PatchRemoteUrl           remote for -applyPatches
+        -ModulesRepoUrl           mod-playerbots / mod-dungeon-clear source
+                                  (default: Shyalya/tortoise-wow)
+        -ModulesBranch            (default: playerbots-integration-gh)
 
       Which database server
         -DbFlavor                 Auto | MariaDB | MySQL  (default: Auto)
@@ -142,6 +145,15 @@
     Branch to build. Point it at a topic branch to test one without editing anything.
 .PARAMETER PatchRemoteUrl
     Remote the -applyPatches commits are fetched from.
+.PARAMETER ModulesRepoUrl
+    Repository the mod-playerbots and mod-dungeon-clear module directories are synced from,
+    independently of -RepoUrl. Part of the core migration that moves engine code to Penqle
+    and leaves Shyalya holding only these two modules: -RepoUrl points at the engine,
+    -ModulesRepoUrl always points at wherever the modules currently live. The whole module
+    directory is mirrored, sql\ included, so nothing extra is needed to carry a module's own
+    database content across.
+.PARAMETER ModulesBranch
+    Branch -ModulesRepoUrl is read from.
 .PARAMETER RealmlistIPAddress
     Address written into tw_logon.realmlist, and the one your client's realmlist.wtf has to
     point at.
@@ -265,6 +277,14 @@ param (
 
     # Remote the -applyPatches commits are fetched from
     [string]$PatchRemoteUrl = "https://github.com/Penqle/tortoise-wow.git",
+
+    # Where the mod-playerbots and mod-dungeon-clear module directories come from - kept
+    # entirely separate from -RepoUrl/-BranchName above. The core migration this pair
+    # supports moves core code to Penqle and leaves Shyalya holding only these two modules;
+    # until -RepoUrl itself points at Penqle, syncing from here duplicates content -RepoUrl
+    # already carries, which is harmless, just a redundant clone.
+    [string]$ModulesRepoUrl = "https://github.com/Shyalya/tortoise-wow.git",
+    [string]$ModulesBranch  = "playerbots-integration-gh",
 
     # ---- which database server ---------------------------------------------------------
 
@@ -1797,6 +1817,93 @@ if (-not (Test-Path $SourceDir)) {
     Pop-Location
     Write-Host "[OK] Repository source files and submodules are fully up to date." -ForegroundColor Green
 }
+
+# ==============================================================================
+# PIPELINE SUB-STEP: SYNC PLAYERBOT/DUNGEON-CLEAR MODULES
+# ==============================================================================
+# The core migration this pipeline is being adapted for moves engine code to Penqle and
+# leaves Shyalya holding only modules/mod-playerbots and modules/mod-dungeon-clear. This
+# keeps a second, dedicated checkout of -ModulesRepoUrl/-ModulesBranch and mirrors just
+# those two module directories - sql\ and conf\ included, since both live inside the module
+# directory itself - into the checkout -RepoUrl/-BranchName produced above.
+#
+# A second clone rather than a sparse-checkout of -RepoUrl's own tree: the two are entirely
+# independent repositories/branches by design (that is the whole point of the split), and a
+# plain clone is the one mechanism that stays correct on both sides of the migration -
+# before it lands, when Shyalya's checkout already carries these directories itself and this
+# is a harmless, redundant mirror of content already there, and after, when -RepoUrl points
+# at Penqle and this becomes the only source for them.
+Write-Host "Syncing playerbot/dungeon-clear modules from $ModulesRepoUrl ($ModulesBranch)..."
+
+$ModulesSourceDir = Join-Path $ScriptDirectory "modules-source"
+
+# core.longpaths: modules/mod-playerbots/src/playerbot/strategy/<class>/*.cpp runs deep
+# enough that checking it out under a -WorkspaceRoot with any real nesting of its own can
+# clear Windows' 260-character MAX_PATH - reproduced with a scratch directory ~140
+# characters deep: "Cloning into 'modules-source'... unable to checkout working tree", the
+# clone left half-applied. This is per-invocation (-c), not a change to the operator's
+# global git config.
+if (-not (Test-Path $ModulesSourceDir)) {
+    Invoke-NativeLogged -Executable "git" -Arguments @("-c", "core.longpaths=true", "clone", "--branch", $ModulesBranch, $ModulesRepoUrl, $ModulesSourceDir)
+    Assert-LastExitCode -Message "git clone of the module source '$ModulesBranch' from $ModulesRepoUrl failed"
+} else {
+    Push-Location $ModulesSourceDir
+
+    # Same reasoning as the -RepoUrl checkout above: make -ModulesRepoUrl authoritative for
+    # an existing checkout too, fetch and check out -ModulesBranch by name (creating a local
+    # tracking branch if this is the first time), then pull by name rather than relying on
+    # tracking configuration a locally-created branch would not have.
+    Invoke-NativeLogged -Executable "git" -Arguments @("remote", "set-url", "origin", $ModulesRepoUrl)
+    Assert-LastExitCode -Message "Could not point the module source's 'origin' at $ModulesRepoUrl"
+
+    Invoke-NativeLogged -Executable "git" -Arguments @("-c", "core.longpaths=true", "fetch", "origin", "--prune")
+    Assert-LastExitCode -Message "git fetch of the module source from $ModulesRepoUrl failed"
+
+    $CurrentModulesBranch = (git rev-parse --abbrev-ref HEAD 2>$null)
+    if ($CurrentModulesBranch -ne $ModulesBranch) {
+        git rev-parse --verify --quiet "refs/heads/$ModulesBranch" > $null 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Invoke-NativeLogged -Executable "git" -Arguments @("-c", "core.longpaths=true", "checkout", $ModulesBranch)
+        } else {
+            Invoke-NativeLogged -Executable "git" -Arguments @("-c", "core.longpaths=true", "checkout", "-b", $ModulesBranch, "--track", "origin/$ModulesBranch")
+        }
+        Assert-LastExitCode -Message "git checkout of the module source branch '$ModulesBranch' failed"
+    }
+
+    Invoke-NativeLogged -Executable "git" -Arguments @("-c", "core.longpaths=true", "pull", "origin", $ModulesBranch)
+    Assert-LastExitCode -Message "git pull of the module source branch '$ModulesBranch' from $ModulesRepoUrl failed"
+
+    Pop-Location
+}
+
+# The two modules this migration keeps in Shyalya. A plain list rather than a parameter:
+# nothing else is planned to move here, and a third entry is a one-line addition when that
+# changes rather than a new parameter operators have to know to pass.
+$script:ModulesToSync = @("mod-playerbots", "mod-dungeon-clear")
+
+foreach ($ModuleName in $script:ModulesToSync) {
+    $ModuleSourcePath = Join-Path $ModulesSourceDir "modules\$ModuleName"
+    $ModuleDestPath   = Join-Path $SourceDir "modules\$ModuleName"
+
+    if (-not (Test-Path $ModuleSourcePath)) {
+        Stop-Pipeline -Message ("Module '$ModuleName' not found at $ModuleSourcePath. " +
+                                "Check -ModulesRepoUrl and -ModulesBranch.")
+    }
+
+    Write-Host " -> Syncing $ModuleName..."
+
+    # /MIR mirrors the destination onto the source exactly, deleting anything on the
+    # destination side that the source no longer has - the point of syncing from a live
+    # branch rather than copying once. Robocopy's exit codes are a bitmask where 0-7 are all
+    # success (0 = nothing to do, the rest describe what kind of change was made); only 8
+    # and above are real failures, unlike every other tool this script calls.
+    robocopy $ModuleSourcePath $ModuleDestPath /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) {
+        Stop-Pipeline -Message "Syncing module '$ModuleName' failed (robocopy exit code $LASTEXITCODE)." -ExitCode $LASTEXITCODE
+    }
+}
+
+Write-Host "[OK] Playerbot and dungeon-clear modules are up to date from Shyalya." -ForegroundColor Green
 
 # ==============================================================================
 # PIPELINE SUB-STEP (OPTIONAL): DYNAMIC CHERRY-PICK HOTFIXES
