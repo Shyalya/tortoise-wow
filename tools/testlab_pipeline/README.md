@@ -182,7 +182,8 @@ branch — every environment-specific value is a parameter.
 | `-EnableSqlLog` | off | Writes every SQL statement to a log file (`LogSQL` in `mangosd.conf`). Off by default — on, it's 94% of a normal run's log, mostly per-connection `SET NAMES`/`SET CHARACTER SET` noise. |
 | `-LogLevel` | `0` | Console/log verbosity for mangosd and realmd: `0` Minimum, `1` Basic & Error, `2` Detail, `3` Full/Debug. The shipped templates default to `1`. |
 | `-DatabaseOnly` | off | Touches only the databases — no git update, no compilation, no folder cleanup, no config file changes. Combine with `-SkipBotRegen` to reset only `tw_world` (a "first-boot" test of a new migration); without it, all four databases are dropped and rebuilt. |
-| `-applyPatches` | — | Semicolon-separated commit hashes to cherry-pick, e.g. `-applyPatches "0ee0748;abc1234"`. |
+| `-WithoutBots` | off | Builds the engine alone — no `mod-playerbots`, no `mod-dungeon-clear`. Skips the module sync, the playerbot SQL import and the `aiplayerbot.conf` tuning, and configures CMake with `BUILD_PLAYERBOTS=OFF` and both modules `disabled`. |
+| `-applyPatches` | — | Semicolon-separated commit hashes **or branch/tag names** to cherry-pick, e.g. `-applyPatches "0ee0748;abc1234"` or `-applyPatches "my-fix-branch"`. A branch expands to the commits it has and the checkout does not, oldest first. |
 
 ```powershell
 .\Run-Testlab.bat -VcpkgDirectory D:\vcpkg -RootPassword "hunter2" -SkipBotRegen
@@ -190,6 +191,31 @@ branch — every environment-specific value is a parameter.
 .\Run-Testlab.bat -DbFlavor MySQL -DbPort 3307
 .\Run-Testlab.bat -DatabaseOnly -SkipBotRegen
 ```
+
+### Testing a core pull request against Penqle
+
+Point the build at the repository the pull request targets, name the branch, and leave the
+modules out — the run stops at the cherry-pick if it no longer applies, and gets all the way
+through the compiler if it does:
+
+```powershell
+.\Run-Testlab.bat -RepoUrl https://github.com/Penqle/tortoise-wow.git -BranchName main `
+                  -PatchRemoteUrl https://github.com/me/tortoise-wow.git `
+                  -applyPatches "my-core-fix" -WithoutBots
+```
+
+`-PatchRemoteUrl` takes a local path as readily as a URL, so a branch that has not been
+pushed anywhere can be tested straight out of another checkout on the same machine:
+
+```powershell
+.\Run-Testlab.bat -RepoUrl https://github.com/Penqle/tortoise-wow.git -BranchName main `
+                  -PatchRemoteUrl C:\WOW\source\tortoise-wow_AIBot\tortoise-wow `
+                  -applyPatches "my-core-fix" -WithoutBots
+```
+
+A branch cut from a different base than `-BranchName` expands to that whole lineage rather
+than to a pull request; the run refuses anything past 50 commits and says so, rather than
+grinding through a conflict storm.
 
 Full help, including every parameter and more examples:
 

@@ -59,6 +59,10 @@
         -DatabaseOnly             skip git/build/folders/config, touch only
                                   the databases (default: off)
 
+      Core-only mode
+        -WithoutBots              build the engine with no playerbot or
+                                  dungeon-clear module (default: off)
+
     Use "Get-Help .\Setup-Testlab.ps1 -Parameter <name>" for the detail on any one of them,
     or -Examples for the common combinations.
 .PARAMETER SkipBotRegen
@@ -79,9 +83,22 @@
     'migrations' table means the DB Auto-Updater applies every migration exactly as
     it would on a brand-new install.
 .PARAMETER applyPatches
-    Semicolon-separated git commit hashes to cherry-pick onto the branch before building,
-    fetched from -PatchRemoteUrl. Example: "0ee0748;abc1234". Uncommitted local changes are
-    stashed first, never discarded.
+    Semicolon-separated list of things to cherry-pick onto the branch before building,
+    fetched from -PatchRemoteUrl. Each entry is either a commit hash or the name of a branch
+    or tag: "0ee0748;abc1234" applies two commits, "my-fix-branch" applies every commit that
+    branch has and the checkout does not, oldest first. Uncommitted local changes are stashed
+    first, never discarded, and a cherry-pick that conflicts stops the run before anything is
+    built - which makes this the way to answer "does my pull request still apply", by pointing
+    -RepoUrl at the repository it targets and naming the branch here. -PatchRemoteUrl accepts
+    a local path as readily as a URL, so a branch that has not been pushed anywhere can be
+    tested straight out of another checkout on the same machine.
+.PARAMETER WithoutBots
+    Builds the engine alone: no mod-playerbots, no mod-dungeon-clear. The module sync, the
+    playerbot SQL import and the aiplayerbot.conf tuning are all skipped, and CMake is given
+    BUILD_PLAYERBOTS=OFF with both modules disabled. Penqle's core carries no modules at all,
+    so this is the shape a core-only change has to be validated in - with them enabled the run
+    would sync module sources that repository never asked for, and configure modules whose
+    directories are not there.
 .PARAMETER WorkspaceRoot
     The testlab root: the folder holding 'server\' and the 'tortoise-wow\' checkout.
     Defaults to the folder this script sits in. Relative paths are resolved against your
@@ -363,7 +380,12 @@ param (
     # the compiler, the server folders and the config files are touched at all; SkipBotRegen
     # (already respected by every database step below, unchanged) decides which databases
     # survive the run. Combined, they are the "tw_world First-Boot Reset" case.
-    [switch]$DatabaseOnly
+    [switch]$DatabaseOnly,
+
+    # Builds the engine on its own, with no mod-playerbots and no mod-dungeon-clear. Penqle
+    # carries no modules at all, so this is what validating a core change against it looks
+    # like; see the parameter help.
+    [switch]$WithoutBots
 )
 
 # StrictMode turns a typo'd or never-assigned variable into a hard error instead of an
@@ -1833,6 +1855,9 @@ if (-not (Test-Path $SourceDir)) {
 # before it lands, when Shyalya's checkout already carries these directories itself and this
 # is a harmless, redundant mirror of content already there, and after, when -RepoUrl points
 # at Penqle and this becomes the only source for them.
+if ($WithoutBots) {
+    Write-Host "Module sync - skipped (-WithoutBots builds the engine on its own)." -ForegroundColor DarkGray
+} else {
 Write-Host "Syncing playerbot/dungeon-clear modules from $ModulesRepoUrl ($ModulesBranch)..."
 
 $ModulesSourceDir = Join-Path $ScriptDirectory "modules-source"
@@ -1904,6 +1929,7 @@ foreach ($ModuleName in $script:ModulesToSync) {
 }
 
 Write-Host "[OK] Playerbot and dungeon-clear modules are up to date from Shyalya." -ForegroundColor Green
+}
 
 # ==============================================================================
 # PIPELINE SUB-STEP (OPTIONAL): DYNAMIC CHERRY-PICK HOTFIXES
@@ -1945,6 +1971,68 @@ if (-not [string]::IsNullOrEmpty($applyPatches)) {
         git stash push -u -m $StashLabel
         Assert-LastExitCode -Message "Could not stash local changes before applying patches"
     }
+
+    # 5b. Expand any branch or tag name in the list into the commits it carries.
+    #
+    # A hash-only list is fine for one hotfix and miserable for "does my pull request still
+    # apply", which would mean naming every commit in it by hand. An entry that is not a hex
+    # hash is treated as a ref and expanded to the commits it has that this checkout does
+    # not, oldest first - the order cherry-pick wants. Everything below is unchanged and now
+    # covers both kinds of entry, including the duplicate detection and the conflict abort.
+    $ResolvedCommitList = @()
+
+    foreach ($PatchEntry in $CommitHashesList) {
+        if ($PatchEntry -match '^[0-9a-fA-F]{7,40}$') {
+            $ResolvedCommitList += $PatchEntry
+            continue
+        }
+
+        # The fetched remote copy wins over a same-named local branch: "-applyPatches my-fix"
+        # should mean the remote's my-fix even when a stale local one is lying around.
+        $ResolvedRef = $null
+        foreach ($RefCandidate in @("penqle/$PatchEntry", $PatchEntry)) {
+            git rev-parse --verify --quiet "$RefCandidate^{commit}" > $null 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $ResolvedRef = $RefCandidate
+                break
+            }
+        }
+
+        if (-not $ResolvedRef) {
+            Pop-Location
+            Stop-Pipeline -Message ("-applyPatches entry '$PatchEntry' is neither a commit hash nor a ref that " +
+                                    "exists on $TargetRemoteUrl or in the local checkout.")
+        }
+
+        $RefCommits = @(git log "HEAD..$ResolvedRef" --format="%H" --reverse 2>$null)
+
+        if ($RefCommits.Count -eq 0) {
+            Write-Host " -> [SKIP] '$PatchEntry' ($ResolvedRef) carries nothing this checkout does not already have."
+            continue
+        }
+
+        # A ref cut from a different lineage than the checkout expands to that whole lineage,
+        # not to a pull request. Measured against Penqle's main: a Shyalya-based branch came
+        # out at 590 commits, and cherry-picking those one at a time would grind through a
+        # conflict storm before failing. A branch actually cut from the branch being built is
+        # a handful of commits, so anything this far past that is the wrong base, not a big
+        # pull request.
+        $MaxPatchCommits = 50
+        if ($RefCommits.Count -gt $MaxPatchCommits) {
+            Pop-Location
+            Stop-Pipeline -Message ("-applyPatches entry '$PatchEntry' ($ResolvedRef) carries $($RefCommits.Count) " +
+                                    "commits that '$BranchName' does not - more than the $MaxPatchCommits this expects " +
+                                    "of a branch under test.`n" +
+                                    "That is the signature of a branch cut from a different base than the one being " +
+                                    "built. Check that -BranchName names the branch it was actually cut from, or list " +
+                                    "the commit hashes explicitly instead of the branch name.")
+        }
+
+        Write-Host " -> '$PatchEntry' resolves to ${ResolvedRef}: $($RefCommits.Count) commit(s) to apply."
+        $ResolvedCommitList += $RefCommits
+    }
+
+    $CommitHashesList = $ResolvedCommitList
 
     foreach ($CommitHash in $CommitHashesList) {
         Write-Host "Processing signature checks for patch entry: $CommitHash"
@@ -2315,7 +2403,7 @@ if (Test-Path $BuildDir) {
 # BUILD_PLAYERBOTS=ON is required alongside MODULE_MOD_PLAYERBOTS=static: the module's
 # sources compile either way, but mod-playerbots.cmake returns early without it and the
 # module never receives its compile definitions or the botpch.h force-include.
-Invoke-NativeLogged -Executable "cmake" -Arguments @(
+$CmakeArguments = @(
     "-B", $BuildDir,
     "-S", $SourceDir,
     "-A", "x64",
@@ -2324,14 +2412,29 @@ Invoke-NativeLogged -Executable "cmake" -Arguments @(
     "-DBUILD_MODULES=ON",
     "-DBUILD_EXTENSIONS=ON",
     "-DBUILD_MODS=ON",
-    "-DBUILD_PLAYERBOTS=ON",
     "-DUSE_PCH=OFF",
     "-DUSE_PCH_OLD=OFF",
     "-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON",
-    "-DMODULE_MOD_PLAYERBOTS=static",
-    "-DMODULE_MOD_DUNGEON_CLEAR=static",
     "-DACE_ROOT=$VcpkgInstalledPath",
     "-DBOOST_ROOT=$VcpkgInstalledPath")
+
+# The module flags are the whole difference between a full testlab and a core-only build.
+# "disabled" is one of the linkage values the module system itself defines (see
+# cmake/ConfigureModules.cmake), so this is the supported way to leave a module out rather
+# than something bolted on here.
+if ($WithoutBots) {
+    $CmakeArguments += @(
+        "-DBUILD_PLAYERBOTS=OFF",
+        "-DMODULE_MOD_PLAYERBOTS=disabled",
+        "-DMODULE_MOD_DUNGEON_CLEAR=disabled")
+} else {
+    $CmakeArguments += @(
+        "-DBUILD_PLAYERBOTS=ON",
+        "-DMODULE_MOD_PLAYERBOTS=static",
+        "-DMODULE_MOD_DUNGEON_CLEAR=static")
+}
+
+Invoke-NativeLogged -Executable "cmake" -Arguments $CmakeArguments
 Assert-LastExitCode -Message "CMake configuration failed - the build was never started"
 
 Write-Host "Compiling server binaries via MSBuild Release configuration..."
@@ -2570,6 +2673,9 @@ if (Test-Path $RealmdConf) {
 # ==============================================================================
 # PIPELINE STEP 11: PLAYERBOTS MODULE DATA IMPORT
 # ==============================================================================
+if ($WithoutBots) {
+    Write-Host "11: PlayerBots module SQL import - skipped (-WithoutBots builds the engine on its own)." -ForegroundColor DarkGray
+} else {
 Write-PipelineHeader -StepName "11: Importing PlayerBots module SQL data..."
 Write-Host "Importing PlayerBots module SQL data..."
 
@@ -2599,12 +2705,14 @@ if ($SkipBotRegen) {
 } else {
     Write-Warning "PlayerBot characters SQL directory not found at: $CharSqlPath"
 }
+}
 
 # ==============================================================================
 # PIPELINE STEP 12: PLAYERBOT CONFIGURATION TUNING
 # ==============================================================================
-if ($DatabaseOnly) {
-    Write-Host "12: PLAYERBOT CONFIGURATION TUNING - skipped (-DatabaseOnly touches only the databases)." -ForegroundColor DarkGray
+if ($DatabaseOnly -or $WithoutBots) {
+    $Step12SkipReason = if ($DatabaseOnly) { "-DatabaseOnly touches only the databases" } else { "-WithoutBots builds the engine on its own" }
+    Write-Host "12: PLAYERBOT CONFIGURATION TUNING - skipped ($Step12SkipReason)." -ForegroundColor DarkGray
 } else {
 $AiPlayerbotConf = Join-Path $EtcDir "aiplayerbot.conf"
 Write-PipelineHeader -StepName "12: PLAYERBOT CONFIGURATION TUNING"
