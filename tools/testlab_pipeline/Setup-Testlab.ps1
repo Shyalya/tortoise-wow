@@ -1969,17 +1969,24 @@ Start-Sleep -Seconds 2
 # modules\ is cmake --install's own raw drop point for a module's .conf.dist (see step 09
 # point 6b) - not the etc\modules\ the server actually reads from, which lives inside
 # $EtcDir and is already covered by that entry. It carries no operator data, so unlike
-# pdump/honor it is cleared unconditionally: left in place, a module removed or renamed
+# pdump it is cleared unconditionally: left in place, a module removed or renamed
 # between builds would leave its old .conf.dist here forever, and step 09 would keep
 # copying that stale file into etc\modules\ on every run after $EtcDir was wiped clean.
 #
-# pdump and honor are the exception under -SkipBotRegen. Everything else in this list is
-# put back by cmake --install in step 09; those two are not. They hold operator data the
-# pipeline never produced and cannot restore - character exports written by the in-game
-# ".pdump write" command, and the honor maintenance state mangosd keeps per character -
-# and step 14 only recreates them empty. Wiping them on the one run whose stated purpose
-# is preserving existing accounts, GM characters and playerbot data was silent and
-# unrecoverable data loss.
+# pdump is the exception under -SkipBotRegen, honor is not - despite looking like the same
+# kind of per-character data at a glance, they are not. Checked against the engine source:
+#   pdump/  - PlayerDumpWriter/PlayerDumpReader (Commands.cpp, Player.cpp) read AND write
+#             here: ".pdump write"/".pdump load", and an automatic export on character
+#             delete. This is the only copy of that data anywhere - nothing in any database
+#             holds it - so wiping it under -SkipBotRegen was silent, unrecoverable loss on
+#             the one run whose stated purpose is preserving existing data.
+#   honor/  - HonorMaintenancer::CreateCalculationReport() (HonorMgr.cpp) only ever WRITES a
+#             timestamped human-readable report here; nothing reads it back. The state that
+#             actually matters - last/next maintenance day, the toggle marker - is written
+#             to tw_char.saved_variables by ToggleMaintenanceMarker()/SetMaintenanceDays(),
+#             a table -SkipBotRegen already backs up and restores. The folder holds nothing
+#             -SkipBotRegen's own database backup does not already cover, so it is cleared
+#             unconditionally like logs/tools/lua_scripts.
 #
 # Skipped entirely under -DatabaseOnly: nothing gets rebuilt by cmake --install this run,
 # so there is nothing to clear a path for - bin/etc/lib would simply stay gone.
@@ -1987,12 +1994,12 @@ if ($DatabaseOnly) {
     Write-Host " -> Keeping the server folders as they are (-DatabaseOnly)."
 } else {
     Write-Host "Clearing previously generated server directories..."
-    $GeneratedFolders = @($BinDir, $EtcDir, $LibDir, $LogsDir, $ToolsDir, $LuaDir, (Join-Path $InstallDir "modules"))
+    $GeneratedFolders = @($BinDir, $EtcDir, $LibDir, $LogsDir, $ToolsDir, $LuaDir, $HonorDir, (Join-Path $InstallDir "modules"))
 
     if ($SkipBotRegen) {
-        Write-Host " -> Keeping pdump and honor (-SkipBotRegen preserves existing data)."
+        Write-Host " -> Keeping pdump (-SkipBotRegen preserves existing data)."
     } else {
-        $GeneratedFolders += @($PdumpDir, $HonorDir)
+        $GeneratedFolders += @($PdumpDir)
     }
     foreach ($Folder in $GeneratedFolders) {
         if (Test-Path $Folder) {
