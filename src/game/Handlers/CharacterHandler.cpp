@@ -314,7 +314,6 @@ void WorldSession::HandlePlayerLoginOpcode(WorldPacket & recv_data)
     ObjectGuid playerGuid;
     recv_data >> playerGuid;
 
-    HeadlessSessionState headlessState = sWorld.GetHeadlessSessionState(playerGuid);
     if (PlayerLoading() || GetPlayer() != nullptr ||
         !playerGuid.IsPlayer() || sWorld.IsCharacterLocked(playerGuid.GetCounter()))
     {
@@ -337,6 +336,10 @@ void WorldSession::HandlePlayerLoginOpcode(WorldPacket & recv_data)
     // logging in.
     ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_BOT_LOGIN_YIELD,
         [&](WorldScript* s) { s->OnBotLoginYield(playerGuid.GetCounter()); });
+    // Read the state only now: the hook may just have released a session that
+    // was still pending or loading, and a stale state would stop it twice and
+    // fail this login.
+    HeadlessSessionState headlessState = sWorld.GetHeadlessSessionState(playerGuid);
     // A real client always wins. Pending/Loading Headless sessions have not
     // materialized a Player yet, so cancel them before dispatching this login.
     if ((headlessState == HeadlessSessionState::Pending ||
