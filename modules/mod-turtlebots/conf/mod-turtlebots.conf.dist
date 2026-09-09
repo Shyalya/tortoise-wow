@@ -1,0 +1,13 @@
+###################################################################################################
+# mod-turtlebots module configuration
+###################################################################################################
+
+[ModuleConf]
+
+# Enable the bot module.
+mod-turtlebots.Enable = 1
+
+# Target number of bots the module keeps online.
+# (Phase 1 spawns this many at startup; later this becomes a live target,
+#  adjustable from the web panel.)
+mod-turtlebots.Count = 3
