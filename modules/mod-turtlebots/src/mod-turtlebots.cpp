@@ -27,12 +27,14 @@
 #include "MotionMaster.h"
 #include "MoveSpline.h"
 #include "Map.h"
+#include "Creature.h"
 #include "PathFinder.h"
 #include "SpellMgr.h"
 #include "Timer.h"
 #include "Util.h"
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <string>
 #include <vector>
@@ -130,6 +132,26 @@ namespace
         return true;
     }
 
+    enum BotRole : uint8 { ROLE_RESIDENT = 0, ROLE_ADVENTURER = 1 };
+
+    // A sane creature to grind: a mob, not a critter / boss / totem, attackable,
+    // and not several levels above us.
+    bool IsGrindable(Player* bot, Unit* t)
+    {
+        if (!t || !t->IsAlive() || !t->IsCreature())
+            return false;
+        Creature* c = t->ToCreature();
+        if (!c || c->IsWorldBoss() || c->IsTotem())
+            return false;
+        if (c->GetCreatureType() == CREATURE_TYPE_CRITTER)
+            return false;
+        // SelectNearestTarget already returns an attackable enemy; just keep the
+        // fight fair by skipping mobs several levels above us.
+        if (int32(t->GetLevel()) > int32(bot->GetLevel()) + 2)
+            return false;
+        return true;
+    }
+
     class TurtleBotsWorldScript : public WorldScript
     {
     public:
@@ -141,9 +163,12 @@ namespace
 
         void OnStartup() override
         {
-            _enabled = sConfig.GetBoolDefault("mod-turtlebots.Enable", true);
-            _target  = sConfig.GetIntDefault("mod-turtlebots.Count", 3);
-            sLog.outString("[mod-turtlebots] loaded (enable=%u, target=%u).", _enabled ? 1 : 0, _target);
+            _enabled   = sConfig.GetBoolDefault("mod-turtlebots.Enable", true);
+            _target    = sConfig.GetIntDefault("mod-turtlebots.Count", 3);
+            _residents = sConfig.GetIntDefault("mod-turtlebots.Residents", 1);
+            _advLevel  = sConfig.GetIntDefault("mod-turtlebots.AdventurerLevel", 10);
+            sLog.outString("[mod-turtlebots] loaded (enable=%u, target=%u, residents=%u, advLevel=%u).",
+                           _enabled ? 1 : 0, _target, _residents, _advLevel);
         }
 
         void OnUpdate(uint32 diff) override
@@ -203,16 +228,28 @@ namespace
                 {
                     _online[_cursor] = _online.back();
                     _online.pop_back();
-                    _pauseUntil.erase(low);
+                    _nextAt.erase(low);
+                    _role.erase(low);
                     ++processed;
                     continue; // swapped element now sits at _cursor
                 }
 
                 ++_cursor;
                 ++processed;
-                if (bot && bot->IsInWorld() && bot->IsAlive())
-                    DriveOne(bot);
+                if (bot && bot->IsInWorld())
+                {
+                    if (RoleOf(low) == ROLE_ADVENTURER)
+                        DriveAdventurer(bot);      // handles its own death/revive
+                    else if (bot->IsAlive())
+                        DriveResident(bot);
+                }
             }
+        }
+
+        uint8 RoleOf(uint32 low) const
+        {
+            auto it = _role.find(low);
+            return it == _role.end() ? uint8(ROLE_RESIDENT) : it->second;
         }
 
         void LoadNamedLocations()
@@ -251,73 +288,163 @@ namespace
 
             float const bx = bot->GetPositionX();
             float const by = bot->GetPositionY();
+            float const bz = bot->GetPositionZ();
             float const minR2 = 20.0f * 20.0f;
-            float const maxR2 = 250.0f * 250.0f;
+            float const maxR2 = 150.0f * 150.0f;   // keep roaming local
             for (int tries = 0; tries < 12; ++tries)
             {
                 NamedLoc const& l = v[urand(0, uint32(v.size()) - 1)];
-                float dx = l.x - bx, dy = l.y - by;
+                float dx = l.x - bx, dy = l.y - by, dz = l.z - bz;
                 float d2 = dx * dx + dy * dy;
                 if (d2 <= minR2 || d2 >= maxR2)
                     continue;
+                // Skip targets that sit well above/below us -- avoids sending the
+                // bot up cliffs and rock faces.
+                if (std::fabs(dz) > 8.0f)
+                    continue;
 
-                // Only walk there if a clean navmesh path exists -- no shortcut
-                // (straight line through geometry), no partial/absent path. This
-                // is what prevents clipping through floors and walls.
+                // Require a clean navmesh path that also avoids steep slopes, and
+                // is not much longer than the straight line (a long, winding path
+                // means climbing around terrain). No shortcut / partial / no-path.
                 PathInfo path(bot);
+                path.ExcludeSteepSlopes();
                 path.calculate(l.x, l.y, l.z);
                 uint32 const t = uint32(path.getPathType());
-                if ((t & PATHFIND_NORMAL) &&
-                    !(t & (PATHFIND_SHORTCUT | PATHFIND_INCOMPLETE | PATHFIND_NOPATH)))
-                {
-                    bot->GetMotionMaster()->MovePoint(0, l.x, l.y, l.z, MOVE_PATHFINDING);
-                    return true;
-                }
+                if (!(t & PATHFIND_NORMAL) ||
+                    (t & (PATHFIND_SHORTCUT | PATHFIND_INCOMPLETE | PATHFIND_NOPATH)))
+                    continue;
+
+                float straight = std::sqrt(d2 + dz * dz);
+                if (path.Length() > straight * 1.6f)
+                    continue;
+
+                bot->GetMotionMaster()->MovePoint(0, l.x, l.y, l.z, MOVE_PATHFINDING);
+                return true;
             }
             return false;
         }
 
-        void DriveOne(Player* bot)
+        static void StandUp(Player* bot)
+        {
+            if (bot->GetStandState() != UNIT_STAND_STATE_STAND)
+                bot->SetStandState(UNIT_STAND_STATE_STAND);
+        }
+
+        void WanderNearbyFlat(Player* bot)
+        {
+            Map* map = bot->GetMap();
+            if (!map)
+                return;
+            float x = bot->GetPositionX();
+            float y = bot->GetPositionY();
+            float z = bot->GetPositionZ();
+            float const startZ = z;
+            if (map->GetWalkRandomPosition(nullptr, x, y, z, frand(6.0f, 18.0f)) &&
+                std::fabs(z - startZ) < 6.0f)
+                bot->GetMotionMaster()->MovePoint(0, x, y, z, MOVE_PATHFINDING);
+        }
+
+        // Resident (city-life) behaviour: calm ambient roaming.
+        void DriveResident(Player* bot)
         {
             MotionMaster* mm = bot->GetMotionMaster();
-            // Busy moving -> let the core carry it; decide again once idle.
+            // Walking -> let the core carry it; only decide when idle.
             if (mm->GetCurrentMovementGeneratorType() != IDLE_MOTION_TYPE)
                 return;
 
             uint32 const now = WorldTimer::getMSTime();
-            uint32& pauseUntil = _pauseUntil[bot->GetGUIDLow()];
-            if (now < pauseUntil)
-                return; // mid-pause
+            uint32& nextAt = _nextAt[bot->GetGUIDLow()];
+            if (nextAt == 0)
+                nextAt = now + urand(1000, 6000); // stagger the first decision
+            if (now < nextAt)
+                return; // standing calmly between actions
 
-            if (urand(0, 99) < 65)
+            // Calm town-life cadence: mostly stand, sometimes stroll, rarely
+            // emote or sit. A dwell timer between decisions keeps it unhurried.
+            uint32 const roll = urand(0, 99);
+            if (roll < 35)
             {
-                bot->SetStandState(UNIT_STAND_STATE_STAND);
-                // Prefer heading to a nearby named location; else a random point.
+                StandUp(bot);
                 if (!TryRoamToNamedLocation(bot))
-                {
-                    Map* map = bot->GetMap();
-                    float x = bot->GetPositionX();
-                    float y = bot->GetPositionY();
-                    float z = bot->GetPositionZ();
-                    if (map && map->GetWalkRandomPosition(nullptr, x, y, z, frand(6.0f, 22.0f)))
-                        mm->MovePoint(0, x, y, z, MOVE_PATHFINDING);
-                }
+                    WanderNearbyFlat(bot);
+                nextAt = now + urand(6000, 11000);
+            }
+            else if (roll < 42)
+            {
+                StandUp(bot);
+                static uint32 const kEmotes[] = {
+                    EMOTE_ONESHOT_WAVE, EMOTE_ONESHOT_CHEER, EMOTE_ONESHOT_TALK,
+                    EMOTE_ONESHOT_POINT, EMOTE_ONESHOT_LAUGH
+                };
+                bot->HandleEmoteCommand(kEmotes[urand(0, 4)]);
+                nextAt = now + urand(7000, 12000);
+            }
+            else if (roll < 46)
+            {
+                bot->SetStandState(UNIT_STAND_STATE_SIT);
+                nextAt = now + urand(9000, 16000);
             }
             else
             {
-                // Short pause: sit, or play a one-shot emote.
-                pauseUntil = now + urand(3000, 8000);
-                if (urand(0, 3) == 0)
+                StandUp(bot);
+                nextAt = now + urand(4000, 9000);
+            }
+        }
+
+        // Adventurer (playing) behaviour: a basic grind loop. Improve later with
+        // real rotations, looting, travel and questing.
+        void DriveAdventurer(Player* bot)
+        {
+            // Character build (light): give it a level so it can actually win.
+            if (_advLevel && bot->GetLevel() < _advLevel)
+                bot->GiveLevel(_advLevel);
+
+            // Died grinding -> revive on the spot for now (corpse runs come later).
+            if (!bot->IsAlive())
+            {
+                bot->ResurrectPlayer(1.0f);
+                bot->SpawnCorpseBones();
+                return;
+            }
+
+            // In combat -> keep attacking / chase into melee.
+            if (bot->IsInCombat())
+            {
+                if (Unit* victim = bot->GetVictim())
                 {
-                    bot->SetStandState(UNIT_STAND_STATE_SIT);
+                    if (!bot->CanReachWithMeleeAutoAttack(victim))
+                        bot->GetMotionMaster()->MoveChase(victim);
+                    bot->Attack(victim, true);
                 }
                 else
                 {
-                    static uint32 const kEmotes[] = {
-                        EMOTE_ONESHOT_WAVE, EMOTE_ONESHOT_CHEER, EMOTE_ONESHOT_TALK,
-                        EMOTE_ONESHOT_POINT, EMOTE_ONESHOT_LAUGH
-                    };
-                    bot->HandleEmoteCommand(kEmotes[urand(0, 4)]);
+                    bot->CombatStop();
+                }
+                return;
+            }
+
+            // Out of combat -> pick a nearby mob to grind.
+            if (Unit* t = bot->SelectNearestTarget(40.0f))
+            {
+                if (IsGrindable(bot, t))
+                {
+                    bot->Attack(t, true);
+                    bot->GetMotionMaster()->MoveChase(t);
+                    return;
+                }
+            }
+
+            // Nothing to fight nearby -> drift a little (flat) to find mobs.
+            if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() == IDLE_MOTION_TYPE)
+            {
+                uint32 const now = WorldTimer::getMSTime();
+                uint32& nextAt = _nextAt[bot->GetGUIDLow()];
+                if (nextAt == 0)
+                    nextAt = now + urand(1000, 4000);
+                if (now >= nextAt)
+                {
+                    WanderNearbyFlat(bot);
+                    nextAt = now + urand(3000, 7000);
                 }
             }
         }
@@ -361,7 +488,11 @@ namespace
             if (state == HeadlessSessionState::Active)
             {
                 if (std::find(_online.begin(), _online.end(), charLow) == _online.end())
+                {
                     _online.push_back(charLow);
+                    _role[charLow] = (i < _residents) ? uint8(ROLE_RESIDENT)
+                                                      : uint8(ROLE_ADVENTURER);
+                }
                 return true;
             }
             if (state != HeadlessSessionState::NotFound)
@@ -410,9 +541,12 @@ namespace
         std::map<uint32, uint32> _charByIndex; // bot index -> character guid low
         std::vector<uint32> _online;           // character guids currently driven
         uint32 _cursor = 0;                    // round-robin position for DriveBots
-        std::map<uint32, uint32> _pauseUntil;  // guid low -> ms timestamp of pause end
+        std::map<uint32, uint32> _nextAt;      // guid low -> ms timestamp of next decision
         std::map<uint32, std::vector<NamedLoc>> _locByMap; // map id -> named locations
         bool _locLoaded = false;
+        std::map<uint32, uint8> _role;         // guid low -> BotRole
+        uint32 _residents = 1;                 // first N bots are residents
+        uint32 _advLevel  = 10;                // level given to adventurers
     };
 }
 
