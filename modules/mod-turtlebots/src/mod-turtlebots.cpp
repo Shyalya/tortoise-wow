@@ -395,14 +395,14 @@ namespace
             // Calm town-life cadence: mostly stand, sometimes stroll, rarely
             // emote or sit. A dwell timer between decisions keeps it unhurried.
             uint32 const roll = urand(0, 99);
-            if (roll < 35)
+            if (roll < 33)
             {
                 StandUp(bot);
                 if (!TryRoamToNamedLocation(bot))
                     WanderNearbyFlat(bot);
                 nextAt = now + urand(6000, 11000);
             }
-            else if (roll < 42)
+            else if (roll < 40)
             {
                 StandUp(bot);
                 static uint32 const kEmotes[] = {
@@ -414,6 +414,13 @@ namespace
             }
             else if (roll < 46)
             {
+                // Small talk (Phase 1: canned lines; Ollama comes next).
+                StandUp(bot);
+                SayCityLine(bot);
+                nextAt = now + urand(9000, 15000);
+            }
+            else if (roll < 50)
+            {
                 bot->SetStandState(UNIT_STAND_STATE_SIT);
                 nextAt = now + urand(9000, 16000);
             }
@@ -422,6 +429,24 @@ namespace
                 StandUp(bot);
                 nextAt = now + urand(4000, 9000);
             }
+        }
+
+        void SayCityLine(Player* bot)
+        {
+            static char const* const kLines[] = {
+                "Lok'tar ogar!",
+                "Anyone heading to the Crossroads?",
+                "Long day guarding the city...",
+                "Need a mage for water over here!",
+                "Best forge in Orgrimmar, right here.",
+                "Heard the Warchief has new orders.",
+                "Trade goods, cheap! Come see.",
+                "Zug zug.",
+                "Stay sharp, the Alliance grows bold.",
+                "Time for a drink at the inn."
+            };
+            uint32 const n = sizeof(kLines) / sizeof(kLines[0]);
+            bot->Say(kLines[urand(0, n - 1)], LANG_UNIVERSAL);
         }
 
         // Adventurer (playing) behaviour: a basic grind loop. Improve later with
