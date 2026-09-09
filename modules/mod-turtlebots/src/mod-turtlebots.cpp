@@ -27,6 +27,8 @@
 #include "MotionMaster.h"
 #include "MoveSpline.h"
 #include "Map.h"
+#include "SpellMgr.h"
+#include "Timer.h"
 #include "Util.h"
 
 #include <algorithm>
@@ -86,6 +88,44 @@ namespace
         return guid;
     }
 
+    // --- Cast-by-name primitive (M3 foundation, used by M4 city-life) ---
+    // Given a base spell id, return the highest rank of that spell chain the bot
+    // actually knows (0 if none). Lets us say "cast conjure water" and get the
+    // best rank without tracking rank ids by hand.
+    uint32 HighestKnownRankInChain(Player* bot, uint32 baseSpellId)
+    {
+        uint32 chainRoot = sSpellMgr.GetFirstSpellInChain(baseSpellId);
+        uint32 best = 0;
+        uint8  bestRank = 0;
+        for (auto const& kv : bot->GetSpellMap())
+        {
+            uint32 sid = kv.first;
+            if (!bot->HasSpell(sid))
+                continue;
+            if (sSpellMgr.GetFirstSpellInChain(sid) != chainRoot)
+                continue;
+            uint8 r = sSpellMgr.GetSpellRank(sid);
+            if (r >= bestRank)
+            {
+                bestRank = r;
+                best = sid;
+            }
+        }
+        return best;
+    }
+
+    // Cast the best known rank of a spell chain at target (or self). The name->id
+    // map that fronts this (conjure/portal/mount by name) lands with M4, where we
+    // can verify the actual Turtle spell ids against a live cast.
+    bool CastByChainBase(Player* bot, uint32 baseSpellId, Unit* target)
+    {
+        uint32 sid = HighestKnownRankInChain(bot, baseSpellId);
+        if (!sid)
+            return false;
+        bot->CastSpell(target ? target : bot, sid, false);
+        return true;
+    }
+
     class TurtleBotsWorldScript : public WorldScript
     {
     public:
@@ -133,45 +173,81 @@ namespace
         // is carried by the core once a destination is set.
         static const uint32 DRIVE_SLICE = 40;
 
-        // Phase 2a: ambient wander. For a slice of online bots each tick, if the
-        // bot is idle, send it to a nearby walkable point. The core moves it.
+        // M3: staggered driver + simple activity state machine + roster lifecycle.
+        // Each tick we make a decision for a slice of the roster. A moving bot is
+        // left alone (the core carries it); an idle bot either wanders to a nearby
+        // point or takes a short pause (sit / one-shot emote).
         void DriveBots()
         {
-            if (_online.empty())
-                return;
-
-            uint32 const slice = std::min<uint32>(DRIVE_SLICE, uint32(_online.size()));
-            for (uint32 n = 0; n < slice; ++n)
+            uint32 processed = 0;
+            uint32 const budget = std::min<uint32>(DRIVE_SLICE, uint32(_online.size()));
+            while (processed < budget && !_online.empty())
             {
                 if (_cursor >= _online.size())
                     _cursor = 0;
-                uint32 low = _online[_cursor++];
+                uint32 low = _online[_cursor];
+                ObjectGuid guid(HIGHGUID_PLAYER, low);
+                Player* bot = sObjectAccessor.FindPlayer(guid);
 
-                Player* bot = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
-                if (!bot || !bot->IsInWorld() || !bot->IsAlive())
-                    continue;
+                // Lifecycle: drop bots whose headless session is gone. Reconcile
+                // re-adds them if they come back Active.
+                if ((!bot || !bot->IsInWorld()) &&
+                    sWorld.GetHeadlessSessionState(guid) != HeadlessSessionState::Active)
+                {
+                    _online[_cursor] = _online.back();
+                    _online.pop_back();
+                    _pauseUntil.erase(low);
+                    ++processed;
+                    continue; // swapped element now sits at _cursor
+                }
 
-                DriveOne(bot);
+                ++_cursor;
+                ++processed;
+                if (bot && bot->IsInWorld() && bot->IsAlive())
+                    DriveOne(bot);
             }
         }
 
         void DriveOne(Player* bot)
         {
             MotionMaster* mm = bot->GetMotionMaster();
-            // Only pick a new destination once the previous move finished.
+            // Busy moving -> let the core carry it; decide again once idle.
             if (mm->GetCurrentMovementGeneratorType() != IDLE_MOTION_TYPE)
                 return;
 
-            Map* map = bot->GetMap();
-            if (!map)
-                return;
+            uint32 const now = WorldTimer::getMSTime();
+            uint32& pauseUntil = _pauseUntil[bot->GetGUIDLow()];
+            if (now < pauseUntil)
+                return; // mid-pause
 
-            float x = bot->GetPositionX();
-            float y = bot->GetPositionY();
-            float z = bot->GetPositionZ();
-            float radius = frand(5.0f, 20.0f);
-            if (map->GetWalkRandomPosition(nullptr, x, y, z, radius))
-                mm->MovePoint(0, x, y, z, MOVE_PATHFINDING);
+            if (urand(0, 99) < 65)
+            {
+                // Wander to a nearby walkable point.
+                bot->SetStandState(UNIT_STAND_STATE_STAND);
+                Map* map = bot->GetMap();
+                float x = bot->GetPositionX();
+                float y = bot->GetPositionY();
+                float z = bot->GetPositionZ();
+                if (map && map->GetWalkRandomPosition(nullptr, x, y, z, frand(6.0f, 22.0f)))
+                    mm->MovePoint(0, x, y, z, MOVE_PATHFINDING);
+            }
+            else
+            {
+                // Short pause: sit, or play a one-shot emote.
+                pauseUntil = now + urand(3000, 8000);
+                if (urand(0, 3) == 0)
+                {
+                    bot->SetStandState(UNIT_STAND_STATE_SIT);
+                }
+                else
+                {
+                    static uint32 const kEmotes[] = {
+                        EMOTE_ONESHOT_WAVE, EMOTE_ONESHOT_CHEER, EMOTE_ONESHOT_TALK,
+                        EMOTE_ONESHOT_POINT, EMOTE_ONESHOT_LAUGH
+                    };
+                    bot->HandleEmoteCommand(kEmotes[urand(0, 4)]);
+                }
+            }
         }
 
         void Reconcile()
@@ -262,6 +338,7 @@ namespace
         std::map<uint32, uint32> _charByIndex; // bot index -> character guid low
         std::vector<uint32> _online;           // character guids currently driven
         uint32 _cursor = 0;                    // round-robin position for DriveBots
+        std::map<uint32, uint32> _pauseUntil;  // guid low -> ms timestamp of pause end
     };
 }
 
