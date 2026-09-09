@@ -27,6 +27,7 @@
 #include "MotionMaster.h"
 #include "MoveSpline.h"
 #include "Map.h"
+#include "PathFinder.h"
 #include "SpellMgr.h"
 #include "Timer.h"
 #include "Util.h"
@@ -48,6 +49,9 @@ namespace
         { 6, 1 }, { 5, 4 }, { 8, 5 }, { 2, 3 },
     };
     const uint32 HORDE_COMBO_COUNT = sizeof(HORDE_COMBOS) / sizeof(HORDE_COMBOS[0]);
+
+    // A named world point lifted from ai_playerbot_named_location.
+    struct NamedLoc { float x, y, z, o; std::string name; };
 
     std::string BotAccountName(uint32 i) { return "TBOT" + std::to_string(i); }
 
@@ -154,6 +158,9 @@ namespace
                 _startDelayMs = 0;
             }
 
+            // Lift named locations once, after the world is up.
+            if (!_locLoaded) { LoadNamedLocations(); _locLoaded = true; }
+
             // Reconcile the roster occasionally; drive behaviour every tick.
             if (_reconcileTimer > diff)
                 _reconcileTimer -= diff;
@@ -208,6 +215,68 @@ namespace
             }
         }
 
+        void LoadNamedLocations()
+        {
+            QueryResult* r = WorldDatabase.PQuery(
+                "SELECT map_id, position_x, position_y, position_z, orientation, name "
+                "FROM ai_playerbot_named_location");
+            if (!r)
+                return;
+            uint32 n = 0;
+            do
+            {
+                Field* f = r->Fetch();
+                NamedLoc l;
+                l.x = f[1].GetFloat();
+                l.y = f[2].GetFloat();
+                l.z = f[3].GetFloat();
+                l.o = f[4].GetFloat();
+                l.name = f[5].GetCppString();
+                _locByMap[f[0].GetUInt32()].push_back(l);
+                ++n;
+            } while (r->NextRow());
+            delete r;
+            sLog.outString("[mod-turtlebots] loaded %u named locations across %u maps.",
+                           n, uint32(_locByMap.size()));
+        }
+
+        // Send the bot toward a nearby named location on its map (sampled), or
+        // false if none is within range so the caller can wander randomly.
+        bool TryRoamToNamedLocation(Player* bot)
+        {
+            auto it = _locByMap.find(bot->GetMapId());
+            if (it == _locByMap.end() || it->second.empty())
+                return false;
+            std::vector<NamedLoc> const& v = it->second;
+
+            float const bx = bot->GetPositionX();
+            float const by = bot->GetPositionY();
+            float const minR2 = 20.0f * 20.0f;
+            float const maxR2 = 250.0f * 250.0f;
+            for (int tries = 0; tries < 12; ++tries)
+            {
+                NamedLoc const& l = v[urand(0, uint32(v.size()) - 1)];
+                float dx = l.x - bx, dy = l.y - by;
+                float d2 = dx * dx + dy * dy;
+                if (d2 <= minR2 || d2 >= maxR2)
+                    continue;
+
+                // Only walk there if a clean navmesh path exists -- no shortcut
+                // (straight line through geometry), no partial/absent path. This
+                // is what prevents clipping through floors and walls.
+                PathInfo path(bot);
+                path.calculate(l.x, l.y, l.z);
+                uint32 const t = uint32(path.getPathType());
+                if ((t & PATHFIND_NORMAL) &&
+                    !(t & (PATHFIND_SHORTCUT | PATHFIND_INCOMPLETE | PATHFIND_NOPATH)))
+                {
+                    bot->GetMotionMaster()->MovePoint(0, l.x, l.y, l.z, MOVE_PATHFINDING);
+                    return true;
+                }
+            }
+            return false;
+        }
+
         void DriveOne(Player* bot)
         {
             MotionMaster* mm = bot->GetMotionMaster();
@@ -222,14 +291,17 @@ namespace
 
             if (urand(0, 99) < 65)
             {
-                // Wander to a nearby walkable point.
                 bot->SetStandState(UNIT_STAND_STATE_STAND);
-                Map* map = bot->GetMap();
-                float x = bot->GetPositionX();
-                float y = bot->GetPositionY();
-                float z = bot->GetPositionZ();
-                if (map && map->GetWalkRandomPosition(nullptr, x, y, z, frand(6.0f, 22.0f)))
-                    mm->MovePoint(0, x, y, z, MOVE_PATHFINDING);
+                // Prefer heading to a nearby named location; else a random point.
+                if (!TryRoamToNamedLocation(bot))
+                {
+                    Map* map = bot->GetMap();
+                    float x = bot->GetPositionX();
+                    float y = bot->GetPositionY();
+                    float z = bot->GetPositionZ();
+                    if (map && map->GetWalkRandomPosition(nullptr, x, y, z, frand(6.0f, 22.0f)))
+                        mm->MovePoint(0, x, y, z, MOVE_PATHFINDING);
+                }
             }
             else
             {
@@ -339,6 +411,8 @@ namespace
         std::vector<uint32> _online;           // character guids currently driven
         uint32 _cursor = 0;                    // round-robin position for DriveBots
         std::map<uint32, uint32> _pauseUntil;  // guid low -> ms timestamp of pause end
+        std::map<uint32, std::vector<NamedLoc>> _locByMap; // map id -> named locations
+        bool _locLoaded = false;
     };
 }
 
