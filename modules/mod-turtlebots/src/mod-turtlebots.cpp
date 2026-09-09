@@ -22,9 +22,17 @@
 #include "SharedDefines.h"
 #include "Config/Config.h"
 #include "ObjectGuid.h"
+#include "ObjectAccessor.h"
+#include "Player.h"
+#include "MotionMaster.h"
+#include "MoveSpline.h"
+#include "Map.h"
+#include "Util.h"
 
+#include <algorithm>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -106,14 +114,65 @@ namespace
                 _startDelayMs = 0;
             }
 
-            if (_reconcileTimer > diff) { _reconcileTimer -= diff; return; }
-            _reconcileTimer = RECONCILE_INTERVAL_MS;
+            // Reconcile the roster occasionally; drive behaviour every tick.
+            if (_reconcileTimer > diff)
+                _reconcileTimer -= diff;
+            else
+            {
+                _reconcileTimer = RECONCILE_INTERVAL_MS;
+                Reconcile();
+            }
 
-            Reconcile();
+            DriveBots();
         }
 
     private:
         static const uint32 RECONCILE_INTERVAL_MS = 5000;
+        // How many bots we make a decision for per world tick (staggered so the
+        // per-tick cost stays flat regardless of roster size). Movement itself
+        // is carried by the core once a destination is set.
+        static const uint32 DRIVE_SLICE = 40;
+
+        // Phase 2a: ambient wander. For a slice of online bots each tick, if the
+        // bot is idle, send it to a nearby walkable point. The core moves it.
+        void DriveBots()
+        {
+            if (_online.empty())
+                return;
+
+            uint32 const slice = std::min<uint32>(DRIVE_SLICE, uint32(_online.size()));
+            for (uint32 n = 0; n < slice; ++n)
+            {
+                if (_cursor >= _online.size())
+                    _cursor = 0;
+                uint32 low = _online[_cursor++];
+
+                Player* bot = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+                if (!bot || !bot->IsInWorld() || !bot->IsAlive())
+                    continue;
+
+                DriveOne(bot);
+            }
+        }
+
+        void DriveOne(Player* bot)
+        {
+            MotionMaster* mm = bot->GetMotionMaster();
+            // Only pick a new destination once the previous move finished.
+            if (mm->GetCurrentMovementGeneratorType() != IDLE_MOTION_TYPE)
+                return;
+
+            Map* map = bot->GetMap();
+            if (!map)
+                return;
+
+            float x = bot->GetPositionX();
+            float y = bot->GetPositionY();
+            float z = bot->GetPositionZ();
+            float radius = frand(5.0f, 20.0f);
+            if (map->GetWalkRandomPosition(nullptr, x, y, z, radius))
+                mm->MovePoint(0, x, y, z, MOVE_PATHFINDING);
+        }
 
         void Reconcile()
         {
@@ -152,7 +211,11 @@ namespace
             ObjectGuid charGuid(HIGHGUID_PLAYER, charLow);
             HeadlessSessionState state = sWorld.GetHeadlessSessionState(charGuid);
             if (state == HeadlessSessionState::Active)
+            {
+                if (std::find(_online.begin(), _online.end(), charLow) == _online.end())
+                    _online.push_back(charLow);
                 return true;
+            }
             if (state != HeadlessSessionState::NotFound)
                 return false; // Pending/Loading — in progress
 
@@ -197,6 +260,8 @@ namespace
         uint32 _reconcileTimer;
         uint32 _lastReportedOnline = 0xFFFFFFFF;
         std::map<uint32, uint32> _charByIndex; // bot index -> character guid low
+        std::vector<uint32> _online;           // character guids currently driven
+        uint32 _cursor = 0;                    // round-robin position for DriveBots
     };
 }
 
