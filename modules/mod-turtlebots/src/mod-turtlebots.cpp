@@ -24,6 +24,9 @@
 #include "ObjectGuid.h"
 #include "ObjectAccessor.h"
 #include "Player.h"
+#include "WorldSession.h"
+#include "WorldPacket.h"
+#include "Opcodes.h"
 #include "MotionMaster.h"
 #include "MoveSpline.h"
 #include "Map.h"
@@ -36,6 +39,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -54,6 +58,25 @@ namespace
 
     // A named world point lifted from ai_playerbot_named_location.
     struct NamedLoc { float x, y, z, o; std::string name; };
+
+    // Orgrimmar hub where residents live (proven-walkable spot from the demo AI).
+    const uint32 CITY_MAP = 1;
+    const float CITY_X = 1568.0f, CITY_Y = -4405.87f, CITY_Z = 8.13f, CITY_O = 0.0f;
+
+    // Headless bots have no client to acknowledge teleports; do it for them, or
+    // they get stuck "being teleported". Mirrors the core PlayerBotAI.
+    void CompleteBotTeleport(Player* bot)
+    {
+        if (bot->IsBeingTeleportedNear())
+        {
+            WorldPacket data(MSG_MOVE_TELEPORT_ACK, 10);
+            data << bot->GetObjectGuid();
+            data << uint32(0) << uint32(0);
+            bot->GetSession()->HandleMoveTeleportAckOpcode(data);
+        }
+        if (bot->IsBeingTeleportedFar())
+            bot->GetSession()->HandleMoveWorldportAckOpcode();
+    }
 
     std::string BotAccountName(uint32 i) { return "TBOT" + std::to_string(i); }
 
@@ -238,6 +261,7 @@ namespace
                 ++processed;
                 if (bot && bot->IsInWorld())
                 {
+                    CompleteBotTeleport(bot);      // finish any pending teleport
                     if (RoleOf(low) == ROLE_ADVENTURER)
                         DriveAdventurer(bot);      // handles its own death/revive
                     else if (bot->IsAlive())
@@ -344,9 +368,18 @@ namespace
                 bot->GetMotionMaster()->MovePoint(0, x, y, z, MOVE_PATHFINDING);
         }
 
-        // Resident (city-life) behaviour: calm ambient roaming.
+        // Resident (city-life) behaviour: live in the city, calm ambient roaming.
         void DriveResident(Player* bot)
         {
+            uint32 const low = bot->GetGUIDLow();
+            // Move the resident into the city once; then they live/roam there.
+            if (!_placed.count(low))
+            {
+                _placed.insert(low);
+                bot->TeleportTo(CITY_MAP, CITY_X, CITY_Y, CITY_Z, CITY_O);
+                return; // teleport finishes next tick via CompleteBotTeleport
+            }
+
             MotionMaster* mm = bot->GetMotionMaster();
             // Walking -> let the core carry it; only decide when idle.
             if (mm->GetCurrentMovementGeneratorType() != IDLE_MOTION_TYPE)
@@ -545,6 +578,7 @@ namespace
         std::map<uint32, std::vector<NamedLoc>> _locByMap; // map id -> named locations
         bool _locLoaded = false;
         std::map<uint32, uint8> _role;         // guid low -> BotRole
+        std::set<uint32> _placed;              // residents already moved into the city
         uint32 _residents = 1;                 // first N bots are residents
         uint32 _advLevel  = 10;                // level given to adventurers
     };
