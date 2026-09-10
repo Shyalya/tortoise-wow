@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <ctime>
 #include <set>
 #include <string>
 #include <vector>
@@ -175,6 +176,9 @@ namespace
         return true;
     }
 
+    static std::set<uint32> g_turtleResidents; // driven residents, for player chat reactions
+    struct PendingReaction { uint32 guid; std::string line; time_t at; };
+    static std::vector<PendingReaction> g_pendingReactions;
     class TurtleBotsWorldScript : public WorldScript
     {
     public:
@@ -198,6 +202,24 @@ namespace
         {
             if (!_enabled)
                 return;
+
+            // Fire queued resident chat reactions after their small human delay.
+            if (!g_pendingReactions.empty())
+            {
+                time_t now = time(nullptr);
+                for (size_t i = 0; i < g_pendingReactions.size(); )
+                {
+                    if (now >= g_pendingReactions[i].at)
+                    {
+                        if (Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, g_pendingReactions[i].guid)))
+                            if (r->IsInWorld())
+                                r->Say(g_pendingReactions[i].line, LANG_UNIVERSAL);
+                        g_pendingReactions[i] = g_pendingReactions.back();
+                        g_pendingReactions.pop_back();
+                    }
+                    else ++i;
+                }
+            }
 
             // Initial settle so the world/maps are ready before we bring bots in.
             if (_startDelayMs)
@@ -372,6 +394,7 @@ namespace
         void DriveResident(Player* bot)
         {
             uint32 const low = bot->GetGUIDLow();
+            g_turtleResidents.insert(low);
             // Move the resident into the city once; then they live/roam there.
             if (!_placed.count(low))
             {
@@ -660,7 +683,79 @@ namespace
     };
 }
 
+// Residents react to a player speaking nearby: the closest resident answers
+// with a friendly line. Uses PlayerScript's OnChatSay (fired by the core for
+// any /say), so it needs no packet delivery to a headless session.
+class TurtleBotsChatScript : public PlayerScript
+{
+public:
+    TurtleBotsChatScript()
+        : PlayerScript("mod-turtlebots_chat", { PLAYERHOOK_ON_CHAT_SAY })
+    {
+    }
+
+    void OnChatSay(Player* from, float range, char const* msg) override
+    {
+        if (!from || !msg || !*msg)
+            return;
+        if (!from->GetSession() || from->GetSession()->IsHeadless())
+            return; // only a real player triggers a reaction
+
+        Player* best = nullptr;
+        float bestDist = (range > 0.f ? range : 30.f);
+        for (uint32 low : g_turtleResidents)
+        {
+            Player* res = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+            if (!res || res == from || !res->IsInWorld() || res->GetMapId() != from->GetMapId())
+                continue;
+            float d = from->GetDistance(res);
+            if (d <= bestDist)
+            {
+                best = res;
+                bestDist = d;
+            }
+        }
+        if (best)
+            React(best, msg);
+    }
+
+private:
+    void React(Player* resident, char const* msg)
+    {
+        std::string lower(msg);
+        for (char& c : lower)
+            if (c >= 'A' && c <= 'Z')
+                c = char(c + 32);
+
+        bool greet = lower.find("hello") != std::string::npos ||
+                     lower.find("hey") != std::string::npos ||
+                     lower.find("hi ") == 0 || lower == "hi" ||
+                     lower.find("greet") != std::string::npos ||
+                     lower.find("lok'tar") != std::string::npos;
+
+        static char const* const kGreet[] = {
+            "Well met, traveler!",
+            "Lok'tar! Good to see a friendly face.",
+            "Hah, greetings to you too!",
+            "Zug zug. What brings you here?"
+        };
+        static char const* const kReply[] = {
+            "Aye? What can I do for ye?",
+            "Heh, is that so?",
+            "Mind how you go out there.",
+            "The city's busy today, friend.",
+            "Speak with the Warchief if it's important."
+        };
+
+        char const* line = greet
+            ? kGreet[urand(0, sizeof(kGreet) / sizeof(kGreet[0]) - 1)]
+            : kReply[urand(0, sizeof(kReply) / sizeof(kReply[0]) - 1)];
+        g_pendingReactions.push_back({ resident->GetGUIDLow(), std::string(line), time(nullptr) + time_t(urand(1, 3)) });
+    }
+};
+
 void Addmod_turtlebotsScripts()
 {
     new TurtleBotsWorldScript();
+    new TurtleBotsChatScript();
 }
