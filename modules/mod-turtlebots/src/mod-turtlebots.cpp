@@ -433,20 +433,71 @@ namespace
 
         void SayCityLine(Player* bot)
         {
-            static char const* const kLines[] = {
+            // Shared city chatter any resident may say.
+            static char const* const kShared[] = {
                 "Lok'tar ogar!",
+                "Zug zug.",
                 "Anyone heading to the Crossroads?",
-                "Long day guarding the city...",
-                "Need a mage for water over here!",
-                "Best forge in Orgrimmar, right here.",
                 "Heard the Warchief has new orders.",
                 "Trade goods, cheap! Come see.",
-                "Zug zug.",
-                "Stay sharp, the Alliance grows bold.",
-                "Time for a drink at the inn."
+                "Time for a drink at the inn.",
+                "Stay sharp, the Alliance grows bold."
             };
-            uint32 const n = sizeof(kLines) / sizeof(kLines[0]);
-            bot->Say(kLines[urand(0, n - 1)], LANG_UNIVERSAL);
+            // Martial classes: warrior / rogue / hunter / paladin.
+            static char const* const kMartial[] = {
+                "Long day guarding the city...",
+                "Best forge in Orgrimmar, right here.",
+                "My blade's thirsty for Alliance blood.",
+                "Anyone up for a scrap in the ring?"
+            };
+            // Mana users who beg for water: warlock / priest.
+            static char const* const kCaster[] = {
+                "Need a mage for water over here!",
+                "So low on mana... need a drink.",
+                "Careful, the arcane grows restless."
+            };
+            // Mage: offers water and portals instead of begging.
+            static char const* const kMage[] = {
+                "Fresh water and food, conjured to order!",
+                "Need a portal? I can open one.",
+                "Mind the sheep - that used to be someone."
+            };
+            // Nature / spirit: shaman / druid.
+            static char const* const kNature[] = {
+                "The elements whisper today.",
+                "The spirits are uneasy of late.",
+                "Nature's balance must be kept."
+            };
+
+            char const* const* pool = kShared;
+            uint32 n = sizeof(kShared) / sizeof(kShared[0]);
+            // 55% shared, otherwise a class-appropriate bucket.
+            if (urand(0, 99) >= 55)
+            {
+                switch (bot->GetClass())
+                {
+                    case CLASS_WARRIOR:
+                    case CLASS_ROGUE:
+                    case CLASS_HUNTER:
+                    case CLASS_PALADIN:
+                        pool = kMartial; n = sizeof(kMartial) / sizeof(kMartial[0]);
+                        break;
+                    case CLASS_MAGE:
+                        pool = kMage; n = sizeof(kMage) / sizeof(kMage[0]);
+                        break;
+                    case CLASS_WARLOCK:
+                    case CLASS_PRIEST:
+                        pool = kCaster; n = sizeof(kCaster) / sizeof(kCaster[0]);
+                        break;
+                    case CLASS_SHAMAN:
+                    case CLASS_DRUID:
+                        pool = kNature; n = sizeof(kNature) / sizeof(kNature[0]);
+                        break;
+                    default:
+                        break;
+                }
+            }
+            bot->Say(pool[urand(0, n - 1)], LANG_UNIVERSAL);
         }
 
         // Adventurer (playing) behaviour: a basic grind loop. Improve later with
