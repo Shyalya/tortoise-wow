@@ -500,16 +500,23 @@ set(CMAKE_INSTALL_RPATH ${LIBS_DIR})
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
 if(WIN32)
+  if(DEP_ARCH STREQUAL "x64")
+    set(OPENSSL_DLL_SUFFIX "-x64")
+  else()
+    set(OPENSSL_DLL_SUFFIX "")
+  endif()
   install(
     FILES
-      ${CMAKE_SOURCE_DIR}/dep/windows/lib/${DEP_ARCH}_release/libeay32.dll
+      ${CMAKE_SOURCE_DIR}/dep/windows/lib/${DEP_ARCH}_release/libcrypto-1_1${OPENSSL_DLL_SUFFIX}.dll
+      ${CMAKE_SOURCE_DIR}/dep/windows/lib/${DEP_ARCH}_release/libssl-1_1${OPENSSL_DLL_SUFFIX}.dll
       ${CMAKE_SOURCE_DIR}/dep/windows/lib/${DEP_ARCH}_release/libmySQL.dll
     DESTINATION ${LIBS_DIR}
     CONFIGURATIONS Release
   )
   install(
     FILES
-      ${CMAKE_SOURCE_DIR}/dep/windows/lib/${DEP_ARCH}_debug/libeay32.dll
+      ${CMAKE_SOURCE_DIR}/dep/windows/lib/${DEP_ARCH}_debug/libcrypto-1_1${OPENSSL_DLL_SUFFIX}.dll
+      ${CMAKE_SOURCE_DIR}/dep/windows/lib/${DEP_ARCH}_debug/libssl-1_1${OPENSSL_DLL_SUFFIX}.dll
       ${CMAKE_SOURCE_DIR}/dep/windows/lib/${DEP_ARCH}_debug/libmySQL.dll
     DESTINATION ${LIBS_DIR}
     CONFIGURATIONS Debug
