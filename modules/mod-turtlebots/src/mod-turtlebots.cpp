@@ -202,6 +202,8 @@ namespace
     static std::map<uint32, time_t> g_botTradeDeadline; // botGuid -> when to auto-cancel a stale trade
     struct PendingTradeFill { uint32 bot; uint32 player; uint32 itemId; uint32 count; uint32 atMs; };
     static std::vector<PendingTradeFill> g_pendingTradeFill; // fill a trade window a beat after opening it
+    static std::set<uint32> g_botInitiatedTrade; // botGuid -> we opened this trade (give path)
+    static std::set<uint32> g_botBegunTrade;     // botGuid -> we completed a player-opened handshake
     static std::map<uint32, uint32> g_botTradeAcceptAt; // botGuid -> ms to accept (after items are shown)
     static std::map<uint32, uint32> g_botHoldUntilMs;   // botGuid -> ms to stand still until (trade + a beat)
     static std::map<uint32, uint32> g_warlockShards; // per-warlock soul-shard reserve
@@ -644,6 +646,7 @@ namespace
             caster->BeginTradeWith(plr))
         {
             caster->StopMoving(true); // hold still with the window open
+            g_botInitiatedTrade.insert(caster->GetGUIDLow());
             g_pendingTradeFill.push_back({ caster->GetGUIDLow(), plr->GetGUIDLow(), itemId, count,
                                            WorldTimer::getMSTime() + 1200u });
             return;
@@ -787,6 +790,76 @@ namespace
                     }
                     else ++it;
                 }
+            }
+
+            // When a player opens a trade with a resident, the bot is clientless and
+            // never sends CMSG_BEGIN_TRADE, so the player's window never opens. Complete
+            // that handshake for any player-initiated trade we didn't open ourselves.
+            for (auto sit = g_botInitiatedTrade.begin(); sit != g_botInitiatedTrade.end(); )
+            {
+                Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, *sit));
+                if (!b || !b->GetTradeData()) sit = g_botInitiatedTrade.erase(sit); else ++sit;
+            }
+            for (auto sit = g_botBegunTrade.begin(); sit != g_botBegunTrade.end(); )
+            {
+                Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, *sit));
+                if (!b || !b->GetTradeData()) sit = g_botBegunTrade.erase(sit); else ++sit;
+            }
+            for (uint32 rlow : g_turtleResidents)
+            {
+                Player* bot = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, rlow));
+                if (!bot || !bot->IsInWorld())
+                    continue;
+                TradeData* td = bot->GetTradeData();
+                if (!td)
+                    continue;
+                Player* trader = td->GetTrader();
+                if (!trader || trader->GetTypeId() != TYPEID_PLAYER)
+                    continue;
+                if (g_botInitiatedTrade.count(rlow) || g_botBegunTrade.count(rlow))
+                    continue; // our own give-trade, or already opened
+                WorldPacket bp; // send OPEN_WINDOW to the player so they can drop in a gift
+                bot->GetSession()->HandleBeginTradeOpcode(bp);
+                g_botBegunTrade.insert(rlow);
+            }
+
+            // A player gifting an item to a resident: the resident accepts the
+            // trade (it offers nothing itself) and thanks them in character.
+            for (uint32 rlow : g_turtleResidents)
+            {
+                Player* bot = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, rlow));
+                if (!bot || !bot->IsInWorld())
+                    continue;
+                TradeData* td = bot->GetTradeData();
+                if (!td)
+                    continue;
+                Player* trader = td->GetTrader();
+                if (!trader || trader->GetTypeId() != TYPEID_PLAYER)
+                    continue;
+                // The bot must offer nothing -- otherwise this is our own give-trade.
+                bool botOffersNothing = (td->GetMoney() == 0);
+                for (int i = 0; i < TRADE_SLOT_TRADED_COUNT && botOffersNothing; ++i)
+                    if (td->GetItem(TradeSlots(i)))
+                        botOffersNothing = false;
+                if (!botOffersNothing)
+                    continue;
+                // The player must have offered something and accepted.
+                TradeData* his = td->GetTraderData();
+                if (!his || !his->IsAccepted())
+                    continue;
+                bool playerGave = (his->GetMoney() > 0);
+                for (int i = 0; i < TRADE_SLOT_TRADED_COUNT && !playerGave; ++i)
+                    if (his->GetItem(TradeSlots(i)))
+                        playerGave = true;
+                if (!playerGave)
+                    continue;
+                WorldPacket ap; // accept the gift through the real handler
+                ap << uint32(0);
+                bot->GetSession()->HandleAcceptTradeOpcode(ap);
+                ServiceSay(bot, "A traveler just handed you a gift in a trade; thank them warmly.",
+                           RPick({ "Oh - thank you kindly, friend!",
+                                   "For me? That's good of you - thank you!",
+                                   "Much appreciated, traveler!" }));
             }
 
             // Fill trade windows a short beat after they were opened.
