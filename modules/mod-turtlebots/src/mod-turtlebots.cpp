@@ -200,6 +200,10 @@ namespace
     struct PendingPortal { uint32 mage; uint32 player; uint32 spell; std::string city; time_t deadline; };
     static std::vector<PendingPortal> g_pendingPortals;
     static std::map<uint32, time_t> g_botTradeDeadline; // botGuid -> when to auto-cancel a stale trade
+    struct PendingTradeFill { uint32 bot; uint32 player; uint32 itemId; uint32 count; uint32 atMs; };
+    static std::vector<PendingTradeFill> g_pendingTradeFill; // fill a trade window a beat after opening it
+    static std::map<uint32, uint32> g_botTradeAcceptAt; // botGuid -> ms to accept (after items are shown)
+    static std::map<uint32, uint32> g_botHoldUntilMs;   // botGuid -> ms to stand still until (trade + a beat)
     static std::map<uint32, uint32> g_warlockShards; // per-warlock soul-shard reserve
     static time_t g_nextShardRefill = 0;             // next time we top the reserves up
     static std::map<uint32, std::string> g_personality; // guid -> personality key (cached)
@@ -577,12 +581,16 @@ namespace
 
     // Open the real city portal: the mage casts it (reagent supplied so the
     // cast plays), the portal spawns at the mage for the group to step through.
+    static void ClearConjured(Player* bot); // fwd decl (defined near HandOverItems)
+
     static void OpenPortal(Player* mage, uint32 spell, std::string const& city)
     {
         ServiceSay(mage, std::string("A traveler wants a portal to ") + city + "; you begin opening it.",
                    std::string("One moment - opening a portal to ") + city + "...");
         if (!mage->HasSpell(spell)) mage->LearnSpell(spell, false);
+        ClearConjured(mage); // free the bag so the Rune of Portals reagent fits
         mage->StoreNewItemInInventorySlot(17032, 1); // Rune of Portals reagent
+        mage->StopMoving(true); // stand still so the long portal cast isn't cancelled
         CastByChainBase(mage, spell, mage);
     }
 
@@ -615,50 +623,70 @@ namespace
     // bot conjures into its own bag, opens a trade, offers the goods, accepts);
     // if the player is too far, either side is busy, or the item can't be traded,
     // it falls back to placing the items straight in the player's bags.
+    // Remove leftover conjured food/water from a bot's bag so a fresh conjure
+    // (or a trade fill) always has room -- cancelled trades used to pile up.
+    static void ClearConjured(Player* bot)
+    {
+        static uint32 const kConjured[] = { 5350, 2288, 3772, 8077, 8078, 8079,   // water
+                                            5349, 1113, 1487, 8075, 8076, 22895,  // food
+                                            5512, 5511, 5509, 5510, 9421,         // healthstones
+                                            6265, 17032 };                        // soul shard, rune of portals
+        for (uint32 cid : kConjured)
+            bot->DestroyItemCount(cid, 0xFFFFFFFFu, true);
+    }
+
     static void HandOverItems(Player* caster, Player* plr, uint32 itemId, uint32 count)
     {
-        bool traded = false;
+        // Open a real trade window, then fill it a beat later: the client needs
+        // the window open before the item update arrives, or it renders empty.
         if (caster->GetDistance3dToCenter(plr) <= TRADE_DISTANCE &&
             !caster->GetTradeData() && !plr->GetTradeData() &&
             caster->BeginTradeWith(plr))
         {
-            TradeData* td = caster->GetTradeData();
-            int slot = 0;
-            uint32 remaining = count;
-            bool anyTradeable = false;
-            while (remaining && slot < TRADE_SLOT_TRADED_COUNT)
-            {
-                uint32 const c = remaining > 20u ? 20u : remaining;
-                Item* it = caster->StoreNewItemInInventorySlot(itemId, c);
-                if (it && it->CanBeTraded())
-                {
-                    td->SetItem(TradeSlots(slot++), it);
-                    anyTradeable = true;
-                }
-                remaining -= c;
-            }
-            if (anyTradeable)
-            {
-                td->SetMoney(0);
-                td->SetAccepted(true);              // bot side ready; player accepts to complete
-                g_botTradeDeadline[caster->GetGUIDLow()] = time(nullptr) + 40; // auto-cancel if ignored
-                traded = true;
-            }
-            else
-            {
-                caster->TradeCancel(true);          // nothing tradeable -> abandon the window
-            }
+            caster->StopMoving(true); // hold still with the window open
+            g_pendingTradeFill.push_back({ caster->GetGUIDLow(), plr->GetGUIDLow(), itemId, count,
+                                           WorldTimer::getMSTime() + 1200u });
+            return;
         }
-        if (!traded)
+        // Too far or busy -> just place it straight in the player's bags.
+        uint32 remaining = count;
+        while (remaining)
         {
-            uint32 remaining = count; // fallback: straight into the player's bags
-            while (remaining)
-            {
-                uint32 const c = remaining > 20u ? 20u : remaining;
-                plr->StoreNewItemInInventorySlot(itemId, c);
-                remaining -= c;
-            }
+            uint32 const c = remaining > 20u ? 20u : remaining;
+            plr->StoreNewItemInInventorySlot(itemId, c);
+            remaining -= c;
         }
+    }
+
+    // Put the conjured goods into a trade window that was opened a moment ago.
+    static void FillTradeWindow(Player* bot, Player* plr, uint32 itemId, uint32 count)
+    {
+        TradeData* td = bot->GetTradeData();
+        if (!td)
+            return;
+        ClearConjured(bot); // make room so StoreNewItem can't fail on a full bag
+        int slot = 0;
+        uint32 remaining = count;
+        bool any = false;
+        while (remaining && slot < TRADE_SLOT_TRADED_COUNT)
+        {
+            uint32 const c = remaining > 20u ? 20u : remaining;
+            Item* it = bot->StoreNewItemInInventorySlot(itemId, c);
+            if (it && it->CanBeTraded())
+            {
+                td->SetItem(TradeSlots(slot++), it);
+                any = true;
+            }
+            remaining -= c;
+        }
+        if (any)
+        {
+            td->SetMoney(0);
+            td->SetAccepted(true); // accept with the goods (this is the version that demonstrably worked)
+            g_botTradeDeadline[bot->GetGUIDLow()] = time(nullptr) + 40;
+        }
+        else
+            bot->TradeCancel(true);
     }
 
     class TurtleBotsWorldScript : public WorldScript
@@ -740,6 +768,52 @@ namespace
 
             // Auto-cancel trade windows a bot opened that the player never accepted,
             // so the bot doesn't stay 'busy' forever.
+            // Accept a bot's trade a beat after its goods were shown.
+            if (!g_botTradeAcceptAt.empty())
+            {
+                uint32 const now = WorldTimer::getMSTime();
+                for (auto it = g_botTradeAcceptAt.begin(); it != g_botTradeAcceptAt.end(); )
+                {
+                    if (int32(now - it->second) >= 0)
+                    {
+                        Player* bot = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, it->first));
+                        if (bot && bot->IsInWorld() && bot->GetTradeData())
+                        {
+                            WorldPacket ap;
+                            ap << uint32(0);
+                            bot->GetSession()->HandleAcceptTradeOpcode(ap); // real accept: notifies the player and completes if they already accepted
+                        }
+                        it = g_botTradeAcceptAt.erase(it);
+                    }
+                    else ++it;
+                }
+            }
+
+            // Fill trade windows a short beat after they were opened.
+            if (!g_pendingTradeFill.empty())
+            {
+                uint32 const now = WorldTimer::getMSTime();
+                for (size_t i = 0; i < g_pendingTradeFill.size(); )
+                {
+                    PendingTradeFill& f = g_pendingTradeFill[i];
+                    if (int32(now - f.atMs) >= 0)
+                    {
+                        Player* bot = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, f.bot));
+                        Player* plr = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, f.player));
+                        if (bot && bot->IsInWorld() && bot->GetTradeData() && plr && plr->IsInWorld())
+                            FillTradeWindow(bot, plr, f.itemId, f.count);
+                        else if (plr && plr->IsInWorld())
+                        {
+                            uint32 rem = f.count;
+                            while (rem) { uint32 const c = rem > 20u ? 20u : rem; plr->StoreNewItemInInventorySlot(f.itemId, c); rem -= c; }
+                        }
+                        g_pendingTradeFill[i] = g_pendingTradeFill.back();
+                        g_pendingTradeFill.pop_back();
+                    }
+                    else ++i;
+                }
+            }
+
             if (!g_botTradeDeadline.empty())
             {
                 time_t const tnow = time(nullptr);
@@ -768,8 +842,14 @@ namespace
                 if (mage && plr && mage->IsInWorld() && plr->IsInWorld() &&
                     mage->GetGroup() && mage->GetGroup() == plr->GetGroup())
                 {
-                    OpenPortal(mage, pp.spell, pp.city); // they joined -> open it
+                    OpenPortal(mage, pp.spell, pp.city); // joined -> open it
                     done = true;
+                }
+                else if (mage && mage->IsInWorld() && mage->GetGroupInvite())
+                {
+                    WorldPacket gp; // the player invited the mage -> accept it (no client to click Yes)
+                    mage->GetSession()->HandleGroupAcceptOpcode(gp);
+                    // OpenPortal fires next tick, once membership is set
                 }
                 else if (time(nullptr) >= pp.deadline)
                 {
@@ -992,6 +1072,25 @@ namespace
                 _placed.insert(low);
                 bot->TeleportTo(CITY_MAP, CITY_X, CITY_Y, CITY_Z, CITY_O);
                 return; // teleport finishes next tick via CompleteBotTeleport
+            }
+
+            // Don't wander off mid-cast: a portal has a long cast time and any
+            // movement cancels the spell. Hold still until the cast finishes.
+            if (bot->IsNonMeleeSpellCasted(false))
+                return;
+            if (bot->GetTradeData()) // hold still while a trade window is open...
+            {
+                g_botHoldUntilMs[low] = WorldTimer::getMSTime() + 2000; // ...and 2s past it
+                return;
+            }
+            {
+                auto h = g_botHoldUntilMs.find(low);
+                if (h != g_botHoldUntilMs.end())
+                {
+                    if (int32(WorldTimer::getMSTime() - h->second) < 0)
+                        return;                 // still in the post-trade hold
+                    g_botHoldUntilMs.erase(h);
+                }
             }
 
             MotionMaster* mm = bot->GetMotionMaster();
@@ -1333,25 +1432,22 @@ public:
                                        "That portal's beyond me for now - come back when I'm stronger." }));
                     return;
                 }
-                // Portals only work within the mage's group, so arrange that first.
+                // Portals only work within the mage's group. A real client won't
+                // stay in a bot-led group, so the PLAYER must lead: ask them to
+                // invite the mage, who then accepts on its own (below).
                 if (mage->GetGroup() && mage->GetGroup() == from->GetGroup())
                 {
                     OpenPortal(mage, spell, city); // already grouped -> open now
                     return;
                 }
-                if (from->GetGroup()) // already in another group: bot can't pull them in
+                ServiceSay(mage, std::string("Ask the traveler to invite YOU into their group; then open a portal to ") + city + ".",
+                           std::string("Invite me to your group and I'll open a portal to ") + city + ".");
                 {
-                    ServiceSay(mage, "The traveler is already in a group so you cannot invite them; tell them to invite "
-                                     "YOU into their group so you can open the portal.",
-                               "You'll have to invite me to your group, then I'll open it.");
-                    return;
-                }
-                if (BotInvitePlayer(mage, from))
-                {
-                    ServiceSay(mage, std::string("You just sent the traveler a group invite; tell them to accept and join "
-                                     "your group so you can open a portal to ") + city + ".",
-                               std::string("Join my group and I'll open a portal to ") + city + ".");
-                    g_pendingPortals.push_back({ mage->GetGUIDLow(), from->GetGUIDLow(), spell, city, time(nullptr) + 25 });
+                    bool exists = false;
+                    for (auto const& q : g_pendingPortals)
+                        if (q.mage == mage->GetGUIDLow() && q.player == from->GetGUIDLow()) { exists = true; break; }
+                    if (!exists)
+                        g_pendingPortals.push_back({ mage->GetGUIDLow(), from->GetGUIDLow(), spell, city, time(nullptr) + 40 });
                 }
                 return;
             }
@@ -1408,7 +1504,9 @@ public:
                                    "Hold still - drawing one from the shard now...",
                                    "Aye, a healthstone coming up - give me a breath..." }));
                 if (!wl->HasSpell(spell)) wl->LearnSpell(spell, false);
+                ClearConjured(wl); // free the bag so shard/healthstone fit
                 wl->StoreNewItemInInventorySlot(6265, 1); // soul shard so the cast can play
+                wl->StopMoving(true); // stand still so the cast isn't cancelled
                 CastByChainBase(wl, spell, wl); // visible cast during the wait
                 g_pendingGifts.push_back({ wl->GetGUIDLow(), from->GetGUIDLow(),
                                            spell, item, 1u,
@@ -1434,7 +1532,8 @@ public:
         // it and hands over a level-appropriate stack.
         if (wantsWater || wantsFood)
         {
-            if (Player* mage = NearestResident(from, R, CLASS_MAGE))
+            Player* mage = NearestResident(from, R, CLASS_MAGE);
+            if (mage)
             {
                 bool const water = wantsWater; // if both are asked, water first
                 uint32 const item = ConjuredItemForLevel(mage->GetLevel(), from->GetLevel(), water);
@@ -1447,6 +1546,8 @@ public:
                                        : "A traveler asks you for food; you begin conjuring it.",
                            water ? "Certainly - one moment, conjuring..." : "Of course - a moment...");
                 if (!mage->HasSpell(spell)) mage->LearnSpell(spell, false);
+                ClearConjured(mage); // free the bag so the conjure cast doesn't fail
+                mage->StopMoving(true); // stand still so the cast isn't cancelled
                 CastByChainBase(mage, spell, mage); // visible cast during the wait
                 g_pendingGifts.push_back({ mage->GetGUIDLow(), from->GetGUIDLow(),
                                            spell, item, count, line,
