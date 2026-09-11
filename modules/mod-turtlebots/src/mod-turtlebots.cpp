@@ -38,6 +38,7 @@
 #include "SpellMgr.h"
 #include "Timer.h"
 #include "Util.h"
+#include "Chat.h"
 
 #include <algorithm>
 #include <cmath>
@@ -204,6 +205,18 @@ namespace
     static std::vector<PendingTradeFill> g_pendingTradeFill; // fill a trade window a beat after opening it
     static std::set<uint32> g_botInitiatedTrade; // botGuid -> we opened this trade (give path)
     static std::set<uint32> g_botBegunTrade;     // botGuid -> we completed a player-opened handshake
+    struct SellIntent { uint32 resident; uint32 itemEntry; uint32 deadlineMs; uint32 price; };
+    static std::map<uint32, SellIntent> g_sellIntent;  // playerGuid -> pending sell-to-resident
+    static std::map<uint32, uint64> g_botBuyPricedFor; // botGuid -> signature of the goods we priced
+    static std::map<uint32, uint32> g_botPurseCap;     // botGuid -> coin purse cap (seeded on first deal)
+    static std::map<uint32, uint32> g_botEscort;       // botGuid -> buyer it is walking over to trade with
+    static std::map<uint32, bool>   g_vendorItemCache; // itemEntry -> sold by some vendor?
+    static time_t g_nextPurseRefill = 0;               // next slow top-up of resident purses
+    struct PendingWhisper { uint32 bot; uint32 player; std::string line; time_t at; };
+    static std::vector<PendingWhisper> g_pendingWhispers; // delayed whisper replies to sell offers
+    static uint32 g_marketFactorPct = 100;               // pay this %% of scanned market price
+    struct MarketCache { uint32 price; time_t ts; };
+    static std::map<uint32, MarketCache> g_marketCache;  // itemEntry -> resolved price (short TTL)
     static std::map<uint32, uint32> g_botTradeAcceptAt; // botGuid -> ms to accept (after items are shown)
     static std::map<uint32, uint32> g_botHoldUntilMs;   // botGuid -> ms to stand still until (trade + a beat)
     static std::map<uint32, uint32> g_warlockShards; // per-warlock soul-shard reserve
@@ -637,6 +650,114 @@ namespace
             bot->DestroyItemCount(cid, 0xFFFFFFFFu, true);
     }
 
+    // Is this item sold by any vendor? (reagents/vendor stock are excluded from buying.)
+    static bool IsVendorItem(uint32 entry)
+    {
+        auto it = g_vendorItemCache.find(entry);
+        if (it != g_vendorItemCache.end())
+            return it->second;
+        bool sold = false;
+        if (QueryResult* r = WorldDatabase.PQuery("SELECT 1 FROM npc_vendor WHERE item=%u LIMIT 1", entry))
+        {
+            sold = true;
+            delete r;
+        }
+        g_vendorItemCache[entry] = sold;
+        return sold;
+    }
+
+    // First item entry in a chat message's |Hitem:<entry>:...| link, or 0.
+    static uint32 ItemEntryFromLink(std::string const& msg)
+    {
+        size_t p = msg.find("Hitem:");
+        if (p == std::string::npos) return 0;
+        p += 6; uint32 e = 0; bool any = false;
+        while (p < msg.size() && msg[p] >= '0' && msg[p] <= '9') { e = e * 10 + uint32(msg[p] - '0'); ++p; any = true; }
+        return any ? e : 0;
+    }
+
+    // Give a resident a one-time coin purse the first time it strikes a deal.
+    static void SeedPurse(Player* bot)
+    {
+        uint32 const low = bot->GetGUIDLow();
+        if (g_botPurseCap.find(low) != g_botPurseCap.end())
+            return;
+        uint32 const lvl = bot->GetLevel();
+        uint32 const cap = (lvl < 40 ? 20u : 20u + (lvl - 40) * 5u) * 10000u; // <40: mount money; +5g/lvl after
+        g_botPurseCap[low] = cap;
+        if (bot->GetMoney() < cap)
+            bot->ModifyMoney(int32(cap - bot->GetMoney()));
+    }
+
+    // Approximate a realistic market value from quality + item level. The live AH is the
+    // real source when stocked; this fallback keeps vendor BuyPrice from undervaluing gear.
+    // Calibrated so an epic like Staff of Jordan (q4, ilvl40) is ~50g; never below 120%% of
+    // the vendor buy-back.
+    static uint32 MarketValue(ItemPrototype const* pr)
+    {
+        static uint32 const kPerIlvl2[] = { 5, 10, 40, 120, 312, 800, 800 }; // by quality 0..6
+        uint32 q = pr->Quality; if (q > 6) q = 6;
+        uint32 il = pr->ItemLevel ? pr->ItemLevel : (pr->RequiredLevel ? pr->RequiredLevel : 1);
+        uint64 v = uint64(il) * il * kPerIlvl2[q];
+        uint64 floor = uint64(pr->SellPrice) * 6 / 5;
+        return uint32(v > floor ? v : floor);
+    }
+
+    // Realistic buy price from the scanned Eversong Wilds market (min buyout, else average)
+    // times the configured factor. Items never scanned are queued for the offline refresher
+    // and priced by the heuristic until real data arrives.
+    static uint32 MarketPrice(uint32 entry, ItemPrototype const* proto)
+    {
+        time_t const now = time(nullptr);
+        auto ci = g_marketCache.find(entry);
+        if (ci != g_marketCache.end() && now - ci->second.ts < 300)
+            return ci->second.price;
+        uint32 base = 0; bool scanned = false;
+        if (QueryResult* r = CharacterDatabase.PQuery(
+                "SELECT min_buyout, avg_price FROM mod_turtlebots_market WHERE item_entry=%u", entry))
+        {
+            scanned = true;
+            auto row = r->Fetch();
+            uint32 const mb = row[0].GetUInt32();
+            uint32 const avg = row[1].GetUInt32();
+            base = mb ? mb : avg;
+            delete r;
+        }
+        if (!scanned)
+            CharacterDatabase.PExecute("INSERT IGNORE INTO mod_turtlebots_market_want (item_entry) VALUES (%u)", entry);
+        uint32 const price = base ? uint32(uint64(base) * g_marketFactorPct / 100)
+                                  : MarketValue(proto);
+        g_marketCache[entry] = { price, now };
+        return price;
+    }
+
+    // Copper -> "12g 34s 56c", skipping zero parts.
+    static std::string MoneyStr(uint32 copper)
+    {
+        uint32 g = copper / 10000, sv = (copper % 10000) / 100, c = copper % 100;
+        std::string out;
+        if (g) out += std::to_string(g) + "g";
+        if (sv) { if (!out.empty()) out += " "; out += std::to_string(sv) + "s"; }
+        if (c || out.empty()) { if (!out.empty()) out += " "; out += std::to_string(c) + "c"; }
+        return out;
+    }
+
+    static void QueueWhisper(Player* bot, Player* player, std::string const& line)
+    {
+        g_pendingWhispers.push_back({ bot->GetGUIDLow(), player->GetGUIDLow(), line,
+                                      time(nullptr) + time_t(urand(2, 5)) });
+    }
+
+    // A real player whisper (not an NPC monster-whisper) so the recipient can click the
+    // sender's name to reply or invite. Sent straight to the target's session.
+    static void SendBotWhisper(Player* bot, Player* player, std::string const& text)
+    {
+        WorldPacket data;
+        ChatHandler::BuildChatPacket(data, CHAT_MSG_WHISPER, text, LANG_UNIVERSAL, CHAT_TAG_NONE,
+            bot->GetObjectGuid(), bot->GetName(), player->GetObjectGuid(), player->GetName());
+        player->GetSession()->SendPacket(&data);
+    }
+
     static void HandOverItems(Player* caster, Player* plr, uint32 itemId, uint32 count)
     {
         // Open a real trade window, then fill it a beat later: the client needs
@@ -711,6 +832,7 @@ namespace
             g_llmUrl        = sConfig.GetStringDefault("mod-turtlebots.LLM.Url", "http://100.69.207.60:11434/v1/chat/completions");
             g_llmModel      = sConfig.GetStringDefault("mod-turtlebots.LLM.Model", "qwen2.5:32b-instruct-q4_K_M");
             g_llmDeadlineMs = sConfig.GetIntDefault("mod-turtlebots.LLM.TimeoutMs", 5000);
+            g_marketFactorPct = sConfig.GetIntDefault("mod-turtlebots.Market.FactorPct", 100);
             ParseLlmUrl();
             sLog.outString("[mod-turtlebots] loaded (enable=%u, target=%u, residents=%u, advLevel=%u).",
                            _enabled ? 1 : 0, _target, _residents, _advLevel);
@@ -734,6 +856,23 @@ namespace
                                 r->Say(g_pendingReactions[i].line, LANG_UNIVERSAL);
                         g_pendingReactions[i] = g_pendingReactions.back();
                         g_pendingReactions.pop_back();
+                    }
+                    else ++i;
+                }
+            }
+            if (!g_pendingWhispers.empty())
+            {
+                time_t now = time(nullptr);
+                for (size_t i = 0; i < g_pendingWhispers.size(); )
+                {
+                    if (now >= g_pendingWhispers[i].at)
+                    {
+                        Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, g_pendingWhispers[i].bot));
+                        Player* pl = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, g_pendingWhispers[i].player));
+                        if (b && b->IsInWorld() && pl && pl->IsInWorld())
+                            SendBotWhisper(b, pl, g_pendingWhispers[i].line);
+                        g_pendingWhispers[i] = g_pendingWhispers.back();
+                        g_pendingWhispers.pop_back();
                     }
                     else ++i;
                 }
@@ -805,6 +944,28 @@ namespace
                 Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, *sit));
                 if (!b || !b->GetTradeData()) sit = g_botBegunTrade.erase(sit); else ++sit;
             }
+            for (auto sit = g_botBuyPricedFor.begin(); sit != g_botBuyPricedFor.end(); )
+            {
+                Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, sit->first));
+                if (!b || !b->GetTradeData()) sit = g_botBuyPricedFor.erase(sit); // purse is real gold, keep it
+                else ++sit;
+            }
+            // Slowly top resident purses back up to their cap (finite gold source).
+            if (!g_botPurseCap.empty())
+            {
+                time_t const tnow = time(nullptr);
+                if (tnow >= g_nextPurseRefill)
+                {
+                    g_nextPurseRefill = tnow + 600; // every 10 minutes
+                    for (auto const& pc : g_botPurseCap)
+                    {
+                        Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, pc.first));
+                        if (!b || b->GetTradeData() || b->GetMoney() >= pc.second) continue;
+                        uint32 const target = std::min(pc.second, b->GetMoney() + 50000u); // +5g/tick
+                        b->ModifyMoney(int32(target - b->GetMoney()));
+                    }
+                }
+            }
             for (uint32 rlow : g_turtleResidents)
             {
                 Player* bot = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, rlow));
@@ -836,6 +997,100 @@ namespace
                 Player* trader = td->GetTrader();
                 if (!trader || trader->GetTypeId() != TYPEID_PLAYER)
                     continue;
+                if (g_botInitiatedTrade.count(rlow))
+                    continue; // our own give-trade, handled elsewhere
+
+                // Buy path: the player earlier offered (via /yell or the Trade channel,
+                // with an item link) to sell this resident specific loot. The bot buys it
+                // at the full vendor BuyPrice from its own finite purse (no minting, so a
+                // resident can run dry), and only goods it could actually use, never vendor
+                // stock. Bought items are dropped afterwards so bags don't fill.
+                {
+                    uint32 const plow = trader->GetGUIDLow();
+                    auto si = g_sellIntent.find(plow);
+                    bool const buyMode = si != g_sellIntent.end() &&
+                                         si->second.resident == rlow &&
+                                         int32(WorldTimer::getMSTime() - si->second.deadlineMs) < 0;
+                    TradeData* his = td->GetTraderData();
+                    if (buyMode && his)
+                    {
+                        uint64 sig = 1469598103934665603ull;
+                        uint32 price = 0; bool anyItem = false, ineligible = false;
+                        uint32 const wantEntry = si->second.itemEntry;
+                        uint32 const unit = si->second.price;
+                        for (int i = 0; i < TRADE_SLOT_TRADED_COUNT; ++i)
+                        {
+                            Item* it = his->GetItem(TradeSlots(i));
+                            if (!it) continue;
+                            anyItem = true;
+                            uint32 const c = it->GetCount();
+                            sig = (sig ^ (uint64(it->GetEntry()) * 131 + c)) * 1099511628211ull;
+                            ItemPrototype const* pr = it->GetProto();
+                            if (!pr || it->GetEntry() != wantEntry || IsVendorItem(pr->ItemId) ||
+                                bot->CanUseItem(pr) != EQUIP_ERR_OK)
+                                ineligible = true; // not the quoted item, vendor stock, or wrong class
+                            else
+                                price += unit * c;
+                        }
+                        if (anyItem && (ineligible || price == 0))
+                        {
+                            if (g_botBuyPricedFor.find(rlow) == g_botBuyPricedFor.end())
+                                ServiceSay(bot, "The traveler put up goods you can't use or that any vendor sells; decline politely.",
+                                           RPick({ "Sorry - I only buy gear I can use, nothing you'd rebuy from a vendor.",
+                                                   "That's not for me, friend - I deal in loot I can put to use.",
+                                                   "I'll pass on that - a vendor's your better bet for it." }));
+                            bot->TradeCancel(true);
+                            g_botBuyPricedFor.erase(rlow); g_sellIntent.erase(plow);
+                            continue;
+                        }
+                        if (anyItem)
+                        {
+                            if (bot->GetMoney() < price) // purse can't cover it
+                            {
+                                if (g_botBuyPricedFor.find(rlow) == g_botBuyPricedFor.end())
+                                    ServiceSay(bot, "The goods are worth more coin than you carry; say you can't afford it.",
+                                               RPick({ "That's more than I can pay right now, friend.",
+                                                       "I haven't the coin for that today - sorry.",
+                                                       "Beyond my purse just now, I'm afraid." }));
+                                bot->TradeCancel(true);
+                                g_botBuyPricedFor.erase(rlow); g_sellIntent.erase(plow);
+                                continue;
+                            }
+                            auto pf = g_botBuyPricedFor.find(rlow);
+                            if (pf == g_botBuyPricedFor.end() || pf->second != sig)
+                            {
+                                td->SetMoney(price);
+                                td->SetAccepted(true);
+                                g_botBuyPricedFor[rlow] = sig;
+                                g_botTradeDeadline[rlow] = time(nullptr) + 40;
+                                ServiceSay(bot, "You offer full coin for the traveler's loot.",
+                                           RPick({ "Fair coin for it - there's my offer.",
+                                                   "That I can use; coin's in the window.",
+                                                   "Good find - here's your gold for it." }));
+                            }
+                            if (his->IsAccepted())
+                            {
+                                std::vector<std::pair<uint32,uint32>> bought;
+                                for (int i = 0; i < TRADE_SLOT_TRADED_COUNT; ++i)
+                                    if (Item* it = his->GetItem(TradeSlots(i)))
+                                        bought.push_back(std::make_pair(it->GetEntry(), it->GetCount()));
+                                WorldPacket ap; ap << uint32(0);
+                                bot->GetSession()->HandleAcceptTradeOpcode(ap);
+                                if (!bot->GetTradeData()) // deal done, coin already left the purse
+                                {
+                                    for (size_t b = 0; b < bought.size(); ++b)
+                                        bot->DestroyItemCount(bought[b].first, bought[b].second, true);
+                                    g_botBuyPricedFor.erase(rlow); g_sellIntent.erase(plow);
+                                    ServiceSay(bot, "The deal is done; thank the traveler.",
+                                               RPick({ "Pleasure doing business!",
+                                                       "There's your coin - good trading!",
+                                                       "A fair deal - safe travels!" }));
+                                }
+                            }
+                            continue; // buy handled this tick
+                        }
+                    }
+                }
                 // The bot must offer nothing -- otherwise this is our own give-trade.
                 bool botOffersNothing = (td->GetMoney() == 0);
                 for (int i = 0; i < TRADE_SLOT_TRADED_COUNT && botOffersNothing; ++i)
@@ -933,6 +1188,38 @@ namespace
                 }
                 if (done) { g_pendingPortals[i] = g_pendingPortals.back(); g_pendingPortals.pop_back(); }
                 else ++i;
+            }
+
+            // A resident that offered to buy accepts a group invite from that buyer and
+            // walks over so they can trade (a global Trade-channel request must lead the
+            // roaming resident to the seller). The deal itself needs no group.
+            for (auto const& kv : g_sellIntent)
+            {
+                Player* bot = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, kv.second.resident));
+                if (bot && bot->IsInWorld() && bot->GetGroupInvite())
+                {
+                    WorldPacket gp; // no client to click Yes -> accept it ourselves
+                    bot->GetSession()->HandleGroupAcceptOpcode(gp);
+                    g_botEscort[kv.second.resident] = kv.first;
+                }
+            }
+            for (auto it = g_botEscort.begin(); it != g_botEscort.end(); )
+            {
+                Player* bot = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, it->first));
+                auto si = g_sellIntent.find(it->second);
+                bool const live = bot && bot->IsInWorld() && si != g_sellIntent.end() &&
+                                  si->second.resident == it->first &&
+                                  int32(WorldTimer::getMSTime() - si->second.deadlineMs) < 0;
+                if (!live)
+                {
+                    if (bot && bot->IsInWorld())
+                    {
+                        if (bot->GetGroup()) bot->RemoveFromGroup();
+                        bot->GetMotionMaster()->MoveIdle(); // stop following, resume city life
+                    }
+                    it = g_botEscort.erase(it);
+                }
+                else ++it;
             }
 
             // Deliver finished (or timed-out) in-character LLM lines on the main thread.
@@ -1163,6 +1450,20 @@ namespace
                     if (int32(WorldTimer::getMSTime() - h->second) < 0)
                         return;                 // still in the post-trade hold
                     g_botHoldUntilMs.erase(h);
+                }
+            }
+
+            {
+                auto e = g_botEscort.find(low);
+                if (e != g_botEscort.end())
+                {
+                    Player* buyer = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, e->second));
+                    if (buyer && buyer->IsInWorld() && buyer->GetMapId() == bot->GetMapId())
+                    {
+                        if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != FOLLOW_MOTION_TYPE)
+                            bot->GetMotionMaster()->MoveFollow(buyer, 2.0f, 0.0f);
+                        return; // heading to the buyer; skip ambient roaming
+                    }
                 }
             }
 
@@ -1453,7 +1754,7 @@ class TurtleBotsChatScript : public PlayerScript
 {
 public:
     TurtleBotsChatScript()
-        : PlayerScript("mod-turtlebots_chat", { PLAYERHOOK_ON_CHAT_SAY })
+        : PlayerScript("mod-turtlebots_chat", { PLAYERHOOK_ON_CHAT_SAY, PLAYERHOOK_ON_CHAT_YELL, PLAYERHOOK_ON_CHAT_CHANNEL })
     {
     }
 
@@ -1646,6 +1947,80 @@ public:
     }
 
 private:
+    void OnChatYell(Player* from, float range, char const* msg) override
+    {
+        if (!from || !msg || !*msg) return;
+        if (!from->GetSession() || from->GetSession()->IsHeadless()) return;
+        HandleSellOffer(from, msg, range > 0.f ? range : 40.f);
+    }
+
+    void OnChatChannel(Player* from, char const* channel, char const* msg) override
+    {
+        if (!from || !msg || !*msg || !channel) return;
+        if (!from->GetSession() || from->GetSession()->IsHeadless()) return;
+        std::string ch(channel);
+        for (char& c : ch) if (c >= 'A' && c <= 'Z') c = char(c + 32);
+        if (ch.find("trade") == std::string::npos) return; // only the Trade channel
+        HandleSellOffer(from, msg, 1000.f); // global request: nearest resident to the player
+    }
+
+    // A player offered loot for sale (item link) via yell or the Trade channel. Pick the
+    // nearest resident who can use it, isn't buying vendor stock, and can afford the full
+    // vendor BuyPrice; that resident quotes and remembers the offer for the coming trade.
+    void HandleSellOffer(Player* from, char const* msg, float R)
+    {
+        uint32 const entry = ItemEntryFromLink(msg);
+        if (!entry) return; // no item linked -> not a sell offer
+        ItemPrototype const* proto = sObjectMgr.GetItemPrototype(entry);
+        if (!proto) return;
+        Player* best = nullptr; float bestDist = R;
+        for (uint32 low : g_turtleResidents)
+        {
+            Player* res = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+            if (!res || res == from || !res->IsInWorld() || res->GetMapId() != from->GetMapId())
+                continue;
+            float const d = from->GetDistance(res);
+            if (d > bestDist) continue;
+            if (res->CanUseItem(proto) != EQUIP_ERR_OK) continue; // wrong class/proficiency
+            best = res; bestDist = d;
+        }
+        if (!best)
+        {
+            if (Player* any = NearestResident(from, R, 0))
+                QueueWhisper(any, from, RPick({ "That's not for my kind - find someone who'd wear it.",
+                                                "No use to me, friend - ask around.",
+                                                "Not my sort of gear, sorry." }));
+            return;
+        }
+        if (IsVendorItem(entry))
+        {
+            QueueWhisper(best, from, RPick({ "A vendor sells those - I only buy real finds.",
+                                             "That's common stock, friend - a merchant's your man.",
+                                             "I don't deal in what any vendor carries." }));
+            return;
+        }
+        uint32 const price = MarketPrice(entry, proto);
+        SeedPurse(best);
+        if (best->GetMoney() < price)
+        {
+            char const* line = best->GetLevel() < 40
+                ? RPick({ "Can't afford that - still saving for my first mount, friend.",
+                          "Too rich for me; I'm scraping together mount money as it is.",
+                          "No chance - every copper's going toward my mount right now." })
+                : RPick({ "That's beyond my purse right now, friend.",
+                          "I can't cover that today - too rich for me.",
+                          "More than I can pay, sorry." });
+            QueueWhisper(best, from, line);
+            return;
+        }
+        g_sellIntent[from->GetGUIDLow()] = SellIntent{ best->GetGUIDLow(), entry, WorldTimer::getMSTime() + 120000u, price };
+        std::string line = RPick({ "I'll give you %s for it - bring it and trade me.",
+                                   "That I can use. %s if you bring it over to trade.",
+                                   "Good find - %s for it; come trade me." });
+        size_t ph = line.find("%s"); if (ph != std::string::npos) line.replace(ph, 2, MoneyStr(price));
+        QueueWhisper(best, from, line);
+    }
+
     Player* NearestResident(Player* from, float R, uint8 wantClass)
     {
         Player* best = nullptr;
