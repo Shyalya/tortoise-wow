@@ -39,6 +39,10 @@
 #include "Timer.h"
 #include "Util.h"
 #include "Chat.h"
+#include "GridNotifiers.h"
+#include "GridNotifiersImpl.h"
+#include "Cell.h"
+#include "CellImpl.h"
 
 #include <algorithm>
 #include <cmath>
@@ -173,6 +177,37 @@ namespace
         return true;
     }
 
+    // Classes that carry a real single-target friendly buff.
+    static bool CanBuff(uint8 cls)
+    {
+        return cls == CLASS_MAGE || cls == CLASS_PRIEST || cls == CLASS_DRUID || cls == CLASS_PALADIN;
+    }
+    static uint32 ClassPrimaryBuff(uint8 cls)
+    {
+        switch (cls) { case CLASS_MAGE: return 1459; case CLASS_PRIEST: return 1243;
+                       case CLASS_DRUID: return 1126; case CLASS_PALADIN: return 19740; }
+        return 0;
+    }
+    // Cast the resident's class buff(s) on a target, best known rank.
+    static void CastClassBuffs(Player* res, Player* target)
+    {
+        switch (res->GetClass())
+        {
+            case CLASS_MAGE:   CastByChainBase(res, 1459, target); break;                            // Arcane Intellect
+            case CLASS_PRIEST: CastByChainBase(res, 1243, target); CastByChainBase(res, 14752, target); break; // Fortitude + Divine Spirit
+            case CLASS_DRUID:  CastByChainBase(res, 1126, target); break;                            // Mark of the Wild
+            case CLASS_PALADIN:
+            {
+                uint8 const tc = target->GetClass();
+                bool const caster = (tc == CLASS_MAGE || tc == CLASS_PRIEST || tc == CLASS_WARLOCK ||
+                                     tc == CLASS_DRUID || tc == CLASS_SHAMAN);
+                CastByChainBase(res, caster ? 19742u : 19740u, target); // Blessing of Wisdom : Might
+                break;
+            }
+            default: break;
+        }
+    }
+
     enum BotRole : uint8 { ROLE_RESIDENT = 0, ROLE_ADVENTURER = 1 };
 
     // A sane creature to grind: a mob, not a critter / boss / totem, attackable,
@@ -219,6 +254,7 @@ namespace
     enum { COOK_FIRE = 1, COOK_WAIT = 2 };
     struct CookState { uint8 phase; uint32 atMs; };
     static std::map<uint32, CookState> g_cooking;      // botGuid -> active cooking activity
+    static std::map<uint32, uint32> g_botBuffAt;       // botGuid -> next ms it may proactively buff
     static uint32 const kCookRaw[4]   = { 6291, 6303, 6289, 6317 }; // raw fish they catch
     static uint32 const kCookDone[4]  = { 6290, 787,  4592, 6316 }; // cooked results
     static uint32 const kCookSpell[4] = { 7751, 7752, 7753, 7754 }; // apprentice recipes
@@ -823,7 +859,18 @@ namespace
     // Race-appropriate basic mount spell (Orc wolf, Undead skeletal horse, Tauren kodo, Troll raptor).
     static uint32 RaceMountSpell(uint8 race)
     {
-        switch (race) { case 2: return 6654; case 5: return 17464; case 6: return 18990; case 8: return 10796; }
+        switch (race)
+        {
+            case 1:  return 458;   // Human - Brown Horse
+            case 2:  return 6654;  // Orc - Brown Wolf
+            case 3:  return 6777;  // Dwarf - Gray Ram
+            case 4:  return 8394;  // Night Elf - Striped Frostsaber
+            case 5:  return 17464; // Undead - Brown Skeletal Horse
+            case 6:  return 18990; // Tauren - Brown Kodo
+            case 7:  return 10969; // Gnome - Blue Mechanostrider
+            case 8:  return 10796; // Troll - Turquoise Raptor
+            case 10: return 458;   // High Elf - horse (Alliance default)
+        }
         return 0;
     }
     // Give a mount at level 40+ (learned as a real spell, like a trained mount).
@@ -1699,6 +1746,32 @@ namespace
             if (now < nextAt)
                 return; // standing calmly between actions
 
+            // Living city: a caster resident occasionally buffs a nearby real player.
+            if (CanBuff(bot->GetClass()))
+            {
+                uint32& buffAt = g_botBuffAt[low];
+                if (now >= buffAt)
+                {
+                    buffAt = now + urand(20000, 45000);
+                    std::list<Player*> nearby;
+                    MaNGOS::AnyPlayerInObjectRangeCheck chk(bot, 20.0f);
+                    MaNGOS::PlayerListSearcher<MaNGOS::AnyPlayerInObjectRangeCheck> srch(nearby, chk);
+                    Cell::VisitWorldObjects(bot, srch, 20.0f);
+                    uint32 const pb = ClassPrimaryBuff(bot->GetClass());
+                    uint32 const pbRank = pb ? HighestKnownRankInChain(bot, pb) : 0;
+                    for (Player* pl : nearby)
+                    {
+                        if (!pl->GetSession() || pl->GetSession()->IsHeadless() || !pl->IsAlive())
+                            continue; // real, living players only
+                        if (pbRank && pl->HasAura(pbRank))
+                            continue; // already carries our buff
+                        bot->StopMoving(true);
+                        CastClassBuffs(bot, pl);
+                        return; // buffed someone this beat
+                    }
+                }
+            }
+
             // Cook the catch: if they hold raw fish and know cooking, sit at a campfire and cook.
             if (bot->HasSkill(185))
             {
@@ -2176,6 +2249,34 @@ public:
                 return;
             }
             // no mage in earshot -> fall through to a normal reaction
+        }
+
+        // A traveler asks for a buff -> every nearby resident who can buff obliges.
+        bool const wantsBuff = ContainsWord(lower, "buff") || ContainsWord(lower, "bless") ||
+                               lower.find("buff me") != std::string::npos;
+        if (wantsBuff)
+        {
+            Player* speaker = nullptr;
+            for (uint32 low : g_turtleResidents)
+            {
+                Player* res = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+                if (!res || res == from || !res->IsInWorld() || res->GetMapId() != from->GetMapId())
+                    continue;
+                if (from->GetDistance(res) > R || !CanBuff(res->GetClass()))
+                    continue;
+                res->StopMoving(true);
+                CastClassBuffs(res, from);
+                if (!speaker) speaker = res;
+            }
+            if (speaker)
+                ServiceSay(speaker, "A traveler asks for a buff; oblige them warmly.",
+                           RPick({ "There you go - buffed up!", "Blessings upon you, traveler!",
+                                   "Stay strong out there, friend!" }));
+            else if (Player* any = NearestResident(from, R, 0))
+                ServiceSay(any, "A traveler asks for a buff, but no one here can grant one.",
+                           RPick({ "You'll want a mage, priest or druid for that, friend.",
+                                   "None of us here can buff you - ask a caster." }));
+            return;
         }
 
         // General chat -> the nearest resident greets or acknowledges.
