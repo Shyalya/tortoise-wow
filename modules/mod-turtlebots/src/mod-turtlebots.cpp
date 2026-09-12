@@ -43,6 +43,7 @@
 #include "GridNotifiersImpl.h"
 #include "Cell.h"
 #include "CellImpl.h"
+#include "ObservabilityEmitter.h" // TortoiseBots telemetry (residents feed the dashboard)
 
 #include <algorithm>
 #include <cmath>
@@ -1031,6 +1032,17 @@ namespace
             ParseLlmUrl();
             sLog.outString("[mod-turtlebots] loaded (enable=%u, target=%u, residents=%u, advLevel=%u).",
                            _enabled ? 1 : 0, _target, _residents, _advLevel);
+
+            // Feed our residents into TortoiseBots' telemetry so the observability
+            // dashboard shows them (state/stuck/combat) even with adventurer AI off.
+            // Runs on the world thread inside the emitter Update tick.
+            sObservabilityEmitter.SetExternalRosterProvider([](std::vector<Player*>& out)
+            {
+                for (uint32 low : g_turtleResidents)
+                    if (Player* p = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low)))
+                        if (p->IsInWorld())
+                            out.push_back(p);
+            });
         }
 
         void OnUpdate(uint32 diff) override
@@ -1639,7 +1651,11 @@ namespace
             uint16 dest = 0;
             if (bot->CanEquipItem(EQUIPMENT_SLOT_MAINHAND, dest, pole, true) != EQUIP_ERR_OK)
                 return false;
-            bot->EquipItem(dest, pole, true); // swaps the current weapon into the bag
+            // SwapItem is the click-equivalent: it frees the pole's bag slot as it equips it.
+            // EquipItem(dest, pole) left the same Item* in BOTH the bag slot and the mainhand
+            // (dangling pointer) -> a later StoreNewItem scan deref'd it in
+            // Item::CanBeMergedPartlyWith -> SIGSEGV. See kith-doppelter-item-zeiger.
+            bot->SwapItem(pole->GetPos(), dest);
             return true;
         }
 
