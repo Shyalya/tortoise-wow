@@ -820,6 +820,27 @@ namespace
                 LearnSkillRecipes(bot, sp, value);
     }
 
+    // Race-appropriate basic mount spell (Orc wolf, Undead skeletal horse, Tauren kodo, Troll raptor).
+    static uint32 RaceMountSpell(uint8 race)
+    {
+        switch (race) { case 2: return 6654; case 5: return 17464; case 6: return 18990; case 8: return 10796; }
+        return 0;
+    }
+    // Give a mount at level 40+ (learned as a real spell, like a trained mount).
+    static void AssignMount(Player* bot)
+    {
+        if (bot->GetLevel() < 40) return;
+        uint32 const spell = RaceMountSpell(bot->GetRace());
+        if (spell && !bot->HasSpell(spell)) bot->LearnSpell(spell, false);
+    }
+    // Hop on the mount for a longer journey (pond trip, later city travel).
+    static void MountUp(Player* bot)
+    {
+        if (bot->IsMounted() || bot->IsInCombat() || bot->GetLevel() < 40) return;
+        uint32 const spell = RaceMountSpell(bot->GetRace());
+        if (spell && bot->HasSpell(spell)) bot->CastSpell(bot, spell, false);
+    }
+
     static void HandOverItems(Player* caster, Player* plr, uint32 itemId, uint32 count)
     {
         // Open a real trade window, then fill it a beat later: the client needs
@@ -1524,9 +1545,10 @@ namespace
                 {
                     if (dist2 > 400.0f && now - fs.atMs <= 90000)
                     {
+                        MountUp(bot); // ride there if they have a mount
                         if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
                             bot->GetMotionMaster()->MovePoint(0, fs.x, fs.y, fs.z, MOVE_PATHFINDING);
-                        return; // heading to the water (spots sit in water; up to 30s)
+                        return; // heading to the water (up to 90s)
                     }
                     fs.phase = FISH_CAST; fs.atMs = now; // within ~20yd, or done walking -> fish from here
                     // fall through
@@ -1534,6 +1556,7 @@ namespace
                 case FISH_CAST:
                     bot->GetMotionMaster()->MoveIdle();
                     bot->StopMoving(true);
+                    bot->Unmount(); // can't fish from the saddle
                     bot->SetFacingTo(atan2(fs.y - bot->GetPositionY(), fs.x - bot->GetPositionX())); // face the water
                     EnsureFishingPole(bot);           // best-effort: pole + real cast are just for the visual
                     bot->CastSpell(bot, 7620, false); // if a pole got equipped this places a real bobber
@@ -1605,6 +1628,7 @@ namespace
             g_turtleResidents.insert(low);
             PersonalityFor(low); // assign & persist a personality on first sight
             AssignProfessions(bot); // give real, level-scaled professions on first sight
+            AssignMount(bot); // give a race-appropriate mount at level 40+
             // Move the resident into the city once; then they live/roam there.
             if (!_placed.count(low))
             {
