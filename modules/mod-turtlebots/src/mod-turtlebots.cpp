@@ -214,7 +214,7 @@ namespace
     static std::vector<FishSpot> g_fishSpots;          // cached water spots near the city
     static bool g_fishSpotsLoaded = false;
     enum { FISH_MOVE = 1, FISH_CAST = 2, FISH_WAIT = 3 };
-    struct FishState { uint8 phase; float x, y, z, o; uint32 atMs; uint8 casts; };
+    struct FishState { uint8 phase; float x, y, z, o; uint32 atMs; uint8 casts; uint32 endMs; };
     static std::map<uint32, FishState> g_fishing;      // botGuid -> active fishing activity
     static std::map<uint32, bool>   g_vendorItemCache; // itemEntry -> sold by some vendor?
     static time_t g_nextPurseRefill = 0;               // next slow top-up of resident purses
@@ -1548,7 +1548,7 @@ namespace
                         bob->Use(bot);                       // SendLoot(LOOT_FISHING) + skill-up
                         bot->AutoStoreLoot(bob->loot, true); // bag the fish
                         bot->SendLootRelease(bob->GetObjectGuid());
-                        if (++fs.casts >= 4) { g_fishing.erase(low); return; }
+                        if (now >= fs.endMs) { g_fishing.erase(low); return; }
                         fs.phase = FISH_CAST; fs.atMs = now;
                         return;
                     }
@@ -1556,13 +1556,13 @@ namespace
                         return; // real bobber is out; wait for the bite
                     // No bobber placed (shore/water geometry) or the bite window passed ->
                     // pragmatic real catch: proper skill roll + a real zone fish, then cast again.
-                    if (now - fs.atMs >= 4000)
+                    if (now - fs.atMs >= 15000)
                     {
                         sLog.outString("TBFISH2 %s pragmatic catch", bot->GetName());
                         bot->UpdateFishingSkill();
                         static uint32 const kFish[] = { 6291, 6289, 6303, 6317 };
                         bot->StoreNewItemInInventorySlot(kFish[urand(0, 3)], 1);
-                        if (++fs.casts >= 4) { g_fishing.erase(low); return; }
+                        if (now >= fs.endMs) { g_fishing.erase(low); return; }
                         fs.phase = FISH_CAST; fs.atMs = now;
                     }
                     return;
@@ -1644,7 +1644,7 @@ namespace
             if (!g_fishSpots.empty() && bot->HasSkill(356) && urand(0, 99) < 80) // TEST: high chance
             {
                 FishSpot const& sp = g_fishSpots[urand(0, uint32(g_fishSpots.size()) - 1)];
-                g_fishing[low] = FishState{ uint8(FISH_MOVE), sp.x, sp.y, sp.z, sp.o, now, 0 };
+                g_fishing[low] = FishState{ uint8(FISH_MOVE), sp.x, sp.y, sp.z, sp.o, now, 0, now + urand(600u, 3600u) * 1000u };
                 nextAt = now + urand(30000, 60000);
                 return;
             }
