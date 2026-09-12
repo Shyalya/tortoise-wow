@@ -255,6 +255,8 @@ namespace
     struct CookState { uint8 phase; uint32 atMs; };
     static std::map<uint32, CookState> g_cooking;      // botGuid -> active cooking activity
     static std::map<uint32, uint32> g_botBuffAt;       // botGuid -> next ms it may proactively buff
+    struct FollowState { uint32 target; uint32 untilMs; };
+    static std::map<uint32, FollowState> g_botFollow;  // botGuid -> who it walks with (player or resident)
     static uint32 const kCookRaw[4]   = { 6291, 6303, 6289, 6317 }; // raw fish they catch
     static uint32 const kCookDone[4]  = { 6290, 787,  4592, 6316 }; // cooked results
     static uint32 const kCookSpell[4] = { 7751, 7752, 7753, 7754 }; // apprentice recipes
@@ -1734,6 +1736,24 @@ namespace
                 }
             }
 
+            // Following a player (on request) or ambling alongside another resident.
+            {
+                auto f = g_botFollow.find(low);
+                if (f != g_botFollow.end())
+                {
+                    Player* tgt = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, f->second.target));
+                    if (tgt && tgt->IsInWorld() && tgt->GetMapId() == bot->GetMapId() &&
+                        int32(WorldTimer::getMSTime() - f->second.untilMs) < 0)
+                    {
+                        if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != FOLLOW_MOTION_TYPE)
+                            bot->GetMotionMaster()->MoveFollow(tgt, 2.0f, float(low % 6));
+                        return; // walking with them; skip ambient roaming
+                    }
+                    bot->GetMotionMaster()->MoveIdle();
+                    g_botFollow.erase(low);
+                }
+            }
+
             MotionMaster* mm = bot->GetMotionMaster();
             // Walking -> let the core carry it; only decide when idle.
             if (mm->GetCurrentMovementGeneratorType() != IDLE_MOTION_TYPE)
@@ -1788,12 +1808,32 @@ namespace
 
             // Sometimes go fish: residents with the skill wander to the water and fish for real.
             LoadFishSpots();
-            if (!g_fishSpots.empty() && bot->HasSkill(356) && urand(0, 99) < 80) // TEST: high chance
+            if (!g_fishSpots.empty() && bot->HasSkill(356) && urand(0, 99) < 20)
             {
                 FishSpot const& sp = g_fishSpots[urand(0, uint32(g_fishSpots.size()) - 1)];
                 g_fishing[low] = FishState{ uint8(FISH_MOVE), sp.x, sp.y, sp.z, sp.o, now, 0, now + urand(600u, 3600u) * 1000u };
                 nextAt = now + urand(30000, 60000);
                 return;
+            }
+
+            // Ambient grouping: now and then, amble alongside a nearby resident a while.
+            if (urand(0, 99) < 8)
+            {
+                Player* mate = nullptr; float best = 25.0f;
+                for (uint32 low2 : g_turtleResidents)
+                {
+                    if (low2 == low) continue;
+                    Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low2));
+                    if (!r || !r->IsInWorld() || r->GetMapId() != bot->GetMapId()) continue;
+                    float const d = bot->GetDistance(r);
+                    if (d < best) { best = d; mate = r; }
+                }
+                if (mate)
+                {
+                    g_botFollow[low] = FollowState{ mate->GetGUIDLow(), now + urand(20000u, 45000u) };
+                    nextAt = now + urand(25000, 50000);
+                    return;
+                }
             }
 
             // Calm town-life cadence: mostly stand, sometimes stroll, rarely
@@ -2277,6 +2317,38 @@ public:
                            RPick({ "You'll want a mage, priest or druid for that, friend.",
                                    "None of us here can buff you - ask a caster." }));
             return;
+        }
+
+        // A traveler asks a resident to come along -> nearest one follows for a while.
+        if (lower.find("follow me") != std::string::npos || lower.find("come with") != std::string::npos ||
+            lower.find("come along") != std::string::npos)
+        {
+            if (Player* res = NearestResident(from, R, 0))
+            {
+                g_botFollow[res->GetGUIDLow()] = FollowState{ from->GetGUIDLow(), WorldTimer::getMSTime() + 300000u };
+                ServiceSay(res, "A traveler asks you to come along; agree and follow.",
+                           RPick({ "Lead on, friend!", "Right behind you.", "Aye, I'll come along." }));
+            }
+            return;
+        }
+        if (lower.find("stop following") != std::string::npos || lower.find("stay here") != std::string::npos ||
+            lower.find("wait here") != std::string::npos)
+        {
+            bool released = false;
+            for (uint32 low2 : g_turtleResidents)
+            {
+                auto it = g_botFollow.find(low2);
+                if (it == g_botFollow.end() || it->second.target != from->GetGUIDLow()) continue;
+                g_botFollow.erase(it);
+                if (Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low2)))
+                {
+                    r->GetMotionMaster()->MoveIdle();
+                    ServiceSay(r, "The traveler asks you to wait here; agree.",
+                               RPick({ "I'll wait here.", "Right, staying put.", "As you say, friend." }));
+                }
+                released = true;
+            }
+            if (released) return;
         }
 
         // General chat -> the nearest resident greets or acknowledges.
