@@ -920,6 +920,39 @@ namespace
         if (spell && bot->HasSpell(spell)) bot->CastSpell(bot, spell, false);
     }
 
+    static bool ItemHasStat(ItemPrototype const* pr, uint32 type)
+    {
+        for (int i = 0; i < MAX_ITEM_PROTO_STATS; ++i)
+            if (pr->ItemStat[i].ItemStatType == type && pr->ItemStat[i].ItemStatValue > 0) return true;
+        return false;
+    }
+    static bool ItemGrantsHealing(ItemPrototype const* pr)
+    {
+        for (int i = 0; i < MAX_ITEM_PROTO_SPELLS; ++i)
+        {
+            if (pr->Spells[i].SpellTrigger != ITEM_SPELLTRIGGER_ON_EQUIP || !pr->Spells[i].SpellId) continue;
+            SpellEntry const* se = sSpellMgr.GetSpellEntry(pr->Spells[i].SpellId);
+            if (!se) continue;
+            for (int e = 0; e < MAX_EFFECT_INDEX; ++e)
+                if (se->EffectApplyAuraName[e] == 135) return true; // SPELL_AURA_MOD_HEALING_DONE
+        }
+        return false;
+    }
+    // Beyond CanUseItem (proficiency): does the item's stat role fit the class?
+    // Keeps a mage from buying a strength/agility or +healing piece it could merely equip.
+    static bool ClassWantsItem(Player* buyer, ItemPrototype const* pr)
+    {
+        bool const str = ItemHasStat(pr, 4), agi = ItemHasStat(pr, 3), intel = ItemHasStat(pr, 5);
+        bool const heal = ItemGrantsHealing(pr);
+        switch (buyer->GetClass())
+        {
+            case CLASS_MAGE: case CLASS_WARLOCK:  return !(str || agi || heal); // pure caster dps
+            case CLASS_PRIEST:                    return !(str || agi);         // caster, may heal
+            case CLASS_WARRIOR: case CLASS_ROGUE: return !(intel || heal);      // pure melee
+            default: return true; // hybrids (hunter/shaman/druid/paladin): be permissive
+        }
+    }
+
     static void HandOverItems(Player* caster, Player* plr, uint32 itemId, uint32 count)
     {
         // Open a real trade window, then fill it a beat later: the client needs
@@ -1189,8 +1222,8 @@ namespace
                             sig = (sig ^ (uint64(it->GetEntry()) * 131 + c)) * 1099511628211ull;
                             ItemPrototype const* pr = it->GetProto();
                             if (!pr || it->GetEntry() != wantEntry || IsVendorItem(pr->ItemId) ||
-                                bot->CanUseItem(pr) != EQUIP_ERR_OK)
-                                ineligible = true; // not the quoted item, vendor stock, or wrong class
+                                bot->CanUseItem(pr) != EQUIP_ERR_OK || !ClassWantsItem(bot, pr))
+                                ineligible = true; // not the quoted item, vendor stock, wrong class/role
                             else
                                 price += unit * c;
                         }
@@ -2496,7 +2529,7 @@ private:
                 continue;
             float const d = from->GetDistance(res);
             if (d > bestDist) continue;
-            if (res->CanUseItem(proto) != EQUIP_ERR_OK) continue; // wrong class/proficiency
+            if (res->CanUseItem(proto) != EQUIP_ERR_OK || !ClassWantsItem(res, proto)) continue; // wrong class/role
             best = res; bestDist = d;
         }
         if (!best)
