@@ -2411,6 +2411,24 @@ public:
             if (released) return;
         }
 
+        // Meme completion: a passerby starts a classic line, a resident finishes it.
+        static const struct { char const* trig; char const* done; } kMemes[] = {
+            { "what is love",   "Baby don't hurt me, don't hurt me... no more!" },
+            { "thunderfury",    "Blessed Blade of the Windseeker!" },
+            { "leeroy",         "JENKINS!!!" },
+            { "mankrik",        "...still can't find his wife, poor fellow." },
+            { "you have died",  "Should've forded the river." },
+            { "gnomes",         "...can't trust 'em. Little green-haired troublemakers." },
+        };
+        for (auto const& m : kMemes)
+            if (lower.find(m.trig) != std::string::npos)
+            {
+                if (Player* res = NearestResident(from, R, 0))
+                    g_pendingReactions.push_back({ res->GetGUIDLow(), std::string(m.done),
+                                                   time(nullptr) + time_t(urand(1, 2)) });
+                return;
+            }
+
         // General chat -> the nearest resident greets or acknowledges.
         if (Player* res = NearestResident(from, R, 0))
         {
