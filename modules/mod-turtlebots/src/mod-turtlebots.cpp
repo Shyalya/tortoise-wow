@@ -257,6 +257,20 @@ namespace
     static std::map<uint32, uint32> g_botBuffAt;       // botGuid -> next ms it may proactively buff
     struct FollowState { uint32 target; uint32 untilMs; };
     static std::map<uint32, FollowState> g_botFollow;  // botGuid -> who it walks with (player or resident)
+    enum { ERR_GO = 1, ERR_DWELL = 2 };
+    struct Errand { uint8 idx; uint8 phase; uint32 atMs; uint32 dwellMs; };
+    static std::map<uint32, Errand> g_errand;          // botGuid -> current city errand
+    struct Poi { float x, y, z; char const* kind; };
+    static Poi const kPois[] = {
+        { 1696.f, -4456.f, 20.f, "the auction house" },
+        { 1627.f, -4376.f, 12.f, "the bank" },
+        { 1629.f, -4433.f, 14.f, "the inn" },
+        { 2133.f, -4667.f, 47.f, "the flight master" },
+        { 1990.f, -4794.f, 56.f, "the battlemaster" },
+        { 1849.f, -4569.f, 25.f, "a trainer" },
+        { 1650.f, -4460.f, 20.f, "the mailbox" },
+    };
+    static uint32 const kPoiCount = 7;
     static uint32 const kCookRaw[4]   = { 6291, 6303, 6289, 6317 }; // raw fish they catch
     static uint32 const kCookDone[4]  = { 6290, 787,  4592, 6316 }; // cooked results
     static uint32 const kCookSpell[4] = { 7751, 7752, 7753, 7754 }; // apprentice recipes
@@ -1670,6 +1684,35 @@ namespace
             cs.atMs = now;
         }
 
+        // City errand: walk to a point of interest, linger a beat with a fitting gesture,
+        // then let the next decision pick another. Purposeful movement, not jitter.
+        void HandleErrand(Player* bot, Errand& er)
+        {
+            uint32 const low = bot->GetGUIDLow();
+            uint32 const now = WorldTimer::getMSTime();
+            Poi const& poi = kPois[er.idx % kPoiCount];
+            float const dx = bot->GetPositionX() - poi.x, dy = bot->GetPositionY() - poi.y;
+            float const d2 = dx * dx + dy * dy;
+            if (er.phase == ERR_GO)
+            {
+                if (d2 > 25.0f && now - er.atMs <= 60000)
+                {
+                    if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
+                        bot->GetMotionMaster()->MovePoint(0, poi.x, poi.y, poi.z, MOVE_PATHFINDING);
+                    return; // walking to the POI (human pace, up to 60s)
+                }
+                bot->GetMotionMaster()->MoveIdle();
+                bot->StopMoving(true);
+                StandUp(bot);
+                bot->HandleEmoteCommand(EMOTE_ONESHOT_TALK); // browse / read on arrival
+                er.phase = ERR_DWELL; er.atMs = now; er.dwellMs = urand(10000, 30000);
+                return;
+            }
+            if (now - er.atMs < er.dwellMs)
+                return; // lingering at the POI
+            g_errand.erase(low); // done; next decision picks the next errand
+        }
+
         // Resident (city-life) behaviour: live in the city, calm ambient roaming.
         void DriveResident(Player* bot)
         {
@@ -1751,6 +1794,15 @@ namespace
                     }
                     bot->GetMotionMaster()->MoveIdle();
                     g_botFollow.erase(low);
+                }
+            }
+
+            {
+                auto er = g_errand.find(low);
+                if (er != g_errand.end())
+                {
+                    HandleErrand(bot, er->second);
+                    return; // running an errand; skip ambient roaming
                 }
             }
 
@@ -1838,6 +1890,14 @@ namespace
 
             // Calm town-life cadence: mostly stand, sometimes stroll, rarely
             // emote or sit. A dwell timer between decisions keeps it unhurried.
+            // Mostly run a purposeful errand to a POI; jitter is gone.
+            if (urand(0, 99) < 70)
+            {
+                g_errand[low] = Errand{ uint8(urand(0, kPoiCount - 1)), uint8(ERR_GO), now, 0 };
+                nextAt = now + urand(2000, 5000);
+                return;
+            }
+
             uint32 const roll = urand(0, 99);
             if (roll < 33)
             {
