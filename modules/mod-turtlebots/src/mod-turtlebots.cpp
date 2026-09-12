@@ -1486,16 +1486,11 @@ namespace
         {
             if (g_fishSpotsLoaded) return;
             g_fishSpotsLoaded = true;
-            if (QueryResult* r = WorldDatabase.PQuery(
-                "SELECT position_x, position_y, position_z, orientation FROM ai_playerbot_named_location "
-                "WHERE name LIKE 'FISH_LOCATION_1_667_%' "
-                "ORDER BY (POW(position_x-1568,2)+POW(position_y+4405,2)) LIMIT 12"))
-            {
-                do { auto f = r->Fetch();
-                     g_fishSpots.push_back({ f[0].GetFloat(), f[1].GetFloat(), f[2].GetFloat(), f[3].GetFloat() });
-                } while (r->NextRow());
-                delete r;
-            }
+            // The Valley of Honor pond by Lumak the fishing trainer -- inside Orgrimmar, so
+            // residents never leave the city to fish (leaving town is the adventurers' job).
+            g_fishSpots.push_back({ 2000.6f, -4659.7f, 26.5f, 5.31f });
+            g_fishSpots.push_back({ 2006.0f, -4666.0f, 26.0f, 5.31f });
+            g_fishSpots.push_back({ 1995.0f, -4665.0f, 26.0f, 5.31f });
         }
 
         // Make sure a fishing pole is in the main hand (grant one if needed).
@@ -1527,7 +1522,7 @@ namespace
             {
                 case FISH_MOVE:
                 {
-                    if (dist2 > 400.0f && now - fs.atMs <= 30000)
+                    if (dist2 > 400.0f && now - fs.atMs <= 90000)
                     {
                         if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
                             bot->GetMotionMaster()->MovePoint(0, fs.x, fs.y, fs.z, MOVE_PATHFINDING);
@@ -2017,6 +2012,7 @@ public:
             uint32 const spell = PortalSpellForCity(lower, reqLvl, city);
             if (Player* mage = NearestResident(from, R, CLASS_MAGE))
             {
+                g_fishing.erase(mage->GetGUIDLow()); g_cooking.erase(mage->GetGUIDLow()); // stop the hobby to serve
                 if (!spell)
                 {
                     ServiceSay(mage, "A traveler wants a portal but didn't say which city; ask which one, and note you "
@@ -2066,6 +2062,7 @@ public:
         {
             if (Player* wl = NearestResident(from, R, CLASS_WARLOCK))
             {
+                g_fishing.erase(wl->GetGUIDLow()); g_cooking.erase(wl->GetGUIDLow()); // stop the hobby to serve
                 uint32 spell = 0, item = 0;
                 HealthstoneForLevel(wl->GetLevel(), spell, item);
                 if (!item) // too low a level to shape one
@@ -2134,6 +2131,7 @@ public:
             Player* mage = NearestResident(from, R, CLASS_MAGE);
             if (mage)
             {
+                g_fishing.erase(mage->GetGUIDLow()); g_cooking.erase(mage->GetGUIDLow()); // stop the hobby to serve
                 bool const water = wantsWater; // if both are asked, water first
                 uint32 const item = ConjuredItemForLevel(mage->GetLevel(), from->GetLevel(), water);
                 std::string line = water ? "Here's your water, friend - freshly conjured!"
