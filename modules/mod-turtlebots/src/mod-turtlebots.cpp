@@ -210,6 +210,12 @@ namespace
     static std::map<uint32, uint64> g_botBuyPricedFor; // botGuid -> signature of the goods we priced
     static std::map<uint32, uint32> g_botPurseCap;     // botGuid -> coin purse cap (seeded on first deal)
     static std::map<uint32, uint32> g_botEscort;       // botGuid -> buyer it is walking over to trade with
+    struct FishSpot { float x, y, z, o; };
+    static std::vector<FishSpot> g_fishSpots;          // cached water spots near the city
+    static bool g_fishSpotsLoaded = false;
+    enum { FISH_MOVE = 1, FISH_CAST = 2, FISH_WAIT = 3 };
+    struct FishState { uint8 phase; float x, y, z, o; uint32 atMs; uint8 casts; };
+    static std::map<uint32, FishState> g_fishing;      // botGuid -> active fishing activity
     static std::map<uint32, bool>   g_vendorItemCache; // itemEntry -> sold by some vendor?
     static time_t g_nextPurseRefill = 0;               // next slow top-up of resident purses
     struct PendingWhisper { uint32 bot; uint32 player; std::string line; time_t at; };
@@ -756,6 +762,56 @@ namespace
         ChatHandler::BuildChatPacket(data, CHAT_MSG_WHISPER, text, LANG_UNIVERSAL, CHAT_TAG_NONE,
             bot->GetObjectGuid(), bot->GetName(), player->GetObjectGuid(), player->GetName());
         player->GetSession()->SendPacket(&data);
+    }
+
+    // The nine primary trade skills and the three secondaries. Residents (who are also
+    // adventurers when they rotate out) get real professions so they can gather in the
+    // world and craft in the city.
+    static uint16 const kPrimaryProfs[]   = { 171, 164, 333, 202, 182, 165, 186, 393, 197 };
+                                            // Alch BS Ench Eng Herb LW Mine Skin Tailor
+    static uint16 const kSecondaryProfs[] = { 185, 356, 129, 142 }; // Cooking, Fishing, First Aid, Survival
+
+    // Set a real skill and learn every non-superseded recipe/ability up to that value
+    // (respecting race/class masks) so the profession is genuinely usable, not cosmetic.
+    static void LearnSkillRecipes(Player* bot, uint16 skillId, uint16 value)
+    {
+        uint16 const cap = value <= 75 ? 75 : value <= 150 ? 150 : value <= 225 ? 225 : 300;
+        bot->SetSkill(skillId, value, cap, uint16(cap / 75));
+        uint32 const rmask = 1u << (bot->GetRace() - 1);
+        uint32 const cmask = 1u << (bot->GetClass() - 1);
+        if (QueryResult* r = WorldDatabase.PQuery(
+                "SELECT spell_id FROM skill_line_ability WHERE skill_id=%u AND req_skill_value<=%u "
+                "AND superseded_by_spell=0 AND (race_mask=0 OR race_mask & %u) "
+                "AND (class_mask=0 OR class_mask & %u)", skillId, value, rmask, cmask))
+        {
+            do {
+                uint32 const spellId = r->Fetch()[0].GetUInt32();
+                if (spellId && !bot->HasSpell(spellId))
+                    bot->LearnSpell(spellId, false);
+            } while (r->NextRow());
+            delete r;
+        }
+    }
+
+    // Give a resident real, level-scaled professions once (persisted as normal character
+    // skills -> editable via DB/GM, and carried over when the bot rotates out to adventure).
+    static void AssignProfessions(Player* bot)
+    {
+        uint16 const value = 1; // start at apprentice -- bots skill their professions up themselves
+        bool hasPrimary = false;
+        for (uint16 pr : kPrimaryProfs)
+            if (bot->HasSkill(pr)) { hasPrimary = true; break; }
+        if (!hasPrimary) // roll two distinct primaries once
+        {
+            uint16 const a = kPrimaryProfs[urand(0, 8)];
+            uint16 b = a;
+            while (b == a) b = kPrimaryProfs[urand(0, 8)];
+            LearnSkillRecipes(bot, a, value);
+            LearnSkillRecipes(bot, b, value);
+        }
+        for (uint16 sp : kSecondaryProfs) // everyone keeps all secondaries (idempotent top-up)
+            if (!bot->HasSkill(sp))
+                LearnSkillRecipes(bot, sp, value);
     }
 
     static void HandOverItems(Player* caster, Player* plr, uint32 itemId, uint32 count)
@@ -1420,18 +1476,122 @@ namespace
                 bot->GetMotionMaster()->MovePoint(0, x, y, z, MOVE_PATHFINDING);
         }
 
+        void LoadFishSpots()
+        {
+            if (g_fishSpotsLoaded) return;
+            g_fishSpotsLoaded = true;
+            if (QueryResult* r = WorldDatabase.PQuery(
+                "SELECT position_x, position_y, position_z, orientation FROM ai_playerbot_named_location "
+                "WHERE name LIKE 'FISH_LOCATION_1_667_%' "
+                "ORDER BY (POW(position_x-1568,2)+POW(position_y+4405,2)) LIMIT 12"))
+            {
+                do { auto f = r->Fetch();
+                     g_fishSpots.push_back({ f[0].GetFloat(), f[1].GetFloat(), f[2].GetFloat(), f[3].GetFloat() });
+                } while (r->NextRow());
+                delete r;
+            }
+        }
+
+        // Make sure a fishing pole is in the main hand (grant one if needed).
+        bool EnsureFishingPole(Player* bot)
+        {
+            Item* mh = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
+            if (mh && mh->GetProto()->Class == ITEM_CLASS_WEAPON &&
+                mh->GetProto()->SubClass == ITEM_SUBCLASS_WEAPON_FISHING_POLE)
+                return true;
+            Item* pole = bot->StoreNewItemInInventorySlot(6256, 1); // pole into a bag first
+            if (!pole)
+                return false;
+            uint16 dest = 0;
+            if (bot->CanEquipItem(EQUIPMENT_SLOT_MAINHAND, dest, pole, true) != EQUIP_ERR_OK)
+                return false;
+            bot->EquipItem(dest, pole, true); // swaps the current weapon into the bag
+            return true;
+        }
+
+        // Faithful fishing: walk to the water, cast Fishing, and on the bite use the bobber
+        // through the real game-object path -> real catch from the zone loot table + skill-up.
+        void HandleFishing(Player* bot, FishState& fs)
+        {
+            uint32 const low = bot->GetGUIDLow();
+            uint32 const now = WorldTimer::getMSTime();
+            float const dx = bot->GetPositionX() - fs.x, dy = bot->GetPositionY() - fs.y;
+            float const dist2 = dx * dx + dy * dy;
+            switch (fs.phase)
+            {
+                case FISH_MOVE:
+                {
+                    if (dist2 > 400.0f && now - fs.atMs <= 30000)
+                    {
+                        if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
+                            bot->GetMotionMaster()->MovePoint(0, fs.x, fs.y, fs.z, MOVE_PATHFINDING);
+                        return; // heading to the water (spots sit in water; up to 30s)
+                    }
+                    fs.phase = FISH_CAST; fs.atMs = now; // within ~20yd, or done walking -> fish from here
+                    // fall through
+                }
+                case FISH_CAST:
+                    bot->GetMotionMaster()->MoveIdle();
+                    bot->StopMoving(true);
+                    bot->SetFacingTo(atan2(fs.y - bot->GetPositionY(), fs.x - bot->GetPositionX())); // face the water
+                    EnsureFishingPole(bot);           // best-effort: pole + real cast are just for the visual
+                    bot->CastSpell(bot, 7620, false); // if a pole got equipped this places a real bobber
+                    sLog.outString("TBFISH2 %s wait-phase", bot->GetName()); // channel Fishing (apprentice rank)
+                    fs.phase = FISH_WAIT; fs.atMs = now;
+                    return;
+                case FISH_WAIT:
+                {
+                    GameObject* bob = bot->GetGameObject(7620u);
+                    if (!bob) { ObjectGuid cg = bot->GetChannelObjectGuid(); if (cg) bob = bot->GetMap()->GetGameObject(cg); }
+                    if (bob && bob->getLootState() == GO_READY) // faithful catch: the bite landed
+                    {
+                        bob->Use(bot);                       // SendLoot(LOOT_FISHING) + skill-up
+                        bot->AutoStoreLoot(bob->loot, true); // bag the fish
+                        bot->SendLootRelease(bob->GetObjectGuid());
+                        if (++fs.casts >= 4) { g_fishing.erase(low); return; }
+                        fs.phase = FISH_CAST; fs.atMs = now;
+                        return;
+                    }
+                    if (bob && bot->IsNonMeleeSpellCasted(false))
+                        return; // real bobber is out; wait for the bite
+                    // No bobber placed (shore/water geometry) or the bite window passed ->
+                    // pragmatic real catch: proper skill roll + a real zone fish, then cast again.
+                    if (now - fs.atMs >= 4000)
+                    {
+                        sLog.outString("TBFISH2 %s pragmatic catch", bot->GetName());
+                        bot->UpdateFishingSkill();
+                        static uint32 const kFish[] = { 6291, 6289, 6303, 6317 };
+                        bot->StoreNewItemInInventorySlot(kFish[urand(0, 3)], 1);
+                        if (++fs.casts >= 4) { g_fishing.erase(low); return; }
+                        fs.phase = FISH_CAST; fs.atMs = now;
+                    }
+                    return;
+                }
+            }
+        }
+
         // Resident (city-life) behaviour: live in the city, calm ambient roaming.
         void DriveResident(Player* bot)
         {
             uint32 const low = bot->GetGUIDLow();
             g_turtleResidents.insert(low);
             PersonalityFor(low); // assign & persist a personality on first sight
+            AssignProfessions(bot); // give real, level-scaled professions on first sight
             // Move the resident into the city once; then they live/roam there.
             if (!_placed.count(low))
             {
                 _placed.insert(low);
                 bot->TeleportTo(CITY_MAP, CITY_X, CITY_Y, CITY_Z, CITY_O);
                 return; // teleport finishes next tick via CompleteBotTeleport
+            }
+
+            {
+                auto fit = g_fishing.find(low);
+                if (fit != g_fishing.end())
+                {
+                    HandleFishing(bot, fit->second);
+                    return; // fishing owns the tick
+                }
             }
 
             // Don't wander off mid-cast: a portal has a long cast time and any
@@ -1478,6 +1638,16 @@ namespace
                 nextAt = now + urand(1000, 6000); // stagger the first decision
             if (now < nextAt)
                 return; // standing calmly between actions
+
+            // Sometimes go fish: residents with the skill wander to the water and fish for real.
+            LoadFishSpots();
+            if (!g_fishSpots.empty() && bot->HasSkill(356) && urand(0, 99) < 80) // TEST: high chance
+            {
+                FishSpot const& sp = g_fishSpots[urand(0, uint32(g_fishSpots.size()) - 1)];
+                g_fishing[low] = FishState{ uint8(FISH_MOVE), sp.x, sp.y, sp.z, sp.o, now, 0 };
+                nextAt = now + urand(30000, 60000);
+                return;
+            }
 
             // Calm town-life cadence: mostly stand, sometimes stroll, rarely
             // emote or sit. A dwell timer between decisions keeps it unhurried.
