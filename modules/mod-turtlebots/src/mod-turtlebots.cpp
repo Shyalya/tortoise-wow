@@ -260,6 +260,7 @@ namespace
     enum { ERR_GO = 1, ERR_DWELL = 2 };
     struct Errand { uint8 idx; uint8 phase; uint32 atMs; uint32 dwellMs; };
     static std::map<uint32, Errand> g_errand;          // botGuid -> current city errand
+    static std::set<uint32> g_botTrained;              // botGuid -> profession caps raised for its level
     struct Poi { float x, y, z; char const* kind; };
     static Poi const kPois[] = {
         { 1696.f, -4456.f, 20.f, "the auction house" },
@@ -890,6 +891,21 @@ namespace
         return 0;
     }
     // Give a mount at level 40+ (learned as a real spell, like a trained mount).
+    // Raise each known profession's cap to the tier the resident's level allows
+    // (75/150/225/300), so professions keep skilling up instead of stalling at apprentice.
+    static void TrainSkillTiers(Player* bot)
+    {
+        uint32 const lvl = bot->GetLevel();
+        uint16 const cap = lvl >= 35 ? 300 : lvl >= 20 ? 225 : lvl >= 10 ? 150 : 75;
+        static uint16 const kAllProfs[] = { 171,164,333,202,182,165,186,393,197, 185,356,129,142 };
+        for (uint16 sk : kAllProfs)
+        {
+            if (!bot->HasSkill(sk)) continue;
+            if (bot->GetSkillMax(sk) < cap)
+                bot->SetSkill(sk, bot->GetSkillValuePure(sk), cap, uint16(cap / 75));
+        }
+    }
+
     static void AssignMount(Player* bot)
     {
         if (bot->GetLevel() < 40) return;
@@ -1721,6 +1737,7 @@ namespace
             PersonalityFor(low); // assign & persist a personality on first sight
             AssignProfessions(bot); // give real, level-scaled professions on first sight
             AssignMount(bot); // give a race-appropriate mount at level 40+
+            if (!g_botTrained.count(low)) { TrainSkillTiers(bot); g_botTrained.insert(low); }
             // Move the resident into the city once; then they live/roam there.
             if (!_placed.count(low))
             {
