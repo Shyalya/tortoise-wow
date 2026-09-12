@@ -216,6 +216,12 @@ namespace
     enum { FISH_MOVE = 1, FISH_CAST = 2, FISH_WAIT = 3 };
     struct FishState { uint8 phase; float x, y, z, o; uint32 atMs; uint8 casts; uint32 endMs; };
     static std::map<uint32, FishState> g_fishing;      // botGuid -> active fishing activity
+    enum { COOK_FIRE = 1, COOK_WAIT = 2 };
+    struct CookState { uint8 phase; uint32 atMs; };
+    static std::map<uint32, CookState> g_cooking;      // botGuid -> active cooking activity
+    static uint32 const kCookRaw[4]   = { 6291, 6303, 6289, 6317 }; // raw fish they catch
+    static uint32 const kCookDone[4]  = { 6290, 787,  4592, 6316 }; // cooked results
+    static uint32 const kCookSpell[4] = { 7751, 7752, 7753, 7754 }; // apprentice recipes
     static std::map<uint32, bool>   g_vendorItemCache; // itemEntry -> sold by some vendor?
     static time_t g_nextPurseRefill = 0;               // next slow top-up of resident purses
     struct PendingWhisper { uint32 bot; uint32 player; std::string line; time_t at; };
@@ -1570,6 +1576,33 @@ namespace
             }
         }
 
+        // Cook the catch at a campfire in the city: raw fish -> cooked food + cooking skill.
+        // Real items and a real skill roll; Basic Campfire is cast for the visible fire.
+        void HandleCooking(Player* bot, CookState& cs)
+        {
+            uint32 const low = bot->GetGUIDLow();
+            uint32 const now = WorldTimer::getMSTime();
+            if (cs.phase == COOK_FIRE)
+            {
+                bot->GetMotionMaster()->MoveIdle();
+                bot->StopMoving(true);
+                if (!bot->FindNearestGameObject(29784, 8.0f)) // cook at a nearby fire; avoid 50 campfires
+                    bot->CastSpell(bot, 818, false); // else light a Basic Campfire
+                cs.phase = COOK_WAIT; cs.atMs = now;
+                return;
+            }
+            if (now - cs.atMs < 5000)
+                return; // steady cooking cadence
+            int idx = -1;
+            for (int i = 0; i < 4; ++i)
+                if (bot->GetItemCount(kCookRaw[i], false) > 0) { idx = i; break; }
+            if (idx < 0) { g_cooking.erase(low); return; } // nothing left to cook
+            bot->DestroyItemCount(kCookRaw[idx], 1, true);
+            bot->StoreNewItemInInventorySlot(kCookDone[idx], 1);
+            bot->UpdateCraftSkill(kCookSpell[idx]); // real cooking skill-up roll
+            cs.atMs = now;
+        }
+
         // Resident (city-life) behaviour: live in the city, calm ambient roaming.
         void DriveResident(Player* bot)
         {
@@ -1591,6 +1624,14 @@ namespace
                 {
                     HandleFishing(bot, fit->second);
                     return; // fishing owns the tick
+                }
+            }
+            {
+                auto cit = g_cooking.find(low);
+                if (cit != g_cooking.end())
+                {
+                    HandleCooking(bot, cit->second);
+                    return; // cooking owns the tick
                 }
             }
 
@@ -1638,6 +1679,20 @@ namespace
                 nextAt = now + urand(1000, 6000); // stagger the first decision
             if (now < nextAt)
                 return; // standing calmly between actions
+
+            // Cook the catch: if they hold raw fish and know cooking, sit at a campfire and cook.
+            if (bot->HasSkill(185))
+            {
+                bool hasRaw = false;
+                for (int i = 0; i < 4 && !hasRaw; ++i)
+                    if (bot->GetItemCount(kCookRaw[i], false) > 0) hasRaw = true;
+                if (hasRaw && urand(0, 99) < 40)
+                {
+                    g_cooking[low] = CookState{ uint8(COOK_FIRE), now };
+                    nextAt = now + urand(20000, 40000);
+                    return;
+                }
+            }
 
             // Sometimes go fish: residents with the skill wander to the water and fish for real.
             LoadFishSpots();
