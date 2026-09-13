@@ -33,3 +33,15 @@ mod-turtlebots.Town.SleepGraceSec = 600
 # Comma-separated zone ids to keep awake even with nobody there (observation/streaming),
 # e.g. 1637 for Orgrimmar. Re-read on config reload.
 mod-turtlebots.Town.ForceAwake =
+
+# Off-shift adventurers as residents: characters on accounts with this prefix (the
+# TortoiseBots random-bot accounts) that are currently logged out come home to the
+# city as residents while it is awake, and are released for their next shift when it
+# falls asleep. Fill caps the residents embodied per awake city (TBOT + pool);
+# 0 = just the Residents count above. Horde characters only until the multi-city split.
+mod-turtlebots.Town.Fill = 0
+mod-turtlebots.Town.PoolAccountPrefix = RNDBOT
+# Seconds between DB refreshes of the pool, and how long a released character is left
+# alone (so its next shift can pick it up) before it may come home again.
+mod-turtlebots.Town.PoolRefreshSec = 300
+mod-turtlebots.Town.ReleaseCooldownSec = 600

@@ -1034,6 +1034,18 @@ namespace
             _townWakeIntervalMs = sConfig.GetIntDefault("mod-turtlebots.Town.WakeIntervalMs", 10000);
             _townSleepGraceSec  = sConfig.GetIntDefault("mod-turtlebots.Town.SleepGraceSec", 600);
             ReadTownForceAwake();
+            // Stage 3 of the unified population: off-shift adventurers (TortoiseBots
+            // RNDBOT characters that are not logged in) come home as residents while a
+            // real player is in the city, and are released for their next shift when it
+            // falls asleep. Fill caps the residents embodied per awake city (TBOT + pool);
+            // 0 means "just the Residents count" (backwards compatible).
+            _townFill           = sConfig.GetIntDefault("mod-turtlebots.Town.Fill", 0);
+            if (!_townFill) _townFill = _residents;
+            _poolPrefix         = sConfig.GetStringDefault("mod-turtlebots.Town.PoolAccountPrefix", "RNDBOT");
+            _poolRefreshSec     = sConfig.GetIntDefault("mod-turtlebots.Town.PoolRefreshSec", 300);
+            _releaseCooldownSec = sConfig.GetIntDefault("mod-turtlebots.Town.ReleaseCooldownSec", 600);
+            sLog.outString("[mod-turtlebots] town pool: fill %u, adventurer prefix %s, refresh %u s, release cooldown %u s.",
+                           _townFill, _poolPrefix.c_str(), _poolRefreshSec, _releaseCooldownSec);
             sLog.outString("[mod-turtlebots] town mode %s (wake %u per %u ms, sleep grace %u s, forced-awake zones: %u).",
                            _townEnable ? "ON" : "off", _townWakeBatch, _townWakeIntervalMs, _townSleepGraceSec,
                            uint32(_townForceAwake.size()));
@@ -2205,6 +2217,143 @@ namespace
             if (_townRefillMs >= _townWakeIntervalMs) { _townRefillMs = 0; _townBudget = _townWakeBatch; }
         }
 
+        // The adventurer pool: every character on an account with the adventurer prefix
+        // (TortoiseBots RNDBOT) whose race is Horde - Orgrimmar is our only home city until
+        // #151. Refreshed from the DB every PoolRefreshSec; everything else (in the world?
+        // session in flight? cooling down?) is decided in memory on each reconcile.
+        void RefreshPool()
+        {
+            _pool.clear();
+            std::string accIds;
+            if (QueryResult* r = LoginDatabase.PQuery("SELECT id FROM account WHERE username LIKE '%s%%'", _poolPrefix.c_str()))
+            {
+                do { if (!accIds.empty()) accIds += ","; accIds += std::to_string(r->Fetch()[0].GetUInt32()); } while (r->NextRow());
+                delete r;
+            }
+            if (accIds.empty())
+                return;
+            if (QueryResult* r = CharacterDatabase.PQuery("SELECT guid, account, race, name FROM characters WHERE account IN (%s)", accIds.c_str()))
+            {
+                do
+                {
+                    Field* f = r->Fetch();
+                    PoolChar pc;
+                    pc.low  = f[0].GetUInt32();
+                    pc.acc  = f[1].GetUInt32();
+                    pc.race = uint8(f[2].GetUInt32());
+                    pc.name = f[3].GetCppString();
+                    if (Player::TeamForRace(pc.race) == HORDE)
+                        _pool.push_back(pc);
+                } while (r->NextRow());
+                delete r;
+            }
+            sLog.outString("[mod-turtlebots] town: adventurer pool refreshed - %u Horde characters on %s accounts.",
+                           uint32(_pool.size()), _poolPrefix.c_str());
+        }
+
+        std::string PoolNameOf(uint32 low) const
+        {
+            for (PoolChar const& pc : _pool)
+                if (pc.low == low) return pc.name;
+            return std::to_string(low);
+        }
+
+        // Residents currently embodied (TBOT and pool alike) - the Fill cap covers both.
+        uint32 ResidentsOnline() const
+        {
+            uint32 n = 0;
+            for (uint32 low : _online)
+                if (RoleOf(low) == ROLE_RESIDENT) ++n;
+            return n;
+        }
+
+        // Off-shift adventurers come home: while the city is awake and below Fill, embody
+        // pool characters that are not in the world, have no session in flight and are past
+        // their release cooldown. TortoiseBots skips any character whose session is not
+        // NotFound, so a resident is never double-logged; once we release it, the character
+        // is free for its next shift again.
+        void EmbodyPoolResidents(uint32 nowMs)
+        {
+            // Adopt freshly Active pool sessions into the roster; forget ones that vanished.
+            for (auto it = _poolResidents.begin(); it != _poolResidents.end(); )
+            {
+                uint32 const low = *it;
+                ObjectGuid guid(HIGHGUID_PLAYER, low);
+                HeadlessSessionState st = sWorld.GetHeadlessSessionState(guid);
+                if (st == HeadlessSessionState::Active)
+                {
+                    if (std::find(_online.begin(), _online.end(), low) == _online.end())
+                    {
+                        _online.push_back(low);
+                        _role[low] = uint8(ROLE_RESIDENT);
+                    }
+                }
+                else if (st == HeadlessSessionState::NotFound && !sObjectAccessor.FindPlayer(guid))
+                {
+                    _placed.erase(low);
+                    _releasedAtMs[low] = nowMs;
+                    it = _poolResidents.erase(it);
+                    continue;
+                }
+                ++it;
+            }
+
+            uint32 have = ResidentsOnline();
+            for (PoolChar const& pc : _pool)
+            {
+                if (have >= _townFill || !_townBudget)
+                    break;
+                if (_poolResidents.count(pc.low))
+                    continue;
+                ObjectGuid guid(HIGHGUID_PLAYER, pc.low);
+                if (sObjectAccessor.FindPlayer(guid))
+                    continue; // on shift right now
+                if (sWorld.GetHeadlessSessionState(guid) != HeadlessSessionState::NotFound)
+                    continue; // a login is in flight (ours or TortoiseBots)
+                auto rel = _releasedAtMs.find(pc.low);
+                if (rel != _releasedAtMs.end() && (nowMs - rel->second) < _releaseCooldownSec * 1000u)
+                    continue; // just released: leave it to its next shift for a while
+                if (sWorld.StartHeadlessSession(pc.acc, guid, LOCALE_enUS, "turtlebot") != HeadlessSessionStartResult::Started)
+                    continue; // e.g. grabbed for a shift this very tick - try another
+                --_townBudget;
+                ++have;
+                _poolResidents.insert(pc.low);
+                _role[pc.low] = uint8(ROLE_RESIDENT);
+                sLog.outString("[mod-turtlebots] town: %s comes home to Orgrimmar as a resident (off-shift adventurer).", pc.name.c_str());
+            }
+        }
+
+        // The city fell asleep: pool residents log out (staggered) and are free for their
+        // next shift. Their placement is dropped so the next homecoming teleports them to
+        // the hub again from wherever they adventured in between.
+        void ReleasePoolResidents(uint32 nowMs)
+        {
+            for (auto it = _poolResidents.begin(); it != _poolResidents.end(); )
+            {
+                uint32 const low = *it;
+                ObjectGuid guid(HIGHGUID_PLAYER, low);
+                HeadlessSessionState st = sWorld.GetHeadlessSessionState(guid);
+                if (st == HeadlessSessionState::NotFound)
+                {
+                    _placed.erase(low);
+                    _releasedAtMs[low] = nowMs;
+                    it = _poolResidents.erase(it);
+                    continue;
+                }
+                if (st == HeadlessSessionState::Active && _townBudget)
+                {
+                    --_townBudget;
+                    sWorld.StopHeadlessSession(guid, true);
+                    _placed.erase(low);
+                    _releasedAtMs[low] = nowMs;
+                    sLog.outString("[mod-turtlebots] town: %s goes back on shift (released).", PoolNameOf(low).c_str());
+                    it = _poolResidents.erase(it);
+                    continue;
+                }
+                ++it;
+            }
+        }
+
         void Reconcile()
         {
             if (_townEnable)
@@ -2217,6 +2366,15 @@ namespace
             for (uint32 i = 0; i < _target; ++i)
                 if (EnsureBotOnline(i))
                     ++online;
+
+            if (_townEnable)
+            {
+                if (_poolRefreshMs <= RECONCILE_INTERVAL_MS) { RefreshPool(); _poolRefreshMs = _poolRefreshSec * 1000u; }
+                else _poolRefreshMs -= RECONCILE_INTERVAL_MS;
+                uint32 const nowMs = WorldTimer::getMSTime();
+                if (_zoneAwake[kOrgZone]) EmbodyPoolResidents(nowMs);
+                else                      ReleasePoolResidents(nowMs);
+            }
 
             if (online != _lastReportedOnline)
             {
@@ -2343,6 +2501,17 @@ namespace
         uint32   _townRefillMs = 0;                // ms accumulated toward the next refill
         static constexpr uint32 kOrgZone = 1637;   // Orgrimmar: the only resident home city for now
         uint32 HomeZoneOf(uint32 /*botIndex*/) const { return kOrgZone; } // per-city assignment comes with #151
+
+        // --- Off-shift adventurers as residents (see OnStartup) ---
+        struct PoolChar { uint32 low = 0; uint32 acc = 0; uint8 race = 0; std::string name; };
+        std::vector<PoolChar>    _pool;             // Horde adventurer characters eligible as residents
+        uint32                   _poolRefreshMs = 0; // countdown to the next DB refresh (0 = now)
+        std::set<uint32>         _poolResidents;    // pool characters currently embodied by us
+        std::map<uint32, uint32> _releasedAtMs;     // guid low -> ms we last released it (cooldown)
+        uint32      _townFill = 0;
+        std::string _poolPrefix = "RNDBOT";
+        uint32      _poolRefreshSec = 300;
+        uint32      _releaseCooldownSec = 600;
         uint32 _advLevel  = 10;                // level given to adventurers
     };
 }
