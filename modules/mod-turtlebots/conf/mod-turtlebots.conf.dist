@@ -148,6 +148,18 @@ mod-turtlebots.LLM.MarketCallMinutes = 5
 mod-turtlebots.Debug.SocialSelfTest = 0
 
 ###################################################################################################
+# DIAGNOSTICS
+#
+#    mod-turtlebots.Debug.StuckProbe
+#        Apply the stuck rule of the telemetry (position unchanged for 8 s while the bot is in a
+#        moving state, sampled once a second) to every awake resident and log each hit together
+#        with what the resident was doing (errand, fishing, cooking, following). Traces a stuck
+#        report to the behaviour behind it. Leave at 0 in normal operation. Default: 0
+###################################################################################################
+
+mod-turtlebots.Debug.StuckProbe = 0
+
+###################################################################################################
 # HOME CITIES (#151)
 #
 #    mod-turtlebots.Town.Cities

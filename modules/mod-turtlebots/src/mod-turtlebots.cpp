@@ -354,7 +354,7 @@ namespace
     static std::map<uint32, std::vector<FishSpot>> g_fishSpotsByCity; // city index -> water spots inside it
     static bool g_fishSpotsLoaded = false;
     enum { FISH_MOVE = 1, FISH_CAST = 2, FISH_WAIT = 3 };
-    struct FishState { uint8 phase; float x, y, z, o; uint32 atMs; uint8 casts; uint32 endMs; };
+    struct FishState { uint8 phase; float x, y, z, o; uint32 atMs; uint8 casts; uint32 endMs; float lx = 0, ly = 0; uint32 stallMs = 0, lastMs = 0; float tx = 0, ty = 0, tz = 0; };
     static std::map<uint32, FishState> g_fishing;      // botGuid -> active fishing activity
     enum { COOK_FIRE = 1, COOK_WAIT = 2 };
     struct CookState { uint8 phase; uint32 atMs; };
@@ -363,7 +363,16 @@ namespace
     struct FollowState { uint32 target; uint32 untilMs; };
     static std::map<uint32, FollowState> g_botFollow;  // botGuid -> who it walks with (player or resident)
     enum { ERR_GO = 1, ERR_DWELL = 2 };
-    struct Errand { uint8 idx; uint8 phase; uint32 atMs; uint32 dwellMs; };
+    struct Errand { uint8 idx; uint8 phase; uint32 atMs; uint32 dwellMs; float lx = 0, ly = 0; uint32 stallMs = 0, lastMs = 0; float tx = 0, ty = 0, tz = 0; };
+    static std::map<uint32, std::set<uint8>> g_poiAvoid;   // botGuid -> points it could not reach lately
+    static std::map<uint32, uint32> g_poiAvoidUntilMs;     // botGuid -> when that list is forgotten
+    static std::map<uint32, uint32> g_fishAvoidUntilMs;    // botGuid -> no fishing walk before then (the last one stalled)
+    // Debug.StuckProbe: the same rule the telemetry uses (stationary 8 s while a movement
+    // generator or the movement flags say "moving"), logged with the module's own state,
+    // so a stuck report can be traced to the behaviour that caused it.
+    static bool g_stuckProbe = false;
+    struct StuckTrack { float x = 0, y = 0; uint32 sinceMs = 0, lastMs = 0; bool reported = false; };
+    static std::map<uint32, StuckTrack> g_stuckTrack;
     static std::map<uint32, Errand> g_errand;          // botGuid -> current city errand
     static std::set<uint32> g_botTrained;              // botGuid -> profession caps raised for its level
     struct Poi { float x, y, z; char const* kind; };
@@ -381,7 +390,7 @@ namespace
 
     // Points of interest of a city, discovered once from the DB around its hub: the nearest
     // auctioneer, banker, innkeeper, flight master, battlemaster, trainer and mailbox.
-    static std::vector<Poi> const& CityPoisOf(uint32 ci)
+    static std::vector<Poi> const& CityPoisOf(uint32 ci, Player* probe)
     {
         auto it = g_cityPois.find(ci);
         if (it != g_cityPois.end())
@@ -414,19 +423,74 @@ namespace
             out.push_back({ f[0].GetFloat(), f[1].GetFloat(), f[2].GetFloat(), "the mailbox" });
             delete r;
         }
+        // A point the navmesh cannot reach from inside the city (no path, or a path that
+        // ends well short of it) would only produce residents standing at a dead end for
+        // a minute at a time: drop it now, from the spot of the resident that asked.
+        if (probe && probe->IsInWorld() && probe->GetMapId() == c.map)
+        {
+            for (size_t i = 0; i < out.size(); )
+            {
+                Poi const& p = out[i];
+                PathInfo path(probe);
+                path.calculate(p.x, p.y, p.z);
+                uint32 const t = uint32(path.getPathType());
+                Vector3 const e = path.getActualEndPosition();
+                float const dx = e.x - p.x, dy = e.y - p.y;
+                float const shortBy = std::sqrt(dx * dx + dy * dy);
+                bool const noPath = (t & PATHFIND_NOPATH) != 0;
+                bool const fallsShort = (t & PATHFIND_INCOMPLETE) && shortBy > 15.f;
+                if (noPath || (fallsShort && shortBy > 30.f))
+                {
+                    sLog.outString("[mod-turtlebots] city %s: %s at %.0f/%.0f dropped - unreachable from %s (path type %u, ends %.0f yd short).",
+                                   c.name, p.kind, p.x, p.y, probe->GetName(), t, shortBy);
+                    out[i] = out.back(); out.pop_back();
+                    continue;
+                }
+                if (fallsShort)
+                {
+                    // Reachable up to a few yards away (a counter, a cellar entrance): the
+                    // errand ends at the reachable spot instead of on a dead end.
+                    sLog.outString("[mod-turtlebots] city %s: %s at %.0f/%.0f moved %.0f yd to the reachable spot %.0f/%.0f.",
+                                   c.name, p.kind, p.x, p.y, shortBy, e.x, e.y);
+                    out[i].x = e.x; out[i].y = e.y; out[i].z = e.z;
+                }
+                ++i;
+            }
+        }
         sLog.outString("[mod-turtlebots] city %s: %u points of interest discovered around the hub.", c.name, uint32(out.size()));
         return out;
     }
 
     static Poi const& PoiOf(uint32 low, uint32 idx)
     {
-        std::vector<Poi> const& v = CityPoisOf(CityIdxOfBot(low));
+        std::vector<Poi> const& v = CityPoisOf(CityIdxOfBot(low), sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low)));
         return v.empty() ? kPois[idx % kPoiCount] : v[idx % v.size()];
     }
     static uint32 PoiCountOf(uint32 low)
     {
-        std::vector<Poi> const& v = CityPoisOf(CityIdxOfBot(low));
+        std::vector<Poi> const& v = CityPoisOf(CityIdxOfBot(low), sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low)));
         return v.empty() ? kPoiCount : uint32(v.size());
+    }
+
+    // An errand target that is not on the resident's avoid list (points it stalled on
+    // lately). The list is forgotten after half an hour.
+    static uint8 PickErrandPoi(uint32 low, uint32 nowMs)
+    {
+        auto until = g_poiAvoidUntilMs.find(low);
+        if (until != g_poiAvoidUntilMs.end() && int32(nowMs - until->second) >= 0)
+        {
+            g_poiAvoid.erase(low);
+            g_poiAvoidUntilMs.erase(until);
+        }
+        uint32 const n = PoiCountOf(low);
+        auto av = g_poiAvoid.find(low);
+        for (int tries = 0; tries < 6; ++tries)
+        {
+            uint8 const idx = uint8(urand(0, n - 1));
+            if (av == g_poiAvoid.end() || !av->second.count(idx))
+                return idx;
+        }
+        return uint8(urand(0, n - 1));
     }
     static std::vector<FishSpot> const& FishSpotsOf(uint32 low)
     {
@@ -1073,6 +1137,7 @@ namespace
         g_llmDialogueChance = sConfig.GetIntDefault("mod-turtlebots.LLM.DialogueChance", 60);
         g_llmLog            = sConfig.GetBoolDefault("mod-turtlebots.LLM.Log", true);
         g_factSelfTest      = sConfig.GetBoolDefault("mod-turtlebots.Debug.FactSelfTest", false);
+        g_stuckProbe        = sConfig.GetBoolDefault("mod-turtlebots.Debug.StuckProbe", false);
         g_llmMarketMinutes  = sConfig.GetIntDefault("mod-turtlebots.LLM.MarketCallMinutes", 5);
         g_socialSelfTest    = sConfig.GetBoolDefault("mod-turtlebots.Debug.SocialSelfTest", false);
         ParseLlmUrl();
@@ -3106,11 +3171,45 @@ namespace
             {
                 case FISH_MOVE:
                 {
-                    if (dist2 > 400.0f && now - fs.atMs <= 90000)
+                    if (!fs.lastMs)
                     {
+                        PathInfo path(bot);
+                        path.calculate(fs.x, fs.y, fs.z);
+                        Vector3 const e = path.getActualEndPosition();
+                        float const ex = e.x - fs.x, ey = e.y - fs.y;
+                        if ((uint32(path.getPathType()) & PATHFIND_NOPATH) || ex * ex + ey * ey > 625.f)
+                        {
+                            g_fishAvoidUntilMs[low] = now + 30u * 60000u; // the water is not reachable from here
+                            g_fishing.erase(low);
+                            return;
+                        }
+                        fs.tx = e.x; fs.ty = e.y; fs.tz = e.z;
+                        fs.lx = bot->GetPositionX(); fs.ly = bot->GetPositionY(); fs.lastMs = now;
+                    }
+                    float const tdx = bot->GetPositionX() - fs.tx, tdy = bot->GetPositionY() - fs.ty;
+                    if (dist2 > 400.0f && tdx * tdx + tdy * tdy > 9.0f && now - fs.atMs <= 90000)
+                    {
+                        if (!fs.lastMs || now - fs.lastMs >= 1000)
+                        {
+                            float const mx = bot->GetPositionX() - fs.lx, my = bot->GetPositionY() - fs.ly;
+                            if (fs.lastMs && mx * mx + my * my < 0.25f)
+                                fs.stallMs += now - fs.lastMs;
+                            else
+                                fs.stallMs = 0;
+                            fs.lx = bot->GetPositionX(); fs.ly = bot->GetPositionY(); fs.lastMs = now;
+                        }
+                        if (fs.stallMs >= 6000)
+                        {
+                            // Stalled on the way to the water: no fishing from the road. Try again later.
+                            bot->GetMotionMaster()->MoveIdle();
+                            bot->StopMoving(true);
+                            g_fishAvoidUntilMs[low] = now + 30u * 60000u;
+                            g_fishing.erase(low);
+                            return;
+                        }
                         MountUp(bot); // ride there if they have a mount
                         if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
-                            bot->GetMotionMaster()->MovePoint(0, fs.x, fs.y, fs.z, MOVE_PATHFINDING);
+                            bot->GetMotionMaster()->MovePoint(0, fs.tx, fs.ty, fs.tz, MOVE_PATHFINDING);
                         return; // heading to the water (up to 90s)
                     }
                     fs.phase = FISH_CAST; fs.atMs = now; // within ~20yd, or done walking -> fish from here
@@ -3191,14 +3290,54 @@ namespace
             uint32 const low = bot->GetGUIDLow();
             uint32 const now = WorldTimer::getMSTime();
             Poi const& poi = PoiOf(low, er.idx);
-            float const dx = bot->GetPositionX() - poi.x, dy = bot->GetPositionY() - poi.y;
+            if (er.phase == ERR_GO && !er.lastMs)
+            {
+                // First tick of the walk: aim at the spot the navmesh can actually reach. An
+                // NPC behind a counter or on a platform lies a few yards off the mesh; walking
+                // "to the NPC" ends short of it and the move would be re-issued every tick.
+                PathInfo path(bot);
+                path.calculate(poi.x, poi.y, poi.z);
+                if (uint32(path.getPathType()) & PATHFIND_NOPATH)
+                {
+                    g_poiAvoid[low].insert(er.idx);
+                    g_poiAvoidUntilMs[low] = now + 30u * 60000u;
+                    g_errand.erase(low);
+                    return;
+                }
+                Vector3 const e = path.getActualEndPosition();
+                er.tx = e.x; er.ty = e.y; er.tz = e.z;
+                er.lx = bot->GetPositionX(); er.ly = bot->GetPositionY(); er.lastMs = now;
+            }
+            float const dx = bot->GetPositionX() - (er.phase == ERR_GO ? er.tx : poi.x);
+            float const dy = bot->GetPositionY() - (er.phase == ERR_GO ? er.ty : poi.y);
             float const d2 = dx * dx + dy * dy;
             if (er.phase == ERR_GO)
             {
                 if (d2 > 25.0f && now - er.atMs <= 60000)
                 {
+                    // Stalled on the way (partial path, a door the mesh does not know): give
+                    // the errand up after 6 s of standing still instead of re-issuing the same
+                    // move for a minute (that is what the telemetry showed as BOT_STUCK).
+                    if (!er.lastMs || now - er.lastMs >= 1000)
+                    {
+                        float const mx = bot->GetPositionX() - er.lx, my = bot->GetPositionY() - er.ly;
+                        if (er.lastMs && mx * mx + my * my < 0.25f)
+                            er.stallMs += now - er.lastMs; // less than half a yard in a second: not walking
+                        else
+                            er.stallMs = 0;
+                        er.lx = bot->GetPositionX(); er.ly = bot->GetPositionY(); er.lastMs = now;
+                    }
+                    if (er.stallMs >= 6000)
+                    {
+                        bot->GetMotionMaster()->MoveIdle();
+                        bot->StopMoving(true);
+                        g_poiAvoid[low].insert(er.idx);
+                        g_poiAvoidUntilMs[low] = now + 30u * 60000u;
+                        g_errand.erase(low);
+                        return;
+                    }
                     if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
-                        bot->GetMotionMaster()->MovePoint(0, poi.x, poi.y, poi.z, MOVE_PATHFINDING);
+                        bot->GetMotionMaster()->MovePoint(0, er.tx, er.ty, er.tz, MOVE_PATHFINDING);
                     return; // walking to the POI (human pace, up to 60s)
                 }
                 bot->GetMotionMaster()->MoveIdle();
@@ -3216,9 +3355,62 @@ namespace
         }
 
         // Resident (city-life) behaviour: live in the city, calm ambient roaming.
+        void StuckProbe(Player* bot)
+        {
+            uint32 const low = bot->GetGUIDLow();
+            uint32 const now = WorldTimer::getMSTime();
+            StuckTrack& st = g_stuckTrack[low];
+            if (st.lastMs && now - st.lastMs < 1000)
+                return;
+            MovementGeneratorType const mt = bot->GetMotionMaster()->GetCurrentMovementGeneratorType();
+            bool const movingState = bot->IsMoving() || mt == POINT_MOTION_TYPE || mt == FOLLOW_MOTION_TYPE || mt == CHASE_MOTION_TYPE;
+            float const dx = bot->GetPositionX() - st.x, dy = bot->GetPositionY() - st.y;
+            bool const still = st.lastMs && dx * dx + dy * dy < 0.25f;
+            if (!movingState || !still)
+            {
+                st.sinceMs = now;
+                st.reported = false;
+            }
+            st.x = bot->GetPositionX(); st.y = bot->GetPositionY(); st.lastMs = now;
+            if (movingState && still && !st.reported && now - st.sinceMs >= 8000)
+            {
+                st.reported = true;
+                std::ostringstream o;
+                auto e = g_errand.find(low);
+                if (e != g_errand.end())
+                {
+                    Poi const& p = PoiOf(low, e->second.idx);
+                    float const tx = bot->GetPositionX() - e->second.tx, ty = bot->GetPositionY() - e->second.ty;
+                    o << "errand " << (e->second.phase == ERR_GO ? "GO" : "DWELL") << " to " << p.kind
+                      << " target " << std::fixed << std::setprecision(0) << e->second.tx << "/" << e->second.ty
+                      << " dist " << std::sqrt(tx * tx + ty * ty) << " age " << (now - e->second.atMs) / 1000 << "s; ";
+                }
+                auto f = g_fishing.find(low);
+                if (f != g_fishing.end())
+                    o << "fishing phase " << uint32(f->second.phase) << " age " << (now - f->second.atMs) / 1000 << "s; ";
+                if (g_cooking.count(low)) o << "cooking; ";
+                auto fo = g_botFollow.find(low);
+                if (fo != g_botFollow.end())
+                {
+                    Player* t = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, fo->second.target));
+                    o << "following " << (t ? t->GetName() : "?") << " dist " << (t ? bot->GetDistance(t) : -1.f)
+                      << " mateMoving " << (t && t->IsMoving() ? 1 : 0) << "; ";
+                }
+                if (g_botEscort.count(low)) o << "escort; ";
+                if (bot->GetTradeData()) o << "trade; ";
+                if (bot->IsNonMeleeSpellCasted(false)) o << "casting; ";
+                if (bot->IsBeingTeleported()) o << "teleporting; ";
+                sLog.outString("[mod-turtlebots] stuck-probe %s: gen %u moving %u splineDone %u at %.0f/%.0f zone %u - %s",
+                               bot->GetName(), uint32(mt), bot->IsMoving() ? 1u : 0u, bot->movespline->Finalized() ? 1u : 0u,
+                               bot->GetPositionX(), bot->GetPositionY(), bot->GetZoneId(), o.str().empty() ? "idle life" : o.str().c_str());
+            }
+        }
+
         void DriveResident(Player* bot)
         {
             uint32 const low = bot->GetGUIDLow();
+            if (g_stuckProbe)
+                StuckProbe(bot);
             g_turtleResidents.insert(low);
             PersonalityFor(low); // assign & persist a personality on first sight
             AssignProfessions(bot); // give real, level-scaled professions on first sight
@@ -3343,7 +3535,20 @@ namespace
                     if (tgt && tgt->IsInWorld() && tgt->GetMapId() == bot->GetMapId() &&
                         int32(WorldTimer::getMSTime() - f->second.untilMs) < 0)
                     {
-                        if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != FOLLOW_MOTION_TYPE)
+                        // Beside a mate that stands still we stand too (a follow generator
+                        // behind a standing target looks like a stuck bot to the telemetry
+                        // and to the eye); we fall in behind again as soon as it walks off.
+                        MovementGeneratorType const mt = bot->GetMotionMaster()->GetCurrentMovementGeneratorType();
+                        bool const beside = bot->GetDistance(tgt) <= 3.5f && !tgt->IsMoving();
+                        if (beside)
+                        {
+                            if (mt == FOLLOW_MOTION_TYPE)
+                            {
+                                bot->GetMotionMaster()->MoveIdle();
+                                bot->StopMoving(true);
+                            }
+                        }
+                        else if (mt != FOLLOW_MOTION_TYPE)
                             bot->GetMotionMaster()->MoveFollow(tgt, 2.0f, float(low % 6));
                         return; // walking with them; skip ambient roaming
                     }
@@ -3419,7 +3624,9 @@ namespace
             // Sometimes go fish: residents with the skill wander to the water and fish for real.
             LoadFishSpots();
             std::vector<FishSpot> const& spots = FishSpotsOf(low);
-            if (!spots.empty() && bot->HasSkill(356) && urand(0, 99) < 20)
+            auto fav = g_fishAvoidUntilMs.find(low);
+            bool const fishAllowed = fav == g_fishAvoidUntilMs.end() || int32(now - fav->second) >= 0;
+            if (!spots.empty() && fishAllowed && bot->HasSkill(356) && urand(0, 99) < 20)
             {
                 FishSpot const& sp = spots[urand(0, uint32(spots.size()) - 1)];
                 g_fishing[low] = FishState{ uint8(FISH_MOVE), sp.x, sp.y, sp.z, sp.o, now, 0, now + urand(600u, 3600u) * 1000u };
@@ -3457,7 +3664,7 @@ namespace
             // Mostly run a purposeful errand to a POI; jitter is gone.
             if (urand(0, 99) < 70)
             {
-                g_errand[low] = Errand{ uint8(urand(0, PoiCountOf(low) - 1)), uint8(ERR_GO), now, 0 };
+                g_errand[low] = Errand{ PickErrandPoi(low, now), uint8(ERR_GO), now, 0 };
                 nextAt = now + urand(2000, 5000);
                 return;
             }
