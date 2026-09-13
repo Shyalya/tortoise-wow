@@ -29,6 +29,7 @@
 #include "Config/Config.h"
 #include "Util.h"
 #include "ChannelBroadcaster.h"
+#include "ObjectAccessor.h"
 
 Channel::Channel(std::string const& name, Team InTeam)
     : m_area_dependant(true), m_announce(true), m_moderate(false), m_levelRestricted(true), m_name(name), m_flags(0), m_securityLevel(0), m_channelId(0),
@@ -698,10 +699,6 @@ void Channel::Say(ObjectGuid guid, const char *text, uint32 lang, bool skipCheck
     }
     else
     {
-        if (pPlayer && pPlayer->ToPlayer() && lang != LANG_ADDON)
-            ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_CHAT_CHANNEL,
-                [&](PlayerScript* s) { s->OnChatChannel(pPlayer->ToPlayer(), GetName().c_str(), text); });
-
         SendToAll(&data, (!skipCheck && !m_players[guid].IsModerator()) ? guid : ObjectGuid());
     }
 }
@@ -712,6 +709,28 @@ void Channel::AsyncSay(ObjectGuid guid, const char* what, uint32 lang /*= LANG_U
     // broadcaster that consumes the queue on another one.
     ScriptRegistry<WorldScript>::ForEachEnabledHook(WORLDHOOK_ON_CHANNEL_BROADCAST,
         [&](WorldScript* s) { s->OnChannelBroadcast(guid.GetCounter(), GetName().c_str(), what); });
+
+    // The PlayerScript hook belongs here too, on the caller's thread: the broadcaster
+    // delivers on its own thread, and module handlers that touch world state must not
+    // run there. Same delivery guards as Say(): a sender who only gets the message
+    // echoed back to himself (fingerprint-banned, or muted from public channels below
+    // the vanish level) is not heard by modules either. AsyncSay is the single entry
+    // for client and re-injected (antispam-released, skipCheck) messages alike, so the
+    // hook still fires exactly for the messages that get delivered.
+    if (lang != LANG_ADDON)
+    {
+        if (Player* pPlayer = sObjectAccessor.FindPlayer(guid))
+        {
+            WorldSession* sess = pPlayer->GetSession();
+            bool const echoOnly = !skipCheck && sess &&
+                (sess->IsFingerprintBanned() ||
+                 ((sess->GetAccountFlags() & ACCOUNT_FLAG_MUTED_FROM_PUBLIC_CHANNELS) &&
+                  sess->GetAccountMaxLevel() < sWorld.getConfig(CONFIG_UINT32_PUB_CHANS_MUTE_VANISH_LEVEL)));
+            if (!echoOnly)
+                ScriptRegistry<PlayerScript>::ForEachEnabledHook(PLAYERHOOK_ON_CHAT_CHANNEL,
+                    [&](PlayerScript* s) { s->OnChatChannel(pPlayer, GetName().c_str(), what); });
+        }
+    }
 
     sWorld.GetChannelBroadcaster()->EnqueueMessage(what, GetName(), guid, lang, GetTeam(), skipCheck);
 }
