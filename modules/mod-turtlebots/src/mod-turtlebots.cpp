@@ -445,6 +445,7 @@ namespace
     static uint32  g_llmStatMs = 0;             // ms toward the next once-a-minute summary
     static float   g_ambientTokens = 3.f;       // chatter budget (refilled AmbientPerMinute per minute)
     static std::map<uint32, uint32> g_lastAmbientMs;   // botGuid -> last ambient line (per-bot spacing)
+    static std::map<uint32, std::string> g_lastLine;   // botGuid -> last line it spoke (anti-repeat hint)
     struct ConvoLine { bool bot; std::string text; time_t at; };
     static std::map<uint64, std::deque<ConvoLine>> g_convo; // (bot<<32|player) -> last lines exchanged
     struct InWhisper { uint32 botLow; uint64 sender; std::string msg; };
@@ -918,14 +919,6 @@ namespace
         }
     }
 
-    static char const* TimeOfDay()
-    {
-        time_t const t = time(nullptr);
-        struct tm lt; localtime_r(&t, &lt);
-        int const h = lt.tm_hour;
-        return h < 6 ? "night" : h < 12 ? "morning" : h < 18 ? "afternoon" : h < 22 ? "evening" : "night";
-    }
-
     static std::string AreaName(uint32 id)
     {
         AreaEntry const* a = AreaEntry::GetById(id);
@@ -1039,8 +1032,7 @@ namespace
             " who lives in " + (city.empty() ? std::string("the city") : city) +
             " in World of Warcraft (vanilla era, Turtle WoW server). ";
         if (!profs.empty()) s += "By trade you are a " + profs + ". ";
-        s += "Right now you are " + ActivityOf(bot) + (sub.empty() ? std::string() : " in " + sub) +
-             "; it is " + TimeOfDay() + ". ";
+        s += "Right now you are " + ActivityOf(bot) + (sub.empty() ? std::string() : " in " + sub) + ". ";
         s += NearbyOf(bot);
         if (!places.empty() && !city.empty())
             s += "Parts of " + city + " you know: " + places + ". Never invent other buildings or places. ";
@@ -1191,7 +1183,10 @@ namespace
                 sWorld.LogChat(b->GetSession(), "Whisp", line);
         }
         else
+        {
             ResidentSay(b, line);
+            g_lastLine[j.botGuid] = line;
+        }
         if (j.targetGuid)
             ConvoPush(j.botGuid, j.targetGuid, true, line);
         ++g_llmStat.delivered;
@@ -1226,9 +1221,21 @@ namespace
             ResidentSay(bot, canned);
             return true;
         }
-        QueueLlm(bot, ResidentSystemPrompt(bot),
-                 "Say one line of small talk out loud, fitting what you are doing and who is around you right now.",
-                 canned, LLM_SAY, 0, 0, "ambient", 0, 0);
+        // A different angle each time keeps the street from sounding like one voice.
+        static char const* const kAngles[] = {
+            "grumble a little about your work", "tease your neighbour good-naturedly",
+            "mention a rumour you picked up on the road", "ask whoever is near a short question",
+            "boast a little about your craft", "complain about prices in the city",
+            "remark on the crowd around you", "wonder aloud what to do next",
+            "recall something from your last trip out of the city", "comment on what you are doing right now",
+            "greet whoever is passing", "mutter about your faction's enemies"
+        };
+        std::string usr = std::string("Say one line of small talk out loud: ") + kAngles[urand(0, 11)] +
+                          ". Fit it to what you are doing and who is around you.";
+        auto ll = g_lastLine.find(low);
+        if (ll != g_lastLine.end() && !ll->second.empty())
+            usr += " Do not repeat or rephrase your previous line (" + ll->second + ").";
+        QueueLlm(bot, ResidentSystemPrompt(bot), usr, canned, LLM_SAY, 0, 0, "ambient", 0, 0);
         return true;
     }
 
@@ -1256,17 +1263,21 @@ namespace
                 if (low2 == speaker->GetGUIDLow()) continue;
                 Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low2));
                 if (!r || !r->IsInWorld() || r->GetMapId() != speaker->GetMapId()) continue;
-                if (g_fishing.count(low2) || g_cooking.count(low2) || r->GetTradeData() || r->IsNonMeleeSpellCasted(false))
-                    continue; // busy residents don't join in
+                if (g_cooking.count(low2) || r->GetTradeData() || (!g_fishing.count(low2) && r->IsNonMeleeSpellCasted(false)))
+                    continue; // cooking, trading or mid-cast residents don't join in (anglers do)
                 float const d = speaker->GetDistance(r);
                 if (d < bestD) { bestD = d; partner = r; }
             }
         }
         if (!partner)
             return;
-        partner->SetFacingTo(partner->GetAngle(speaker));
+        if (!g_fishing.count(partner->GetGUIDLow()))
+            partner->SetFacingTo(partner->GetAngle(speaker)); // anglers keep facing the water (channel)
         std::string usr = std::string(speaker->GetName()) + ", standing next to you, just said: " + line +
                           " Answer them in one short line.";
+        auto ll = g_lastLine.find(partner->GetGUIDLow());
+        if (ll != g_lastLine.end() && !ll->second.empty())
+            usr += " Do not repeat or rephrase your previous line (" + ll->second + ").";
         QueueLlm(partner, ResidentSystemPrompt(partner), usr, std::string(), LLM_SAY, 0,
                  WorldTimer::getMSTime() + urand(2500, 5000), "dialogue", uint8(depth + 1), speaker->GetGUIDLow());
     }
@@ -2228,8 +2239,8 @@ namespace
                     return;
                 case FISH_WAIT:
                 {
-                    if (urand(0, 999) < 4)
-                        AmbientSay(bot); // now and then a word over the water
+                    if (urand(0, 9999) < 6)
+                        AmbientSay(bot); // now and then a word over the water (~0.7 tries/min at 20 ticks/s)
                     GameObject* bob = bot->GetGameObject(7620u);
                     if (!bob) { ObjectGuid cg = bot->GetChannelObjectGuid(); if (cg) bob = bot->GetMap()->GetGameObject(cg); }
                     if (bob && bob->getLootState() == GO_READY) // faithful catch: the bite landed
