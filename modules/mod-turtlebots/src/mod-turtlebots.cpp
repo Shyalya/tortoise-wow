@@ -1433,7 +1433,18 @@ namespace
         if (line.empty())
             return; // a dialogue turn with nothing to say stays silent
         if (!j.suffix.empty())
-            line += j.suffix; // the verbatim part (item link, price) follows the model's words
+        {
+            // A market lead-in with a number in it contradicts the verbatim part (the model
+            // sometimes invents a second price): use the canned lead-in instead. Naming the
+            // item is fine - Trade chat repeats the wanted item all the time.
+            bool const bad = line.find_first_of("0123456789") != std::string::npos;
+            if (bad)
+            {
+                sLog.outString("[mod-turtlebots] llm %s %s: lead-in dropped (a number in it): %s", j.tag, b->GetName(), line.c_str());
+                line = j.fallback;
+            }
+            line += j.suffix; // the verbatim part (item link, price) follows the words
+        }
         if (j.mode == LLM_CHANNEL)
         {
             if (!SayInChannel(b, j.channel, line))
