@@ -146,3 +146,17 @@ mod-turtlebots.LLM.MarketCallMinutes = 5
 ###################################################################################################
 
 mod-turtlebots.Debug.SocialSelfTest = 0
+
+###################################################################################################
+# HOME CITIES (#151)
+#
+#    mod-turtlebots.Town.Cities
+#        The capitals residents live in, comma-separated keys: orgrimmar, thunderbluff, undercity,
+#        stormwind, ironforge, darnassus. Resident accounts are spread over the enabled cities of
+#        their faction (existing characters keep their race; new ones alternate Horde/Alliance);
+#        off-shift adventurers come home to the city of their race. Town.Fill applies per city.
+#        Points of interest are discovered from the DB around each hub. Live (reload config).
+#        Default: orgrimmar,thunderbluff,undercity,stormwind,ironforge,darnassus
+###################################################################################################
+
+mod-turtlebots.Town.Cities = orgrimmar,thunderbluff,undercity,stormwind,ironforge,darnassus

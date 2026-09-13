@@ -90,13 +90,91 @@ namespace
         { 6, 1 }, { 5, 4 }, { 8, 5 }, { 2, 3 },
     };
     const uint32 HORDE_COMBO_COUNT = sizeof(HORDE_COMBOS) / sizeof(HORDE_COMBOS[0]);
+    // Alliance: 1=Human 3=Dwarf 4=Night elf 7=Gnome; classes as above plus 2=Paladin 11=Druid.
+    const RaceClass ALLIANCE_COMBOS[] =
+    {
+        { 1, 1 }, { 1, 2 }, { 7, 8 }, { 3, 3 }, { 3, 5 }, { 4, 11 },
+        { 4, 4 }, { 7, 9 }, { 1, 8 }, { 3, 1 },
+    };
+    const uint32 ALLIANCE_COMBO_COUNT = sizeof(ALLIANCE_COMBOS) / sizeof(ALLIANCE_COMBOS[0]);
+
+    // The six capitals (#151). The hub is a walkable spot by the inn (the innkeeper spawn
+    // from the DB; Orgrimmar keeps its proven hub). Zone ids are resolved from the terrain
+    // at startup, points of interest are discovered from the DB around the hub.
+    struct City { char const* key; char const* name; uint32 map; float x, y, z, o; Team team; uint32 zone; };
+    static City g_cities[] = {
+        { "orgrimmar",    "Orgrimmar",     1,  1568.0f, -4405.87f,    8.13f, 0.0f, HORDE,    0 },
+        { "thunderbluff", "Thunder Bluff", 1, -1300.0f,    38.0f,  129.0f,  0.0f, HORDE,    0 },
+        { "undercity",    "Undercity",     0,  1635.0f,   223.0f,  -43.0f,  0.0f, HORDE,    0 },
+        { "stormwind",    "Stormwind",     0, -8868.0f,   674.0f,   98.0f,  0.0f, ALLIANCE, 0 },
+        { "ironforge",    "Ironforge",     0, -4841.0f,  -857.0f,  502.0f,  0.0f, ALLIANCE, 0 },
+        { "darnassus",    "Darnassus",     1, 10128.0f,  2225.0f, 1329.0f,  0.0f, ALLIANCE, 0 },
+    };
+    static uint32 const kCityCount = sizeof(g_cities) / sizeof(g_cities[0]);
+    static std::vector<uint32> g_cityEnabled;   // indices into g_cities, from Town.Cities
+    static std::map<uint32, uint32> g_homeCity; // botGuid -> city index (residents of both kinds)
+
+    static uint32 CityIdxOfBot(uint32 low)
+    {
+        auto it = g_homeCity.find(low);
+        return (it != g_homeCity.end() && it->second < kCityCount) ? it->second : 0;
+    }
+    static char const* CityNameOfBot(Player* b) { return g_cities[CityIdxOfBot(b->GetGUIDLow())].name; }
+    static bool CityEnabled(uint32 ci) { return std::find(g_cityEnabled.begin(), g_cityEnabled.end(), ci) != g_cityEnabled.end(); }
+
+    // A race's home city, or the first enabled city of its faction; kCityCount = none.
+    static uint32 CityOfRace(uint8 race)
+    {
+        uint32 pref = kCityCount;
+        switch (race)
+        {
+            case 2: case 8: case 9: pref = 0; break; // orc, troll, goblin
+            case 6:                 pref = 1; break; // tauren
+            case 5:                 pref = 2; break; // undead
+            case 1: case 10:        pref = 3; break; // human, high elf
+            case 3: case 7:         pref = 4; break; // dwarf, gnome
+            case 4:                 pref = 5; break; // night elf
+            default: return kCityCount;
+        }
+        if (CityEnabled(pref))
+            return pref;
+        for (uint32 ci : g_cityEnabled)
+            if (g_cities[ci].team == g_cities[pref].team)
+                return ci;
+        return kCityCount;
+    }
+
+    static void ReadTownCities()
+    {
+        std::string const list = sConfig.GetStringDefault("mod-turtlebots.Town.Cities",
+                                                          "orgrimmar,thunderbluff,undercity,stormwind,ironforge,darnassus");
+        std::vector<uint32> en;
+        std::string cur;
+        for (size_t i = 0; i <= list.size(); ++i)
+        {
+            char const c = i < list.size() ? list[i] : ',';
+            if (c != ',') { if (c != ' ') cur += char(tolower((unsigned char)c)); continue; }
+            for (uint32 ci = 0; ci < kCityCount; ++ci)
+                if (cur == g_cities[ci].key && std::find(en.begin(), en.end(), ci) == en.end())
+                    en.push_back(ci);
+            cur.clear();
+        }
+        if (en.empty())
+            en.push_back(0);
+        g_cityEnabled = en;
+    }
+
+    static void ResolveCityZones()
+    {
+        for (City& c : g_cities)
+            if (!c.zone)
+                c.zone = sTerrainMgr.GetZoneId(c.map, c.x, c.y, c.z);
+    }
 
     // A named world point lifted from ai_playerbot_named_location.
     struct NamedLoc { float x, y, z, o; std::string name; };
 
     // Orgrimmar hub where residents live (proven-walkable spot from the demo AI).
-    const uint32 CITY_MAP = 1;
-    const float CITY_X = 1568.0f, CITY_Y = -4405.87f, CITY_Z = 8.13f, CITY_O = 0.0f;
 
     // Headless bots have no client to acknowledge teleports; do it for them, or
     // they get stuck "being teleported". Mirrors the core PlayerBotAI.
@@ -151,13 +229,15 @@ namespace
     }
 
     // Existing character guid on this account, or 0.
-    uint32 FindExistingChar(uint32 accId)
+    uint32 FindExistingChar(uint32 accId, uint8* race = nullptr)
     {
         QueryResult* result = CharacterDatabase.PQuery(
-            "SELECT guid FROM characters WHERE account = %u ORDER BY guid LIMIT 1", accId);
+            "SELECT guid, race FROM characters WHERE account = %u ORDER BY guid LIMIT 1", accId);
         if (!result)
             return 0;
         uint32 guid = result->Fetch()[0].GetUInt32();
+        if (race)
+            *race = uint8(result->Fetch()[1].GetUInt32());
         delete result;
         return guid;
     }
@@ -271,7 +351,7 @@ namespace
     static std::map<uint32, uint32> g_botPurseCap;     // botGuid -> coin purse cap (seeded on first deal)
     static std::map<uint32, uint32> g_botEscort;       // botGuid -> buyer it is walking over to trade with
     struct FishSpot { float x, y, z, o; };
-    static std::vector<FishSpot> g_fishSpots;          // cached water spots near the city
+    static std::map<uint32, std::vector<FishSpot>> g_fishSpotsByCity; // city index -> water spots inside it
     static bool g_fishSpotsLoaded = false;
     enum { FISH_MOVE = 1, FISH_CAST = 2, FISH_WAIT = 3 };
     struct FishState { uint8 phase; float x, y, z, o; uint32 atMs; uint8 casts; uint32 endMs; };
@@ -297,6 +377,63 @@ namespace
         { 1650.f, -4460.f, 20.f, "the mailbox" },
     };
     static uint32 const kPoiCount = 7;
+    static std::map<uint32, std::vector<Poi>> g_cityPois; // city index -> discovered points of interest
+
+    // Points of interest of a city, discovered once from the DB around its hub: the nearest
+    // auctioneer, banker, innkeeper, flight master, battlemaster, trainer and mailbox.
+    static std::vector<Poi> const& CityPoisOf(uint32 ci)
+    {
+        auto it = g_cityPois.find(ci);
+        if (it != g_cityPois.end())
+            return it->second;
+        std::vector<Poi>& out = g_cityPois[ci];
+        City const& c = g_cities[ci];
+        struct Want { uint32 flag; char const* kind; };
+        static Want const k[] = { { 0x1000, "the auction house" }, { 0x100, "the bank" }, { 0x80, "the inn" },
+                                  { 0x8, "the flight master" }, { 0x800, "the battlemaster" }, { 0x10, "a trainer" } };
+        for (Want const& w : k)
+        {
+            if (QueryResult* r = WorldDatabase.PQuery(
+                    "SELECT c.position_x, c.position_y, c.position_z FROM creature c JOIN creature_template ct ON ct.entry = c.id "
+                    "WHERE c.map = %u AND c.position_x BETWEEN %f AND %f AND c.position_y BETWEEN %f AND %f AND (ct.npc_flags & %u) "
+                    "ORDER BY POW(c.position_x - %f, 2) + POW(c.position_y - %f, 2) LIMIT 1",
+                    c.map, c.x - 700.f, c.x + 700.f, c.y - 700.f, c.y + 700.f, w.flag, c.x, c.y))
+            {
+                Field* f = r->Fetch();
+                out.push_back({ f[0].GetFloat(), f[1].GetFloat(), f[2].GetFloat(), w.kind });
+                delete r;
+            }
+        }
+        if (QueryResult* r = WorldDatabase.PQuery(
+                "SELECT g.position_x, g.position_y, g.position_z FROM gameobject g JOIN gameobject_template gt ON gt.entry = g.id "
+                "WHERE gt.type = 19 AND g.map = %u AND g.position_x BETWEEN %f AND %f AND g.position_y BETWEEN %f AND %f "
+                "ORDER BY POW(g.position_x - %f, 2) + POW(g.position_y - %f, 2) LIMIT 1",
+                c.map, c.x - 700.f, c.x + 700.f, c.y - 700.f, c.y + 700.f, c.x, c.y))
+        {
+            Field* f = r->Fetch();
+            out.push_back({ f[0].GetFloat(), f[1].GetFloat(), f[2].GetFloat(), "the mailbox" });
+            delete r;
+        }
+        sLog.outString("[mod-turtlebots] city %s: %u points of interest discovered around the hub.", c.name, uint32(out.size()));
+        return out;
+    }
+
+    static Poi const& PoiOf(uint32 low, uint32 idx)
+    {
+        std::vector<Poi> const& v = CityPoisOf(CityIdxOfBot(low));
+        return v.empty() ? kPois[idx % kPoiCount] : v[idx % v.size()];
+    }
+    static uint32 PoiCountOf(uint32 low)
+    {
+        std::vector<Poi> const& v = CityPoisOf(CityIdxOfBot(low));
+        return v.empty() ? kPoiCount : uint32(v.size());
+    }
+    static std::vector<FishSpot> const& FishSpotsOf(uint32 low)
+    {
+        static std::vector<FishSpot> const none;
+        auto it = g_fishSpotsByCity.find(CityIdxOfBot(low));
+        return it == g_fishSpotsByCity.end() ? none : it->second;
+    }
     static uint32 const kCookRaw[4]   = { 6291, 6303, 6289, 6317 }; // raw fish they catch
     static uint32 const kCookDone[4]  = { 6290, 787,  4592, 6316 }; // cooked results
     static uint32 const kCookSpell[4] = { 7751, 7752, 7753, 7754 }; // apprentice recipes
@@ -1000,7 +1137,7 @@ namespace
         auto e = g_errand.find(low);
         if (e != g_errand.end())
         {
-            Poi const& p = kPois[e->second.idx % kPoiCount];
+            Poi const& p = PoiOf(low, e->second.idx);
             return std::string(e->second.phase == ERR_GO ? "walking over to " : "standing at ") + p.kind;
         }
         auto f = g_botFollow.find(low);
@@ -1737,11 +1874,20 @@ namespace
             "Time for a drink at the inn.",
             "Stay sharp, the Alliance grows bold."
         };
+        static char const* const kSharedA[] = {
+            "For the Alliance!",
+            "Light be with you.",
+            "Anyone heading to Goldshire?",
+            "Heard the King has new orders.",
+            "Trade goods, cheap! Come see.",
+            "Time for a drink at the inn.",
+            "Stay sharp, the Horde grows bold."
+        };
         // Martial classes: warrior / rogue / hunter / paladin.
         static char const* const kMartial[] = {
             "Long day guarding the city...",
-            "Best forge in Orgrimmar, right here.",
-            "My blade's thirsty for Alliance blood.",
+            "Best forge in the city, right here.",
+            "My blade's thirsty for enemy blood.",
             "Anyone up for a scrap in the ring?"
         };
         // Mana users who beg for water: warlock / priest.
@@ -1763,8 +1909,9 @@ namespace
             "Nature's balance must be kept."
         };
 
-        char const* const* pool = kShared;
-        uint32 n = sizeof(kShared) / sizeof(kShared[0]);
+        bool const horde = bot->GetTeam() == HORDE;
+        char const* const* pool = horde ? kShared : kSharedA;
+        uint32 n = horde ? uint32(sizeof(kShared) / sizeof(kShared[0])) : uint32(sizeof(kSharedA) / sizeof(kSharedA[0]));
         // 55% shared, otherwise a class-appropriate bucket.
         if (urand(0, 99) >= 55)
         {
@@ -2209,10 +2356,11 @@ namespace
 
         // A Trade-channel offer came in while the city sleeps: ask for one resident
         // (fitting the item if possible) to be kept up long enough to quote and trade.
-        void RequestTradeResponder(uint32 itemEntry)
+        void RequestTradeResponder(uint32 itemEntry, Team team)
         {
             _tradeWakeRequested = true;
             _tradeWantItem = itemEntry;
+            _tradeWantTeam = team;
         }
 
         void OnStartup() override
@@ -2245,6 +2393,17 @@ namespace
                            _townEnable ? "ON" : "off", _townWakeBatch, _townWakeIntervalMs, _townSleepGraceSec,
                            uint32(_townForceAwake.size()));
             ReadLlmConfig();
+            ReadTownCities();
+            ResolveCityZones();
+            {
+                std::string names;
+                for (uint32 ci : g_cityEnabled)
+                {
+                    if (!names.empty()) names += ", ";
+                    names += std::string(g_cities[ci].name) + " (zone " + std::to_string(g_cities[ci].zone) + ", map " + std::to_string(g_cities[ci].map) + ")";
+                }
+                sLog.outString("[mod-turtlebots] home cities: %s.", names.c_str());
+            }
             g_marketFactorPct = sConfig.GetIntDefault("mod-turtlebots.Market.FactorPct", 100);
             sLog.outString("[mod-turtlebots] voice: LLM %s (%s, ambient %s, %u lines/min, dialogue %u%%, timeout %u ms).",
                            g_llmEnabled ? "on" : "off", g_llmModel.c_str(), g_llmAmbient ? "on" : "off",
@@ -2908,9 +3067,10 @@ namespace
             g_fishSpotsLoaded = true;
             // The Valley of Honor pond by Lumak the fishing trainer -- inside Orgrimmar, so
             // residents never leave the city to fish (leaving town is the adventurers' job).
-            g_fishSpots.push_back({ 2000.6f, -4659.7f, 26.5f, 5.31f });
-            g_fishSpots.push_back({ 2006.0f, -4666.0f, 26.0f, 5.31f });
-            g_fishSpots.push_back({ 1995.0f, -4665.0f, 26.0f, 5.31f });
+            // Other cities have no known spots yet: their residents simply do not fish.
+            g_fishSpotsByCity[0].push_back({ 2000.6f, -4659.7f, 26.5f, 5.31f });
+            g_fishSpotsByCity[0].push_back({ 2006.0f, -4666.0f, 26.0f, 5.31f });
+            g_fishSpotsByCity[0].push_back({ 1995.0f, -4665.0f, 26.0f, 5.31f });
         }
 
         // Make sure a fishing pole is in the main hand (grant one if needed).
@@ -3030,7 +3190,7 @@ namespace
         {
             uint32 const low = bot->GetGUIDLow();
             uint32 const now = WorldTimer::getMSTime();
-            Poi const& poi = kPois[er.idx % kPoiCount];
+            Poi const& poi = PoiOf(low, er.idx);
             float const dx = bot->GetPositionX() - poi.x, dy = bot->GetPositionY() - poi.y;
             float const d2 = dx * dx + dy * dy;
             if (er.phase == ERR_GO)
@@ -3068,7 +3228,8 @@ namespace
             if (!_placed.count(low))
             {
                 _placed.insert(low);
-                bot->TeleportTo(CITY_MAP, CITY_X, CITY_Y, CITY_Z, CITY_O);
+                City const& home = g_cities[CityIdxOfBot(low)];
+                bot->TeleportTo(home.map, home.x, home.y, home.z, home.o);
                 return; // teleport finishes next tick via CompleteBotTeleport
             }
 
@@ -3257,9 +3418,10 @@ namespace
 
             // Sometimes go fish: residents with the skill wander to the water and fish for real.
             LoadFishSpots();
-            if (!g_fishSpots.empty() && bot->HasSkill(356) && urand(0, 99) < 20)
+            std::vector<FishSpot> const& spots = FishSpotsOf(low);
+            if (!spots.empty() && bot->HasSkill(356) && urand(0, 99) < 20)
             {
-                FishSpot const& sp = g_fishSpots[urand(0, uint32(g_fishSpots.size()) - 1)];
+                FishSpot const& sp = spots[urand(0, uint32(spots.size()) - 1)];
                 g_fishing[low] = FishState{ uint8(FISH_MOVE), sp.x, sp.y, sp.z, sp.o, now, 0, now + urand(600u, 3600u) * 1000u };
                 nextAt = now + urand(30000, 60000);
                 return;
@@ -3295,7 +3457,7 @@ namespace
             // Mostly run a purposeful errand to a POI; jitter is gone.
             if (urand(0, 99) < 70)
             {
-                g_errand[low] = Errand{ uint8(urand(0, kPoiCount - 1)), uint8(ERR_GO), now, 0 };
+                g_errand[low] = Errand{ uint8(urand(0, PoiCountOf(low) - 1)), uint8(ERR_GO), now, 0 };
                 nextAt = now + urand(2000, 5000);
                 return;
             }
@@ -3486,7 +3648,7 @@ namespace
         void UpdateTownState(uint32 nowMs)
         {
             std::set<uint32> zones = _townForceAwake;
-            for (uint32 i = 0; i < _residents; ++i) zones.insert(HomeZoneOf(i));
+            for (uint32 ci : g_cityEnabled) zones.insert(g_cities[ci].zone);
             for (uint32 z : zones)
             {
                 uint32 const players = _zonePlayers.count(z) ? _zonePlayers[z] : 0;
@@ -3538,12 +3700,13 @@ namespace
                     pc.acc  = f[1].GetUInt32();
                     pc.race = uint8(f[2].GetUInt32());
                     pc.name = f[3].GetCppString();
-                    if (Player::TeamForRace(pc.race) == HORDE)
+                    pc.city = CityOfRace(pc.race);
+                    if (pc.city < kCityCount)
                         _pool.push_back(pc);
                 } while (r->NextRow());
                 delete r;
             }
-            sLog.outString("[mod-turtlebots] town: adventurer pool refreshed - %u Horde characters on %s accounts.",
+            sLog.outString("[mod-turtlebots] town: adventurer pool refreshed - %u characters with an enabled home city on %s accounts.",
                            uint32(_pool.size()), _poolPrefix.c_str());
         }
 
@@ -3562,13 +3725,20 @@ namespace
                 if (RoleOf(low) == ROLE_RESIDENT) ++n;
             return n;
         }
+        uint32 ResidentsOnlineIn(uint32 ci) const
+        {
+            uint32 n = 0;
+            for (uint32 low : _online)
+                if (RoleOf(low) == ROLE_RESIDENT && CityIdxOfBot(low) == ci) ++n;
+            return n;
+        }
 
         // Off-shift adventurers come home: while the city is awake and below Fill, embody
         // pool characters that are not in the world, have no session in flight and are past
         // their release cooldown. TortoiseBots skips any character whose session is not
         // NotFound, so a resident is never double-logged; once we release it, the character
         // is free for its next shift again.
-        void EmbodyPoolResidents(uint32 nowMs)
+        void EmbodyPoolResidents(uint32 nowMs, uint32 ci)
         {
             // Adopt freshly Active pool sessions into the roster; forget ones that vanished.
             for (auto it = _poolResidents.begin(); it != _poolResidents.end(); )
@@ -3594,12 +3764,12 @@ namespace
                 ++it;
             }
 
-            uint32 have = ResidentsOnline();
+            uint32 have = ResidentsOnlineIn(ci);
             for (PoolChar const& pc : _pool)
             {
                 if (have >= _townFill || !_townBudget)
                     break;
-                if (_poolResidents.count(pc.low))
+                if (pc.city != ci || _poolResidents.count(pc.low))
                     continue;
                 ObjectGuid guid(HIGHGUID_PLAYER, pc.low);
                 if (sObjectAccessor.FindPlayer(guid))
@@ -3615,18 +3785,20 @@ namespace
                 ++have;
                 _poolResidents.insert(pc.low);
                 _role[pc.low] = uint8(ROLE_RESIDENT);
-                sLog.outString("[mod-turtlebots] town: %s comes home to Orgrimmar as a resident (off-shift adventurer).", pc.name.c_str());
+                g_homeCity[pc.low] = ci;
+                sLog.outString("[mod-turtlebots] town: %s comes home to %s as a resident (off-shift adventurer).", pc.name.c_str(), g_cities[ci].name);
             }
         }
 
         // The city fell asleep: pool residents log out (staggered) and are free for their
         // next shift. Their placement is dropped so the next homecoming teleports them to
         // the hub again from wherever they adventured in between.
-        void ReleasePoolResidents(uint32 nowMs)
+        void ReleasePoolResidents(uint32 nowMs, uint32 ci)
         {
             for (auto it = _poolResidents.begin(); it != _poolResidents.end(); )
             {
                 uint32 const low = *it;
+                if (CityIdxOfBot(low) != ci) { ++it; continue; }
                 ObjectGuid guid(HIGHGUID_PLAYER, low);
                 HeadlessSessionState st = sWorld.GetHeadlessSessionState(guid);
                 if (st == HeadlessSessionState::NotFound)
@@ -3679,17 +3851,17 @@ namespace
             ItemPrototype const* proto = _tradeWantItem ? sObjectMgr.GetItemPrototype(_tradeWantItem) : nullptr;
             uint32 pick = _residents; // sentinel: nobody
             for (uint32 i = 0; i < _residents && pick == _residents; ++i)
-                if (_charByIndex.count(i) && (!proto || ClassFitsItem(HORDE_COMBOS[i % HORDE_COMBO_COUNT].cls, proto)))
+                if (_charByIndex.count(i) && TeamOfIndex(i) == _tradeWantTeam && (!proto || ClassFitsItem(ComboOfIndex(i).cls, proto)))
                     pick = i;
             for (uint32 i = 0; i < _residents && pick == _residents; ++i)
-                if (_charByIndex.count(i))
-                    pick = i; // nobody fits: the first resident answers (and says so)
+                if (_charByIndex.count(i) && TeamOfIndex(i) == _tradeWantTeam)
+                    pick = i; // nobody fits: the first resident of that faction answers (and says so)
             if (pick == _residents)
                 return;
             _tradeResponder = _charByIndex[pick];
             _tradeUntilMs = nowMs + 600000u;
             sLog.outString("[mod-turtlebots] trade: city asleep - waking %s (%s) to answer a Trade-channel offer%s.",
-                           BotCharName(pick).c_str(), ClassWord(HORDE_COMBOS[pick % HORDE_COMBO_COUNT].cls),
+                           BotCharName(pick).c_str(), ClassWord(ComboOfIndex(pick).cls),
                            proto ? (std::string(" for ") + proto->Name1).c_str() : "");
         }
 
@@ -3770,7 +3942,7 @@ namespace
             // Debug: pretend a Trade-channel offer arrived (tests the wake/keep-up/release path
             // without a client). Leave at 0 in normal operation.
             if (sConfig.GetBoolDefault("mod-turtlebots.Debug.TradeWake", false) && !_tradeResponder)
-                RequestTradeResponder(0);
+                RequestTradeResponder(0, HORDE);
             _target             = sConfig.GetIntDefault("mod-turtlebots.Count", 3);
             _residents          = sConfig.GetIntDefault("mod-turtlebots.Residents", 1);
             _townEnable         = sConfig.GetBoolDefault("mod-turtlebots.Town.Enable", false);
@@ -3781,6 +3953,8 @@ namespace
             if (!_townFill) _townFill = _residents;
             if (_target > _maxIndexSeen) _maxIndexSeen = _target;
             ReadLlmConfig(); // the voice knobs are live too
+            ReadTownCities();
+            ResolveCityZones();
         }
 
         // The target was lowered live: bots with an index at or above the new target
@@ -3821,8 +3995,11 @@ namespace
                 if (_poolRefreshMs <= RECONCILE_INTERVAL_MS) { RefreshPool(); _poolRefreshMs = _poolRefreshSec * 1000u; }
                 else _poolRefreshMs -= RECONCILE_INTERVAL_MS;
                 uint32 const nowMs = WorldTimer::getMSTime();
-                if (_zoneAwake[kOrgZone]) EmbodyPoolResidents(nowMs);
-                else                      ReleasePoolResidents(nowMs);
+                for (uint32 ci : g_cityEnabled)
+                {
+                    if (_zoneAwake[g_cities[ci].zone]) EmbodyPoolResidents(nowMs, ci);
+                    else                               ReleasePoolResidents(nowMs, ci);
+                }
             }
 
             MarketCall(WorldTimer::getMSTime());
@@ -3838,6 +4015,8 @@ namespace
         // Drive bot i one step toward being online. Returns true if it is Active.
         bool EnsureBotOnline(uint32 i)
         {
+            if (HomeCityOf(i) >= kCityCount)
+                return false; // no enabled city for this faction: the index stays unused
             uint32 accId = EnsureBotAccount(i);
             if (!accId)
                 return false; // account INSERT still in flight; retry next tick
@@ -3846,13 +4025,16 @@ namespace
             uint32 charLow = _charByIndex.count(i) ? _charByIndex[i] : 0;
             if (!charLow)
             {
-                charLow = FindExistingChar(accId);
+                uint8 race = 0;
+                charLow = FindExistingChar(accId, &race);
                 if (!charLow)
                 {
                     CreateBotChar(i, accId); // async; picked up next reconcile
                     return false;
                 }
                 _charByIndex[i] = charLow;
+                if (race)
+                    _raceByIndex[i] = race;
             }
 
             ObjectGuid charGuid(HIGHGUID_PLAYER, charLow);
@@ -3880,6 +4062,7 @@ namespace
                     _online.push_back(charLow);
                     _role[charLow] = (i < _residents) ? uint8(ROLE_RESIDENT)
                                                       : uint8(ROLE_ADVENTURER);
+                    g_homeCity[charLow] = HomeCityOf(i);
                 }
                 return true;
             }
@@ -3907,7 +4090,7 @@ namespace
 
         void CreateBotChar(uint32 i, uint32 accId)
         {
-            RaceClass const& rc = HORDE_COMBOS[i % HORDE_COMBO_COUNT];
+            RaceClass const& rc = ComboOfIndex(i);
             CharacterCreateInfo info;
             info.name    = BotCharName(i);
             info.race    = rc.race;
@@ -3923,6 +4106,7 @@ namespace
                 return;
             }
             _charByIndex[i] = outcome.guid.GetCounter();
+            _raceByIndex[i] = rc.race;
             sLog.outString("[mod-turtlebots] created char '%s' (guid %u) for bot %u.",
                            info.name.c_str(), outcome.guid.GetCounter(), i);
         }
@@ -3934,6 +4118,7 @@ namespace
         uint32 _tradeUntilMs = 0;              // ... until then (extended while a deal is pending)
         uint32 _tradeWantItem = 0;             // the item offered (class fit for the pick)
         bool   _tradeWakeRequested = false;
+        Team   _tradeWantTeam = HORDE;          // faction of the seller (a city trades with its own)
         uint32 _startDelayMs;
         uint32 _reconcileTimer;
         uint32 _lastReportedOnline = 0xFFFFFFFF;
@@ -3958,11 +4143,41 @@ namespace
         uint32   _townBudget = 0;                  // wake/sleep logins allowed until the next refill
         uint32   _townRefillMs = 0;                // ms accumulated toward the next refill
         static constexpr uint32 kOrgZone = 1637;   // Orgrimmar: the only resident home city for now
-        uint32 HomeZoneOf(uint32 /*botIndex*/) const { return kOrgZone; } // per-city assignment comes with #151
+        // Resident i: an existing character keeps its race (and faction) from the DB; a new
+        // one alternates Horde/Alliance. Its home is the i-th enabled city of that faction.
+        Team TeamOfIndex(uint32 i) const
+        {
+            auto it = _raceByIndex.find(i);
+            if (it != _raceByIndex.end())
+                return Player::TeamForRace(it->second);
+            return (i % 2 == 0) ? HORDE : ALLIANCE;
+        }
+        RaceClass const& ComboOfIndex(uint32 i) const
+        {
+            return TeamOfIndex(i) == HORDE ? HORDE_COMBOS[i % HORDE_COMBO_COUNT]
+                                           : ALLIANCE_COMBOS[(i / 2) % ALLIANCE_COMBO_COUNT];
+        }
+        uint32 HomeCityOf(uint32 i) const
+        {
+            Team const t = TeamOfIndex(i);
+            std::vector<uint32> mine;
+            for (uint32 ci : g_cityEnabled)
+                if (g_cities[ci].team == t)
+                    mine.push_back(ci);
+            if (mine.empty())
+                return kCityCount;
+            return mine[(i / 2) % mine.size()];
+        }
+        uint32 HomeZoneOf(uint32 i) const
+        {
+            uint32 const ci = HomeCityOf(i);
+            return ci < kCityCount ? g_cities[ci].zone : g_cities[0].zone;
+        }
+        std::map<uint32, uint8> _raceByIndex; // bot index -> race of its character
 
         // --- Off-shift adventurers as residents (see OnStartup) ---
-        struct PoolChar { uint32 low = 0; uint32 acc = 0; uint8 race = 0; std::string name; };
-        std::vector<PoolChar>    _pool;             // Horde adventurer characters eligible as residents
+        struct PoolChar { uint32 low = 0; uint32 acc = 0; uint8 race = 0; std::string name; uint32 city = 0; };
+        std::vector<PoolChar>    _pool;             // adventurer characters with an enabled home city
         uint32                   _poolRefreshMs = 0; // countdown to the next DB refresh (0 = now)
         std::set<uint32>         _poolResidents;    // pool characters currently embodied by us
         std::map<uint32, uint32> _releasedAtMs;     // guid low -> ms we last released it (cooldown)
@@ -4334,13 +4549,13 @@ public:
             }
         }
         // Nobody is up.
-        if (from->GetTeam() != HORDE || !g_worldScript)
+        if (!g_worldScript)
             return;
         for (auto const& po : g_pendingOffers)
             if (po.seller == from->GetGUIDLow())
                 return; // one at a time per player
         g_pendingOffers.push_back({ from->GetGUIDLow(), std::string(msg), nowMs, entry, std::string(channel) });
-        g_worldScript->RequestTradeResponder(entry);
+        g_worldScript->RequestTradeResponder(entry, from->GetTeam());
         sLog.outString("[mod-turtlebots] trade: %s spoke in %s while the city sleeps (%s) - waking a resident.",
                        from->GetName(), channel, entry ? "an offer" : "a question");
     }
@@ -4362,8 +4577,8 @@ private:
         for (uint32 low : g_turtleResidents)
         {
             Player* res = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
-            if (!res || res == from || !res->IsInWorld())
-                continue;
+            if (!res || res == from || !res->IsInWorld() || res->GetTeam() != from->GetTeam())
+                continue; // a city trades with its own faction
             bool const sameMap = res->GetMapId() == from->GetMapId();
             if (!global && !sameMap)
                 continue;
@@ -4406,14 +4621,24 @@ private:
         // A channel offer gets ten minutes: the seller may be in another city.
         g_sellIntent[from->GetGUIDLow()] = SellIntent{ best->GetGUIDLow(), entry,
                                                        WorldTimer::getMSTime() + (global ? 600000u : 120000u), price };
-        std::string line = global
-            ? RPick({ "I'll give you %s for it - bring it to Orgrimmar and trade me.",
-                      "That I can use: %s if you bring it to Orgrimmar.",
-                      "Good find - %s. Come find me in Orgrimmar to trade." })
-            : RPick({ "I'll give you %s for it - bring it and trade me.",
-                      "That I can use. %s if you bring it over to trade.",
-                      "Good find - %s for it; come trade me." });
-        size_t ph = line.find("%s"); if (ph != std::string::npos) line.replace(ph, 2, MoneyStr(price));
+        std::string line;
+        if (global)
+        {
+            std::string const city = CityNameOfBot(best);
+            switch (urand(0, 2))
+            {
+                case 0:  line = "I'll give you " + MoneyStr(price) + " for it - bring it to " + city + " and trade me."; break;
+                case 1:  line = "That I can use: " + MoneyStr(price) + " if you bring it to " + city + "."; break;
+                default: line = "Good find - " + MoneyStr(price) + ". Come find me in " + city + " to trade."; break;
+            }
+        }
+        else
+        {
+            line = RPick({ "I'll give you %s for it - bring it and trade me.",
+                           "That I can use. %s if you bring it over to trade.",
+                           "Good find - %s for it; come trade me." });
+            size_t ph = line.find("%s"); if (ph != std::string::npos) line.replace(ph, 2, MoneyStr(price));
+        }
         QueueWhisper(best, from, line);
         return true;
     }
@@ -4425,7 +4650,7 @@ private:
         for (uint32 low : g_turtleResidents)
         {
             Player* res = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
-            if (!res || res == from || !res->IsInWorld()) continue;
+            if (!res || res == from || !res->IsInWorld() || res->GetTeam() != from->GetTeam()) continue;
             float const d = res->GetMapId() == from->GetMapId() ? from->GetDistance(res) : 1.0e8f;
             if (d < bestD) { bestD = d; best = res; }
         }
@@ -4438,7 +4663,7 @@ private:
         for (uint32 low : g_turtleResidents)
         {
             Player* res = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
-            if (res && res != from && res->IsInWorld())
+            if (res && res != from && res->IsInWorld() && res->GetTeam() == from->GetTeam())
                 return res;
         }
         return nullptr;
