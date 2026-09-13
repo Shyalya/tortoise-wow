@@ -84,3 +84,48 @@ mod-turtlebots.LLM.Ambient = 1
 mod-turtlebots.LLM.AmbientPerMinute = 6
 mod-turtlebots.LLM.DialogueChance = 60
 mod-turtlebots.LLM.Log = 1
+
+###################################################################################################
+# TRADE WATCH
+#
+#    While the city sleeps (town mode), an item offer in the Trade channel wakes one resident
+#    that fits the item; it quotes by whisper, stays up ten minutes (longer while the deal is
+#    pending) and goes back to sleep. Nothing to configure.
+#
+#    mod-turtlebots.Debug.TradeWake
+#        Pretend such an offer arrived (tests the wake/keep-up/release path without a client).
+#        Leave at 0 in normal operation. Default: 0
+###################################################################################################
+
+mod-turtlebots.Debug.TradeWake = 0
+
+###################################################################################################
+# WORLD KNOWLEDGE
+#
+#    Location questions ("where is the bank / the mage trainer / Gryshka / a mailbox ...") in /say,
+#    whispers and channels are answered from the live world around the asker (600 yards), as a
+#    fact the model only phrases. Nothing to configure.
+#
+#    mod-turtlebots.Debug.FactSelfTest
+#        Each resident asks the standard questions once from where it stands and logs the facts.
+#        Leave at 0 in normal operation. Default: 0
+###################################################################################################
+
+mod-turtlebots.Debug.FactSelfTest = 0
+
+###################################################################################################
+# CHANNELS
+#
+#    Residents join "Trade - City" and "World" while they live in the city. An item offer in
+#    Trade is quoted by whisper; a location question, or a resident called by name, is answered
+#    in the same channel (Trade, World, General). While the city sleeps, one resident is woken
+#    for it (see TRADE WATCH).
+#
+#    mod-turtlebots.LLM.MarketCallMinutes
+#        Every N minutes (city-wide) one resident calls out in Trade what its craft is buying,
+#        with a real item link and a market price (a player answering with a link sells to
+#        it). Only while a real player is online, or the city is forced awake. 0 = no calls.
+#        Default: 5
+###################################################################################################
+
+mod-turtlebots.LLM.MarketCallMinutes = 5

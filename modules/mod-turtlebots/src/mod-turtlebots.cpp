@@ -40,6 +40,8 @@
 #include "Timer.h"
 #include "Util.h"
 #include "Chat.h"
+#include "Channel.h"
+#include "ChannelMgr.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
 #include "Cell.h"
@@ -259,6 +261,8 @@ namespace
     static std::set<uint32> g_botBegunTrade;     // botGuid -> we completed a player-opened handshake
     struct SellIntent { uint32 resident; uint32 itemEntry; uint32 deadlineMs; uint32 price; };
     static std::map<uint32, SellIntent> g_sellIntent;  // playerGuid -> pending sell-to-resident
+    struct PendingOffer { uint32 seller; std::string msg; uint32 atMs; uint32 item; std::string channel; };
+    static std::vector<PendingOffer> g_pendingOffers;  // Trade-channel offers waiting for a resident to wake
     static std::map<uint32, uint64> g_botBuyPricedFor; // botGuid -> signature of the goods we priced
     static std::map<uint32, uint32> g_botPurseCap;     // botGuid -> coin purse cap (seeded on first deal)
     static std::map<uint32, uint32> g_botEscort;       // botGuid -> buyer it is walking over to trade with
@@ -419,7 +423,7 @@ namespace
     static std::string g_llmPath  = "/v1/chat/completions";
     static uint32      g_llmDeadlineMs = 5000;
 
-    enum LlmMode : uint8 { LLM_SAY = 0, LLM_WHISPER = 1 };
+    enum LlmMode : uint8 { LLM_SAY = 0, LLM_WHISPER = 1, LLM_CHANNEL = 2 };
     struct LlmResult { std::atomic<bool> done; std::string text; uint32 ms; LlmResult() : done(false), ms(0) {} };
     struct LlmJob
     {
@@ -432,6 +436,8 @@ namespace
         uint32 notBeforeMs;  // hold the finished line until then (a human beat); 0 = as soon as it is ready
         char const* tag;     // ambient / dialogue / reply / whisper / service / thanks (for the log)
         std::string fallback;
+        std::string channel;  // LLM_CHANNEL: the channel spoken in
+        std::string suffix;   // appended verbatim after the model line (item link + price)
         std::shared_ptr<LlmResult> res;
         time_t deadline;
     };
@@ -446,10 +452,20 @@ namespace
     static float   g_ambientTokens = 3.f;       // chatter budget (refilled AmbientPerMinute per minute)
     static std::map<uint32, uint32> g_lastAmbientMs;   // botGuid -> last ambient line (per-bot spacing)
     static std::map<uint32, std::string> g_lastLine;   // botGuid -> last line it spoke (anti-repeat hint)
+    static bool g_factSelfTest = false;                // Debug.FactSelfTest: log location facts from each resident once
+    static std::set<uint32> g_factTested;              // residents that ran the self-test
+    static uint32 g_realPlayersOnline = 0;             // real (non-headless) players in the world, per reconcile
+    static std::map<uint32, Player*> g_chanJoined;     // botGuid -> the Player object that joined the channels (relog = new object)
+    static std::map<uint32, uint32> g_chanAnswerAt;    // playerGuid -> ms before which it gets no second channel answer
+    static std::map<uint32, uint32> g_lastMarketCallMs;// botGuid -> its last WTB call
+    static uint32 g_nextMarketCallMs = 0;              // city-wide cadence of WTB calls
+    static uint32 g_llmMarketMinutes = 5;              // LLM.MarketCallMinutes (0 = no calls)
     struct ConvoLine { bool bot; std::string text; time_t at; };
     static std::map<uint64, std::deque<ConvoLine>> g_convo; // (bot<<32|player) -> last lines exchanged
     struct InWhisper { uint32 botLow; uint64 sender; std::string msg; };
     static std::vector<InWhisper> g_whisperInbox;  // filled on the packet hook (any thread), drained on the world thread
+    struct ChanNotice { uint32 botLow; uint8 type; std::string chan; };
+    static std::vector<ChanNotice> g_chanNoticeInbox; // channel notices to residents (joined / not a member ...), same lock
     static std::mutex g_whisperInboxMx;
     static std::map<uint32, uint32> g_thankCheckMs;  // botGuid -> last aura scan
     static std::map<uint64, time_t> g_thanked;       // (bot<<32|caster) -> last thank-you
@@ -905,6 +921,8 @@ namespace
         g_llmAmbientPerMin  = sConfig.GetIntDefault("mod-turtlebots.LLM.AmbientPerMinute", 6);
         g_llmDialogueChance = sConfig.GetIntDefault("mod-turtlebots.LLM.DialogueChance", 60);
         g_llmLog            = sConfig.GetBoolDefault("mod-turtlebots.LLM.Log", true);
+        g_factSelfTest      = sConfig.GetBoolDefault("mod-turtlebots.Debug.FactSelfTest", false);
+        g_llmMarketMinutes  = sConfig.GetIntDefault("mod-turtlebots.LLM.MarketCallMinutes", 5);
         ParseLlmUrl();
     }
 
@@ -1073,6 +1091,247 @@ namespace
         return ContainsWord(lower, "port");
     }
 
+
+    // ---- World knowledge (#153): location questions answered from the live world ----
+    // The surroundings of the asker are searched (loaded grids, 600 yd), never the memory
+    // of the model: the answer is a FACT line the model only has to phrase.
+    static std::string LowerStr(std::string s)
+    {
+        for (char& c : s)
+            if (c >= 'A' && c <= 'Z') c = char(c + 32);
+        return s;
+    }
+
+    struct NpcCheck
+    {
+        WorldObject const* obj; float range; uint32 flags; std::string sub, name;
+        bool operator()(Creature* c)
+        {
+            if (!c->IsAlive() || c->IsPet() || c->IsTotem() || !obj->IsWithinDistInMap(c, range))
+                return false;
+            CreatureInfo const* ci = c->GetCreatureInfo();
+            if (!ci)
+                return false;
+            if (flags && !((c->GetUInt32Value(UNIT_NPC_FLAGS) | ci->npc_flags) & flags))
+                return false;
+            if (!sub.empty() && LowerStr(ci->subname).find(sub) == std::string::npos)
+                return false;
+            if (!name.empty() && LowerStr(ci->name).find(name) == std::string::npos)
+                return false;
+            return true;
+        }
+    };
+
+    struct MailboxCheck
+    {
+        WorldObject const* obj; float range;
+        bool operator()(GameObject* go) { return go->GetGoType() == GAMEOBJECT_TYPE_MAILBOX && obj->IsWithinDistInMap(go, range); }
+    };
+
+    // Compass direction from one object to another (+x is north, +y is west).
+    static char const* CompassFrom(WorldObject const* from, WorldObject const* to)
+    {
+        float const dx = to->GetPositionX() - from->GetPositionX();
+        float const dy = to->GetPositionY() - from->GetPositionY();
+        float b = atan2(dy, dx); // 0 = north, +pi/2 = west
+        if (b < 0) b += 2.0f * float(M_PI);
+        static char const* const kDir[8] = { "north", "north-west", "west", "south-west", "south", "south-east", "east", "north-east" };
+        return kDir[int(b / (float(M_PI) / 4.0f) + 0.5f) % 8];
+    }
+
+    // Recognise a location question and what it is after. False if it is not one.
+    static bool LocationQuery(std::string const& lower, uint32& flags, std::string& sub, std::string& name,
+                              std::string& thing, bool& mailbox)
+    {
+        static char const* const kAsk[] = { "where is", "where's", "wheres", "where can i", "where do i", "where are",
+                                            "how do i get to", "looking for the", "wo ist", "wo finde ich", "wo sind" };
+        bool ask = false;
+        for (char const* a : kAsk)
+            if (lower.find(a) != std::string::npos) { ask = true; break; }
+        if (!ask)
+            return false;
+        flags = 0; sub.clear(); name.clear(); thing.clear(); mailbox = false;
+        auto has = [&](char const* w) { return lower.find(w) != std::string::npos; };
+        if (has("bank") || has("vault"))                                     { flags = UNIT_NPC_FLAG_BANKER;     thing = "bank"; return true; }
+        if (has("auction") || ContainsWord(lower, "ah"))                      { flags = UNIT_NPC_FLAG_AUCTIONEER; thing = "auction house"; return true; }
+        if (has("innkeeper") || ContainsWord(lower, "inn") || has("tavern") || has("hearth"))
+                                                                              { flags = UNIT_NPC_FLAG_INNKEEPER;  thing = "inn"; return true; }
+        if (has("flight") || has("wind rider") || has("gryphon") || has("bat handler") || has("hippogryph") || ContainsWord(lower, "fp"))
+                                                                              { flags = UNIT_NPC_FLAG_FLIGHTMASTER; thing = "flight master"; return true; }
+        if (has("stable"))                                                    { flags = UNIT_NPC_FLAG_STABLEMASTER; thing = "stable master"; return true; }
+        if (has("repair"))                                                    { flags = UNIT_NPC_FLAG_REPAIR;     thing = "repair"; return true; }
+        if (has("mailbox") || ContainsWord(lower, "mail") || has("post box"))  { mailbox = true;                    thing = "mailbox"; return true; }
+        if (has("battlemaster") || has("battleground") || ContainsWord(lower, "bg") || has("warsong") || has("arathi") || has("alterac"))
+        {
+            flags = UNIT_NPC_FLAG_BATTLEMASTER; thing = "battlemaster";
+            if (has("warsong")) sub = "warsong"; else if (has("arathi")) sub = "arathi"; else if (has("alterac")) sub = "alterac";
+            return true;
+        }
+        if (has("trainer") || has("teach") || has("learn"))
+        {
+            static char const* const kSkill[] = { "warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid",
+                "alchemy", "blacksmithing", "enchanting", "engineering", "herbalism", "leatherworking", "mining", "skinning", "tailoring",
+                "cooking", "fishing", "first aid", "riding", "weapon", "poison", "lockpick", "pet" };
+            flags = UNIT_NPC_FLAG_TRAINER; thing = "trainer";
+            for (char const* k : kSkill)
+                if (has(k)) { sub = k; thing = std::string(k) + " trainer"; break; }
+            return true;
+        }
+        if (has("vendor") || has("merchant") || has("sells") || has("buy "))
+        {
+            static char const* const kGoods[] = { "reagent", "food", "drink", "water", "trade supplies", "trade goods", "weapon", "armor",
+                                                  "poison", "bag", "fishing", "bow", "gun", "cloth", "leather", "general", "tabard", "pet" };
+            flags = UNIT_NPC_FLAG_VENDOR; thing = "vendor";
+            for (char const* k : kGoods)
+                if (has(k)) { sub = k; thing = std::string(k) + " vendor"; break; }
+            return true;
+        }
+        // "where is <name>": a person by name.
+        static char const* const kLead[] = { "where is ", "where's ", "wheres ", "wo ist " };
+        for (char const* l : kLead)
+        {
+            std::string::size_type p = lower.find(l);
+            if (p == std::string::npos) continue;
+            std::string rest = lower.substr(p + strlen(l));
+            std::string::size_type e = rest.find_first_of("?.!,");
+            if (e != std::string::npos) rest.resize(e);
+            while (!rest.empty() && rest.back() == ' ') rest.pop_back();
+            if (rest.rfind("the ", 0) == 0) rest.erase(0, 4);
+            if (rest.size() >= 3 && rest.size() <= 24) { name = rest; thing = rest; return true; }
+        }
+        return false;
+    }
+
+    // Look the thing up around the asker and phrase the fact (or the honest "not here").
+    static bool BuildFact(Player* asker, std::string const& lower, std::string& fact)
+    {
+        uint32 flags = 0; std::string sub, name, thing; bool mailbox = false;
+        if (!LocationQuery(lower, flags, sub, name, thing, mailbox))
+            return false;
+        float const R = 600.f;
+        WorldObject* found = nullptr; float bestD = R + 1.f; std::string label;
+        if (mailbox)
+        {
+            std::list<GameObject*> gos;
+            MailboxCheck chk{ asker, R };
+            MaNGOS::GameObjectListSearcher<MailboxCheck> srch(gos, chk);
+            Cell::VisitGridObjects(asker, srch, R);
+            for (GameObject* go : gos)
+            {
+                float const d = asker->GetDistance(go);
+                if (d < bestD) { bestD = d; found = go; label = "a mailbox"; }
+            }
+        }
+        else
+        {
+            std::list<Creature*> cs;
+            NpcCheck chk{ asker, R, flags, sub, name };
+            MaNGOS::CreatureListSearcher<NpcCheck> srch(cs, chk);
+            Cell::VisitGridObjects(asker, srch, R);
+            for (Creature* c : cs)
+            {
+                float const d = asker->GetDistance(c);
+                if (d < bestD)
+                {
+                    bestD = d; found = c;
+                    CreatureInfo const* ci = c->GetCreatureInfo();
+                    label = ci->name;
+                    if (!ci->subname.empty()) label += " (" + ci->subname + ")";
+                }
+            }
+        }
+        if (!found)
+        {
+            fact = "There is no " + thing + " within " + std::to_string(int(R)) + " yards of " + asker->GetName() + " right now.";
+            return true;
+        }
+        std::string const area = AreaName(found->GetAreaId());
+        fact = (name.empty() ? "The nearest " + thing + " is " : std::string()) + label + ", about " +
+               std::to_string(int(bestD)) + " yards to the " + CompassFrom(asker, found) + " of " + asker->GetName() +
+               (area.empty() ? std::string() : ", in " + area) + ".";
+        return true;
+    }
+
+    // The phrasing rule that goes with a fact (it must outrank the "never invent places" rule).
+    static std::string FactClause(std::string const& fact)
+    {
+        return " FACT (trust this over your own memory and over any rule about places): " + fact +
+               " Answer with the fact - who or what, direction and rough distance - in one short line, in character.";
+    }
+
+    // ---- Channels (#152): residents listen and speak in Trade and World ----
+    static void JoinCityChannels(Player* b)
+    {
+        ChannelMgr* mgr = channelMgr(b->GetTeam());
+        if (!mgr)
+            return;
+        auto j = g_chanJoined.find(b->GetGUIDLow());
+        if (j != g_chanJoined.end() && j->second == b)
+            return; // joined in this login already
+        g_chanJoined[b->GetGUIDLow()] = b;
+        static char const* const kChans[] = { "Trade - City", "World" };
+        for (char const* n : kChans)
+            if (Channel* chn = mgr->GetOrCreateChannel(n))
+                chn->Join(b->GetObjectGuid(), "");
+    }
+
+    // Speak in a channel (joining it first if need be); logged like a player's channel line.
+    static bool SayInChannel(Player* b, std::string const& name, std::string const& line)
+    {
+        ChannelMgr* mgr = channelMgr(b->GetTeam());
+        if (!mgr)
+            return false;
+        Channel* chn = mgr->GetOrCreateChannel(name);
+        if (!chn)
+            return false;
+        chn->Join(b->GetObjectGuid(), ""); // harmless when already on (the notice goes to a socketless session)
+        chn->AsyncSay(b->GetObjectGuid(), line.c_str(), LANG_UNIVERSAL);
+        if (b->GetSession())
+            sWorld.LogChat(b->GetSession(), "Chan", line, nullptr, 0, name.c_str());
+        return true;
+    }
+
+    // A clickable item link in the vanilla format (quality colour, item:entry:0:0:0).
+    static std::string ItemLink(ItemPrototype const* pr)
+    {
+        static char const* const kColor[] = { "9d9d9d", "ffffff", "1eff00", "0070dd", "a335ee", "ff8000", "e6cc80" };
+        uint32 const q = pr->Quality < 7 ? pr->Quality : 1;
+        return std::string("|cff") + kColor[q] + "|Hitem:" + std::to_string(pr->ItemId) + ":0:0:0|h[" + pr->Name1 + "]|h|r";
+    }
+
+    // A material the resident's own trade could use, by its skill tier; 0 without such a trade.
+    static uint32 WantedMaterial(Player* b, char const*& trade)
+    {
+        struct Want { uint16 skill; char const* word; uint32 tier[4]; };
+        static Want const k[] = {
+            { 165, "leatherworking", { 2318, 2319, 4234, 4304 } },     // light / medium / heavy / thick leather
+            { 164, "blacksmithing",  { 2770, 2771, 2772, 3858 } },     // copper / tin / iron / mithril ore
+            { 202, "engineering",    { 2770, 2771, 2772, 3858 } },
+            { 197, "tailoring",      { 2589, 2592, 4306, 4338 } },     // linen / wool / silk / mageweave
+            { 171, "alchemy",        { 2447, 2450, 3356, 3818 } },     // peacebloom / briarthorn / kingsblood / fadeleaf
+            { 333, "enchanting",     { 10940, 11083, 11137, 11176 } }, // strange / soul / vision / dream dust
+        };
+        std::vector<Want const*> mine;
+        for (Want const& w : k)
+            if (b->HasSkill(w.skill))
+                mine.push_back(&w);
+        if (mine.empty())
+            return 0;
+        Want const* w = mine[urand(0, uint32(mine.size()) - 1)];
+        uint32 const v = b->GetSkillValue(w->skill);
+        trade = w->word;
+        return w->tier[v < 75 ? 0 : v < 150 ? 1 : v < 225 ? 2 : 3];
+    }
+
+    static void QueueLlmChannel(Player* bot, std::string const& system, std::string const& user,
+                                std::string const& fallback, std::string const& channel, std::string const& suffix,
+                                uint32 notBeforeMs, char const* tag, uint32 targetGuid)
+    {
+        QueueLlm(bot, system, user, fallback, LLM_CHANNEL, targetGuid, notBeforeMs, tag, 2, 0);
+        g_llmJobs.back().channel = channel;
+        g_llmJobs.back().suffix = suffix;
+    }
+
     // Say a line out loud, with the talk gesture, and log it like any player's chat.
     static void ResidentSay(Player* b, std::string const& line)
     {
@@ -1173,7 +1432,14 @@ namespace
         line = CleanLine(line, b->GetName());
         if (line.empty())
             return; // a dialogue turn with nothing to say stays silent
-        if (j.mode == LLM_WHISPER)
+        if (!j.suffix.empty())
+            line += j.suffix; // the verbatim part (item link, price) follows the model's words
+        if (j.mode == LLM_CHANNEL)
+        {
+            if (!SayInChannel(b, j.channel, line))
+                return;
+        }
+        else if (j.mode == LLM_WHISPER)
         {
             Player* t = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, j.targetGuid));
             if (!t || !t->IsInWorld() || !t->GetSession())
@@ -1196,7 +1462,8 @@ namespace
         else ++g_llmStat.empty;
         if (g_llmLog)
             sLog.outString("[mod-turtlebots] llm %s/%s %s: %s (%u ms, %s)", j.tag,
-                           j.mode == LLM_WHISPER ? "whisper" : "say", b->GetName(), line.c_str(), j.res->ms, how);
+                           j.mode == LLM_WHISPER ? "whisper" : j.mode == LLM_CHANNEL ? "channel" : "say",
+                           b->GetName(), line.c_str(), j.res->ms, how);
         if (!j.off && (strcmp(j.tag, "ambient") == 0 || strcmp(j.tag, "dialogue") == 0))
             MaybeAnswerLine(b, line, j.depth, j.partnerGuid);
     }
@@ -1445,6 +1712,41 @@ namespace
         }
     }
 
+    // Same judgement as ClassWantsItem, but from the class alone (the resident is still a
+    // shadow when it is picked to answer a Trade-channel offer).
+    static bool ClassFitsItem(uint8 cls, ItemPrototype const* pr)
+    {
+        if (pr->AllowableClass && !(pr->AllowableClass & (1u << (cls - 1))))
+            return false;
+        if (pr->Class == ITEM_CLASS_ARMOR)
+        {
+            switch (pr->SubClass)
+            {
+                case ITEM_SUBCLASS_ARMOR_LEATHER:
+                    if (cls == CLASS_MAGE || cls == CLASS_WARLOCK || cls == CLASS_PRIEST) return false;
+                    break;
+                case ITEM_SUBCLASS_ARMOR_MAIL:
+                    if (!(cls == CLASS_WARRIOR || cls == CLASS_HUNTER || cls == CLASS_SHAMAN || cls == CLASS_PALADIN)) return false;
+                    break;
+                case ITEM_SUBCLASS_ARMOR_PLATE:
+                    if (!(cls == CLASS_WARRIOR || cls == CLASS_PALADIN)) return false;
+                    break;
+                default: break;
+            }
+        }
+        bool const str = ItemHasStat(pr, 4), agi = ItemHasStat(pr, 3), intel = ItemHasStat(pr, 5);
+        bool const heal = ItemGrantsHealing(pr);
+        switch (cls)
+        {
+            case CLASS_MAGE: case CLASS_WARLOCK:  return !(str || agi || heal);
+            case CLASS_PRIEST:                    return !(str || agi);
+            case CLASS_WARRIOR: case CLASS_ROGUE: return !(intel || heal);
+            default: return true;
+        }
+    }
+
+    void ReplayOffer(Player* seller, std::string const& channel, std::string const& msg); // defined after the chat script
+
     static void HandOverItems(Player* caster, Player* plr, uint32 itemId, uint32 count)
     {
         // Open a real trade window, then fill it a beat later: the client needs
@@ -1507,6 +1809,14 @@ namespace
             : WorldScript("mod-turtlebots_world", { WORLDHOOK_ON_STARTUP, WORLDHOOK_ON_UPDATE }),
               _enabled(true), _target(3), _startDelayMs(20000), _reconcileTimer(0)
         {
+        }
+
+        // A Trade-channel offer came in while the city sleeps: ask for one resident
+        // (fitting the item if possible) to be kept up long enough to quote and trade.
+        void RequestTradeResponder(uint32 itemEntry)
+        {
+            _tradeWakeRequested = true;
+            _tradeWantItem = itemEntry;
         }
 
         void OnStartup() override
@@ -1948,6 +2258,8 @@ namespace
 
             // Whispers that reached a resident's session (captured on the packet hook).
             ProcessWhisperInbox();
+            if (!g_pendingOffers.empty())
+                ReplayPendingOffers(WorldTimer::getMSTime());
 
             // Deliver finished (or timed-out) in-character LLM lines on the main thread.
             {
@@ -2344,6 +2656,22 @@ namespace
                 return; // teleport finishes next tick via CompleteBotTeleport
             }
 
+            // Debug.FactSelfTest: each resident asks the standard location questions once
+            // from where it stands and logs the facts (checks the lookup without a client).
+            if (g_factSelfTest && !g_factTested.count(low) && !bot->IsBeingTeleported())
+            {
+                g_factTested.insert(low);
+                static char const* const kQ[] = { "where is the bank?", "where is the auction house?", "where is the flight master?",
+                                                  "where is the mage trainer?", "where is the inn?", "where is gryshka?",
+                                                  "where is the mailbox?", "where can i buy reagents?", "where is the warsong battlemaster?" };
+                for (char const* q : kQ)
+                {
+                    std::string fact;
+                    if (BuildFact(bot, LowerStr(q), fact))
+                        sLog.outString("[mod-turtlebots] fact-test %s asks \"%s\" -> %s", bot->GetName(), q, fact.c_str());
+                }
+            }
+
             {
                 auto fit = g_fishing.find(low);
                 if (fit != g_fishing.end())
@@ -2433,6 +2761,8 @@ namespace
             ThankForBuffs(bot, now); // a real player's buff earns a thank-you, even between decisions
             if (now < nextAt)
                 return; // standing calmly between actions
+
+            JoinCityChannels(bot); // Trade and World; a no-op once it is on them
 
             // Living city: a caster resident occasionally buffs a nearby real player.
             if (CanBuff(bot->GetClass()))
@@ -2637,6 +2967,7 @@ namespace
         void ScanRealPlayers()
         {
             _zonePlayers.clear();
+            uint32 total = 0;
             for (auto const& kv : sWorld.GetAllSessions())
             {
                 WorldSession* sess = kv.second;
@@ -2644,7 +2975,59 @@ namespace
                 Player* p = sess->GetPlayer();
                 if (!p || !p->IsInWorld()) continue;
                 ++_zonePlayers[p->GetZoneId()];
+                ++total;
             }
+            g_realPlayersOnline = total;
+        }
+
+        // Now and then a resident calls out in Trade what its craft is buying - a real
+        // item link at a market price; a player answering with a link runs into the
+        // normal buy flow. Only while somebody can hear it (a real player online) or the
+        // city is forced awake for observation.
+        void MarketCall(uint32 nowMs)
+        {
+            if (!g_llmMarketMinutes || !g_llmEnabled || !g_llmAmbient)
+                return;
+            if (!g_realPlayersOnline && _townForceAwake.empty())
+                return;
+            if (g_nextMarketCallMs && int32(g_nextMarketCallMs - nowMs) > 0)
+                return;
+            std::vector<Player*> cands;
+            for (uint32 low : g_turtleResidents)
+            {
+                if (!_placed.count(low) || g_fishing.count(low) || g_cooking.count(low))
+                    continue;
+                auto lm = g_lastMarketCallMs.find(low);
+                if (lm != g_lastMarketCallMs.end() && nowMs - lm->second < 20u * 60000u)
+                    continue;
+                Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+                if (!r || !r->IsInWorld() || r->IsBeingTeleported() || r->GetTradeData())
+                    continue;
+                cands.push_back(r);
+            }
+            if (cands.empty())
+                return;
+            Player* b = cands[urand(0, uint32(cands.size()) - 1)];
+            char const* trade = "";
+            uint32 const entry = WantedMaterial(b, trade);
+            ItemPrototype const* pr = entry ? sObjectMgr.GetItemPrototype(entry) : nullptr;
+            g_lastMarketCallMs[b->GetGUIDLow()] = nowMs;
+            if (!pr)
+                return; // no trade that needs buying
+            SeedPurse(b);
+            uint32 price = MarketPrice(entry, pr);
+            if (!price)
+                price = std::max<uint32>(pr->BuyPrice, 5u);
+            g_nextMarketCallMs = nowMs + g_llmMarketMinutes * 60000u;
+            std::string const suffix = std::string(" WTB ") + ItemLink(pr) + " - paying " + MoneyStr(price) + " each, whisper me.";
+            std::string const usr = std::string("You are buying ") + pr->Name1 + " for your " + trade +
+                ". Call out in the Trade channel: one short lead-in sentence under 12 words, without naming the "
+                "item or a price (they are added after your words).";
+            QueueLlmChannel(b, ResidentSystemPrompt(b), usr,
+                            RPick({ "Crafter buying materials, fair coin:", "Stocking up the workbench:",
+                                    "Paying honest coin for supplies:" }),
+                            "Trade - City", suffix, 0, "market", 0);
+            sLog.outString("[mod-turtlebots] market: %s calls for %s at %s each.", b->GetName(), pr->Name1.c_str(), MoneyStr(price).c_str());
         }
 
         // Wake a home city while a real player is in it (or it is forced awake); put it
@@ -2816,11 +3199,84 @@ namespace
             }
         }
 
+        // Trade watch: while the city sleeps, one resident answers Trade-channel offers.
+        // It is chosen by class fit from the combo table (it is a shadow at that point),
+        // kept up ten minutes - longer while a deal with it is pending - then released
+        // to the normal sleep path.
+        void TradeWakeTick(uint32 nowMs)
+        {
+            if (_tradeResponder)
+            {
+                Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, _tradeResponder));
+                bool busy = r && r->IsInWorld() && (r->GetTradeData() || g_botEscort.count(_tradeResponder));
+                if (!busy)
+                    for (auto const& kv : g_sellIntent)
+                        if (kv.second.resident == _tradeResponder) { busy = true; break; }
+                if (busy)
+                    _tradeUntilMs = nowMs + 300000u;
+                else if (int32(_tradeUntilMs - nowMs) <= 0)
+                {
+                    sLog.outString("[mod-turtlebots] trade: watch over - %s may sleep again.", r ? r->GetName() : "the responder");
+                    _tradeResponder = 0;
+                }
+            }
+            if (!_tradeWakeRequested)
+                return;
+            _tradeWakeRequested = false;
+            if (_tradeResponder)
+                return; // one is up already
+            ItemPrototype const* proto = _tradeWantItem ? sObjectMgr.GetItemPrototype(_tradeWantItem) : nullptr;
+            uint32 pick = _residents; // sentinel: nobody
+            for (uint32 i = 0; i < _residents && pick == _residents; ++i)
+                if (_charByIndex.count(i) && (!proto || ClassFitsItem(HORDE_COMBOS[i % HORDE_COMBO_COUNT].cls, proto)))
+                    pick = i;
+            for (uint32 i = 0; i < _residents && pick == _residents; ++i)
+                if (_charByIndex.count(i))
+                    pick = i; // nobody fits: the first resident answers (and says so)
+            if (pick == _residents)
+                return;
+            _tradeResponder = _charByIndex[pick];
+            _tradeUntilMs = nowMs + 600000u;
+            sLog.outString("[mod-turtlebots] trade: city asleep - waking %s (%s) to answer a Trade-channel offer%s.",
+                           BotCharName(pick).c_str(), ClassWord(HORDE_COMBOS[pick % HORDE_COMBO_COUNT].cls),
+                           proto ? (std::string(" for ") + proto->Name1).c_str() : "");
+        }
+
+        // Offers that arrived while the city slept: replay them through the channel
+        // handler once a resident stands in the city; drop them after two minutes.
+        void ReplayPendingOffers(uint32 nowMs)
+        {
+            for (size_t k = 0; k < g_pendingOffers.size(); )
+            {
+                PendingOffer const& po = g_pendingOffers[k];
+                Player* seller = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, po.seller));
+                if (nowMs - po.atMs > 120000u || !seller || !seller->IsInWorld() || !seller->GetSession())
+                {
+                    g_pendingOffers[k] = g_pendingOffers.back(); g_pendingOffers.pop_back();
+                    continue;
+                }
+                bool up = false;
+                for (uint32 low : g_turtleResidents)
+                    if (_placed.count(low))
+                        if (Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low)))
+                            if (r->IsInWorld() && !r->IsBeingTeleported()) { up = true; break; }
+                if (!up) { ++k; continue; }
+                std::string const msg = po.msg, channel = po.channel;
+                g_pendingOffers[k] = g_pendingOffers.back(); g_pendingOffers.pop_back();
+                sLog.outString("[mod-turtlebots] trade: a resident is up - answering %s now.", seller->GetName());
+                ReplayOffer(seller, channel, msg);
+            }
+        }
+
         // Live-tunable knobs: the panel writes the module conf and issues the console
         // command reload config; reading them on every reconcile picks a change up
         // within 5 s without a restart. Cheap: a handful of config lookups.
         void RereadLiveConfig()
         {
+            // Debug: pretend a Trade-channel offer arrived (tests the wake/keep-up/release path
+            // without a client). Leave at 0 in normal operation.
+            if (sConfig.GetBoolDefault("mod-turtlebots.Debug.TradeWake", false) && !_tradeResponder)
+                RequestTradeResponder(0);
             _target             = sConfig.GetIntDefault("mod-turtlebots.Count", 3);
             _residents          = sConfig.GetIntDefault("mod-turtlebots.Residents", 1);
             _townEnable         = sConfig.GetBoolDefault("mod-turtlebots.Town.Enable", false);
@@ -2859,6 +3315,7 @@ namespace
                 ReadTownForceAwake();
                 ScanRealPlayers();
                 UpdateTownState(WorldTimer::getMSTime());
+                TradeWakeTick(WorldTimer::getMSTime());
             }
             uint32 online = 0;
             for (uint32 i = 0; i < _target; ++i)
@@ -2873,6 +3330,8 @@ namespace
                 if (_zoneAwake[kOrgZone]) EmbodyPoolResidents(nowMs);
                 else                      ReleasePoolResidents(nowMs);
             }
+
+            MarketCall(WorldTimer::getMSTime());
 
             if (online != _lastReportedOnline)
             {
@@ -2905,7 +3364,8 @@ namespace
             HeadlessSessionState state = sWorld.GetHeadlessSessionState(charGuid);
             bool const resident  = (i < _residents);
             bool const townGated = _townEnable && resident;
-            bool const cityAwake = !townGated || _zoneAwake[HomeZoneOf(i)];
+            bool const cityAwake = !townGated || _zoneAwake[HomeZoneOf(i)] ||
+                                   charLow == _tradeResponder; // kept up for a Trade-channel deal
             if (state == HeadlessSessionState::Active)
             {
                 if (townGated && !cityAwake)
@@ -2975,6 +3435,10 @@ namespace
         bool   _enabled;
         uint32 _target;
         uint32 _maxIndexSeen = 0;              // highest bot index provisioned so far (live shrink)
+        uint32 _tradeResponder = 0;            // char low kept up to answer a Trade-channel offer
+        uint32 _tradeUntilMs = 0;              // ... until then (extended while a deal is pending)
+        uint32 _tradeWantItem = 0;             // the item offered (class fit for the pick)
+        bool   _tradeWakeRequested = false;
         uint32 _startDelayMs;
         uint32 _reconcileTimer;
         uint32 _lastReportedOnline = 0xFFFFFFFF;
@@ -3013,6 +3477,8 @@ namespace
         uint32      _releaseCooldownSec = 600;
         uint32 _advLevel  = 10;                // level given to adventurers
     };
+
+    static TurtleBotsWorldScript* g_worldScript = nullptr;
 }
 
 // Residents react to a player speaking nearby: the closest resident answers
@@ -3285,6 +3751,12 @@ public:
         if (Player* res = NearestResident(from, R, 0))
         {
             std::string usr = ConvoContext(res, from) + std::string(from->GetName()) + " says to you: " + msg;
+            std::string fact;
+            if (BuildFact(from, lower, fact))
+            {
+                usr += FactClause(fact);
+                sLog.outString("[mod-turtlebots] fact for %s: %s", from->GetName(), fact.c_str());
+            }
             ConvoPush(res->GetGUIDLow(), from->GetGUIDLow(), false, msg);
             std::string fallback = RPick({ "Well met, traveler.", "Hm? What is it?",
                                            "Good to see a friendly face.", "Aye, what can I do for you?" });
@@ -3302,50 +3774,117 @@ private:
         HandleSellOffer(from, msg, range > 0.f ? range : 40.f);
     }
 
+public:
+    // Trade, World and General: an item offer in Trade is a sale (any resident that is up
+    // quotes); a location question, or a resident called by name, is answered in the same
+    // channel. Ordinary chatter is not ours. When nobody is up the city sleeps: one resident
+    // is woken and the message replayed once it stands in the city (Horde only).
     void OnChatChannel(Player* from, char const* channel, char const* msg) override
     {
         if (!from || !msg || !*msg || !channel) return;
         if (!from->GetSession() || from->GetSession()->IsHeadless()) return;
-        std::string ch(channel);
-        for (char& c : ch) if (c >= 'A' && c <= 'Z') c = char(c + 32);
-        if (ch.find("trade") == std::string::npos) return; // only the Trade channel
-        HandleSellOffer(from, msg, 1000.f); // global request: nearest resident to the player
+        std::string const ch = LowerStr(channel);
+        bool const trade = ch.find("trade") != std::string::npos;
+        if (!trade && ch.find("world") == std::string::npos && ch.find("general") == std::string::npos)
+            return;
+        uint32 const nowMs = WorldTimer::getMSTime();
+        uint32 const entry = trade ? ItemEntryFromLink(msg) : 0;
+        if (entry)
+        {
+            if (HandleSellOffer(from, msg, 1000.f, true)) // any resident that is up, on any map
+                return;
+        }
+        else
+        {
+            std::string const lower = LowerStr(msg);
+            uint32 f = 0; std::string a, b, c; bool mb = false;
+            bool const question = LocationQuery(lower, f, a, b, c, mb);
+            Player* res = question ? BestResidentFor(from) : nullptr;
+            if (!res)
+                for (uint32 low : g_turtleResidents)
+                    if (Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low)))
+                        if (r != from && r->IsInWorld() && lower.find(LowerStr(r->GetName())) != std::string::npos)
+                        {
+                            res = r; // called by name
+                            break;
+                        }
+            if (!question && !res)
+                return; // ordinary channel chatter
+            if (res)
+            {
+                auto ra = g_chanAnswerAt.find(from->GetGUIDLow());
+                if (ra != g_chanAnswerAt.end() && int32(ra->second - nowMs) > 0)
+                    return; // one answer per player per 20 s
+                g_chanAnswerAt[from->GetGUIDLow()] = nowMs + 20000u;
+                std::string usr = std::string(from->GetName()) + " asks in the " + channel + " channel: " + msg;
+                std::string fact;
+                if (BuildFact(from, lower, fact))
+                {
+                    usr += FactClause(fact);
+                    sLog.outString("[mod-turtlebots] fact for %s (%s): %s", from->GetName(), channel, fact.c_str());
+                }
+                else
+                    usr += " Answer in the channel in one short line.";
+                QueueLlmChannel(res, ResidentSystemPrompt(res), usr, std::string(), channel, std::string(),
+                                nowMs + urand(2000, 4000), "channel", from->GetGUIDLow());
+                return;
+            }
+        }
+        // Nobody is up.
+        if (from->GetTeam() != HORDE || !g_worldScript)
+            return;
+        for (auto const& po : g_pendingOffers)
+            if (po.seller == from->GetGUIDLow())
+                return; // one at a time per player
+        g_pendingOffers.push_back({ from->GetGUIDLow(), std::string(msg), nowMs, entry, std::string(channel) });
+        g_worldScript->RequestTradeResponder(entry);
+        sLog.outString("[mod-turtlebots] trade: %s spoke in %s while the city sleeps (%s) - waking a resident.",
+                       from->GetName(), channel, entry ? "an offer" : "a question");
     }
 
+private:
     // A player offered loot for sale (item link) via yell or the Trade channel. Pick the
     // nearest resident who can use it, isn't buying vendor stock, and can afford the full
     // vendor BuyPrice; that resident quotes and remembers the offer for the coming trade.
-    void HandleSellOffer(Player* from, char const* msg, float R)
+    // A channel offer is global: any resident that is up may answer, on any map (the
+    // seller then brings the goods to the city). Returns false only when no resident is
+    // up at all - the caller may wake one and replay the offer.
+    bool HandleSellOffer(Player* from, char const* msg, float R, bool global = false)
     {
         uint32 const entry = ItemEntryFromLink(msg);
-        if (!entry) return; // no item linked -> not a sell offer
+        if (!entry) return true; // no item linked -> not a sell offer
         ItemPrototype const* proto = sObjectMgr.GetItemPrototype(entry);
-        if (!proto) return;
-        Player* best = nullptr; float bestDist = R;
+        if (!proto) return true;
+        Player* best = nullptr; float bestDist = global ? 1.0e9f : R;
         for (uint32 low : g_turtleResidents)
         {
             Player* res = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
-            if (!res || res == from || !res->IsInWorld() || res->GetMapId() != from->GetMapId())
+            if (!res || res == from || !res->IsInWorld())
                 continue;
-            float const d = from->GetDistance(res);
+            bool const sameMap = res->GetMapId() == from->GetMapId();
+            if (!global && !sameMap)
+                continue;
+            float const d = sameMap ? from->GetDistance(res) : 1.0e8f; // same map wins ties
             if (d > bestDist) continue;
             if (res->CanUseItem(proto) != EQUIP_ERR_OK || !ClassWantsItem(res, proto)) continue; // wrong class/role
             best = res; bestDist = d;
         }
         if (!best)
         {
-            if (Player* any = NearestResident(from, R, 0))
-                QueueWhisper(any, from, RPick({ "That's not for my kind - find someone who'd wear it.",
-                                                "No use to me, friend - ask around.",
-                                                "Not my sort of gear, sorry." }));
-            return;
+            Player* any = global ? AnyResidentUp(from) : NearestResident(from, R, 0);
+            if (!any)
+                return false; // nobody is up at all
+            QueueWhisper(any, from, RPick({ "That's not for my kind - find someone who'd wear it.",
+                                            "No use to me, friend - ask around.",
+                                            "Not my sort of gear, sorry." }));
+            return true;
         }
         if (IsVendorItem(entry))
         {
             QueueWhisper(best, from, RPick({ "A vendor sells those - I only buy real finds.",
                                              "That's common stock, friend - a merchant's your man.",
                                              "I don't deal in what any vendor carries." }));
-            return;
+            return true;
         }
         uint32 const price = MarketPrice(entry, proto);
         SeedPurse(best);
@@ -3359,14 +3898,47 @@ private:
                           "I can't cover that today - too rich for me.",
                           "More than I can pay, sorry." });
             QueueWhisper(best, from, line);
-            return;
+            return true;
         }
-        g_sellIntent[from->GetGUIDLow()] = SellIntent{ best->GetGUIDLow(), entry, WorldTimer::getMSTime() + 120000u, price };
-        std::string line = RPick({ "I'll give you %s for it - bring it and trade me.",
-                                   "That I can use. %s if you bring it over to trade.",
-                                   "Good find - %s for it; come trade me." });
+        // A channel offer gets ten minutes: the seller may be in another city.
+        g_sellIntent[from->GetGUIDLow()] = SellIntent{ best->GetGUIDLow(), entry,
+                                                       WorldTimer::getMSTime() + (global ? 600000u : 120000u), price };
+        std::string line = global
+            ? RPick({ "I'll give you %s for it - bring it to Orgrimmar and trade me.",
+                      "That I can use: %s if you bring it to Orgrimmar.",
+                      "Good find - %s. Come find me in Orgrimmar to trade." })
+            : RPick({ "I'll give you %s for it - bring it and trade me.",
+                      "That I can use. %s if you bring it over to trade.",
+                      "Good find - %s for it; come trade me." });
         size_t ph = line.find("%s"); if (ph != std::string::npos) line.replace(ph, 2, MoneyStr(price));
         QueueWhisper(best, from, line);
+        return true;
+    }
+
+    // The resident best placed to answer a channel message: nearest on the same map, else any.
+    Player* BestResidentFor(Player* from)
+    {
+        Player* best = nullptr; float bestD = 1.0e9f;
+        for (uint32 low : g_turtleResidents)
+        {
+            Player* res = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+            if (!res || res == from || !res->IsInWorld()) continue;
+            float const d = res->GetMapId() == from->GetMapId() ? from->GetDistance(res) : 1.0e8f;
+            if (d < bestD) { bestD = d; best = res; }
+        }
+        return best;
+    }
+
+    // Any resident that is up and in the world, wherever it stands (channel offers).
+    Player* AnyResidentUp(Player* from)
+    {
+        for (uint32 low : g_turtleResidents)
+        {
+            Player* res = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+            if (res && res != from && res->IsInWorld())
+                return res;
+        }
+        return nullptr;
     }
 
     Player* NearestResident(Player* from, float R, uint8 wantClass)
@@ -3431,6 +4003,24 @@ public:
 
     bool CanPacketSend(WorldSession* session, WorldPacket const& packet) override
     {
+        if (session && session->IsHeadless() && packet.GetOpcode() == SMSG_CHANNEL_NOTIFY && packet.size() >= 2)
+        {
+            // Channel notices (you joined / not a member ...) prove the membership in the log.
+            try
+            {
+                WorldPacket p(packet);
+                p.rpos(0);
+                uint8 type; std::string chan;
+                p >> type >> chan;
+                if (Player* bot = session->GetPlayer())
+                {
+                    std::lock_guard<std::mutex> guard(g_whisperInboxMx);
+                    g_chanNoticeInbox.push_back({ bot->GetGUIDLow(), type, chan });
+                }
+            }
+            catch (...) {}
+            return true;
+        }
         if (!session || !session->IsHeadless() || packet.GetOpcode() != SMSG_MESSAGECHAT || packet.size() < 17)
             return true;
         try
@@ -3462,9 +4052,18 @@ namespace
     void ProcessWhisperInbox()
     {
         std::vector<InWhisper> batch;
+        std::vector<ChanNotice> notices;
         {
             std::lock_guard<std::mutex> guard(g_whisperInboxMx);
             batch.swap(g_whisperInbox);
+            notices.swap(g_chanNoticeInbox);
+        }
+        for (ChanNotice const& n : notices)
+        {
+            char const* what = n.type == 2 ? "you joined" : n.type == 3 ? "you left" : n.type == 5 ? "not a member" : n.type == 4 ? "wrong password" : "";
+            if (n.type == 2 || n.type == 5 || n.type == 4)
+                if (Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, n.botLow)))
+                    sLog.outString("[mod-turtlebots] channel: %s - %s (%u) for %s.", n.chan.c_str(), what, uint32(n.type), b->GetName());
         }
         for (InWhisper const& w : batch)
         {
@@ -3489,6 +4088,12 @@ namespace
                 (near ? " whispers to you: " : " whispers to you from somewhere else in the world: ") + w.msg;
             if (service && !near)
                 usr += " (They want a service from you but are not here beside you: tell them where to find you.)";
+            std::string fact;
+            if (BuildFact(from, lower, fact))
+            {
+                usr += FactClause(fact);
+                sLog.outString("[mod-turtlebots] fact for %s: %s", from->GetName(), fact.c_str());
+            }
             ConvoPush(bot->GetGUIDLow(), from->GetGUIDLow(), false, w.msg);
             std::string fallback = RPick({ "Aye? What can I do for you?", "Hm, what is it, friend?",
                                            "I hear you. What do you need?" });
@@ -3498,9 +4103,18 @@ namespace
     }
 }
 
+namespace
+{
+    void ReplayOffer(Player* seller, std::string const& channel, std::string const& msg)
+    {
+        if (g_chatScript)
+            g_chatScript->OnChatChannel(seller, channel.c_str(), msg.c_str());
+    }
+}
+
 void Addmod_turtlebotsScripts()
 {
-    new TurtleBotsWorldScript();
+    g_worldScript = new TurtleBotsWorldScript();
     g_chatScript = new TurtleBotsChatScript();
     new TurtleBotsPacketScript();
 }
