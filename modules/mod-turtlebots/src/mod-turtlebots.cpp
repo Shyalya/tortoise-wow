@@ -103,6 +103,16 @@ namespace
             bot->GetSession()->HandleMoveWorldportAckOpcode();
     }
 
+    // Residents never stay ghosts. A character can log in dead (it died on its last
+    // adventurer shift, or a resident wandered into trouble); without this it would
+    // never be driven again, because DriveResident only runs for living bots.
+    void ReviveResident(Player* bot)
+    {
+        bot->ResurrectPlayer(1.0f);
+        bot->SpawnCorpseBones();
+        sLog.outString("[mod-turtlebots] %s logged in dead - revived so the resident can carry on.", bot->GetName());
+    }
+
     std::string BotAccountName(uint32 i) { return "TBOT" + std::to_string(i); }
 
     // Letter-only character name (names may not contain digits). <= 12 chars.
@@ -1543,13 +1553,19 @@ namespace
 
                 ++_cursor;
                 ++processed;
+                // Finish any pending teleport BEFORE the in-world check: a far teleport
+                // (other continent, e.g. an adventurer coming home from Elwynn) takes the
+                // bot out of the world until its worldport ack - which only we can send.
+                if (bot)
+                    CompleteBotTeleport(bot);
                 if (bot && bot->IsInWorld())
                 {
-                    CompleteBotTeleport(bot);      // finish any pending teleport
                     if (RoleOf(low) == ROLE_ADVENTURER)
                         DriveAdventurer(bot);      // handles its own death/revive
                     else if (bot->IsAlive())
                         DriveResident(bot);
+                    else
+                        ReviveResident(bot);       // then placed/driven on the next tick
                 }
             }
         }
