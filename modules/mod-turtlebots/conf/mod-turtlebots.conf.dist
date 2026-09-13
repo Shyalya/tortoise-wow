@@ -104,7 +104,9 @@ mod-turtlebots.Debug.TradeWake = 0
 #
 #    Location questions ("where is the bank / the mage trainer / Gryshka / a mailbox ...") in /say,
 #    whispers and channels are answered from the live world around the asker (600 yards), as a
-#    fact the model only phrases. Nothing to configure.
+#    fact the model only phrases. Lore questions ("what drops X", "who sells X", "who gives the
+#    quest X" - the item may be linked) are answered from the world database the same way.
+#    Nothing to configure.
 #
 #    mod-turtlebots.Debug.FactSelfTest
 #        Each resident asks the standard questions once from where it stands and logs the facts.
@@ -129,3 +131,18 @@ mod-turtlebots.Debug.FactSelfTest = 0
 ###################################################################################################
 
 mod-turtlebots.LLM.MarketCallMinutes = 5
+
+###################################################################################################
+# GROUP, GUILD, EMOTES
+#
+#    A resident accepts a real player's group invitation (and stays half an hour, or until no
+#    player is left in the group), answers in party when called by name or asked, now and then
+#    otherwise. A guild invitation is accepted the same way; guild chat is answered alike.
+#    Emotes aimed at a resident get a gesture back and a word in character. Nothing to configure.
+#
+#    mod-turtlebots.Debug.SocialSelfTest
+#        Two residents act out an emote and a party exchange once (checks the plumbing without a
+#        client). Leave at 0 in normal operation. Default: 0
+###################################################################################################
+
+mod-turtlebots.Debug.SocialSelfTest = 0

@@ -33,6 +33,7 @@
 #include "MotionMaster.h"
 #include "MoveSpline.h"
 #include "Map.h"
+#include "GridMap.h"
 #include "Creature.h"
 #include "PathFinder.h"
 #include "SpellMgr.h"
@@ -42,6 +43,9 @@
 #include "Chat.h"
 #include "Channel.h"
 #include "ChannelMgr.h"
+#include "Guild.h"
+#include "GuildMgr.h"
+#include "Database/DBCStores.h"
 #include "GridNotifiers.h"
 #include "GridNotifiersImpl.h"
 #include "Cell.h"
@@ -423,7 +427,7 @@ namespace
     static std::string g_llmPath  = "/v1/chat/completions";
     static uint32      g_llmDeadlineMs = 5000;
 
-    enum LlmMode : uint8 { LLM_SAY = 0, LLM_WHISPER = 1, LLM_CHANNEL = 2 };
+    enum LlmMode : uint8 { LLM_SAY = 0, LLM_WHISPER = 1, LLM_CHANNEL = 2, LLM_PARTY = 3, LLM_GUILD = 4 };
     struct LlmResult { std::atomic<bool> done; std::string text; uint32 ms; LlmResult() : done(false), ms(0) {} };
     struct LlmJob
     {
@@ -460,9 +464,19 @@ namespace
     static std::map<uint32, uint32> g_lastMarketCallMs;// botGuid -> its last WTB call
     static uint32 g_nextMarketCallMs = 0;              // city-wide cadence of WTB calls
     static uint32 g_llmMarketMinutes = 5;              // LLM.MarketCallMinutes (0 = no calls)
+    struct PendingEmote { uint32 bot; uint32 anim; uint32 atMs; };
+    static std::vector<PendingEmote> g_pendingEmotes;  // a gesture back, after a human beat (anim 0 = clear the state)
+    static std::map<uint32, uint32> g_emoteReactAt;    // playerGuid -> ms before which no further emote reaction
+    static std::map<uint32, uint32> g_groupJoinedMs;   // botGuid -> ms it joined a group on invitation (auto-leave)
+    static std::map<uint32, uint32> g_groupTalkAt;     // groupId -> ms before which no further party line
+    static std::map<uint32, uint32> g_guildTalkAt;     // guildId -> ms before which no further guild line
+    static bool   g_socialSelfTest = false;            // Debug.SocialSelfTest: emote + party exchange between two residents
+    static uint8  g_socialStage = 0;                   // 0 idle, 1 waved + invited, 2 party line said, 3 done
+    static uint32 g_socialAtMs = 0, g_socialA = 0, g_socialB = 0;
     struct ConvoLine { bool bot; std::string text; time_t at; };
     static std::map<uint64, std::deque<ConvoLine>> g_convo; // (bot<<32|player) -> last lines exchanged
-    struct InWhisper { uint32 botLow; uint64 sender; std::string msg; };
+    // kind: 0 whisper, 1 party line, 2 guild line, 3 guild invitation (msg = inviter, extra = guild)
+    struct InWhisper { uint32 botLow; uint64 sender; std::string msg; uint8 kind; std::string extra; };
     static std::vector<InWhisper> g_whisperInbox;  // filled on the packet hook (any thread), drained on the world thread
     struct ChanNotice { uint32 botLow; uint8 type; std::string chan; };
     static std::vector<ChanNotice> g_chanNoticeInbox; // channel notices to residents (joined / not a member ...), same lock
@@ -923,6 +937,7 @@ namespace
         g_llmLog            = sConfig.GetBoolDefault("mod-turtlebots.LLM.Log", true);
         g_factSelfTest      = sConfig.GetBoolDefault("mod-turtlebots.Debug.FactSelfTest", false);
         g_llmMarketMinutes  = sConfig.GetIntDefault("mod-turtlebots.LLM.MarketCallMinutes", 5);
+        g_socialSelfTest    = sConfig.GetBoolDefault("mod-turtlebots.Debug.SocialSelfTest", false);
         ParseLlmUrl();
     }
 
@@ -1128,15 +1143,218 @@ namespace
         bool operator()(GameObject* go) { return go->GetGoType() == GAMEOBJECT_TYPE_MAILBOX && obj->IsWithinDistInMap(go, range); }
     };
 
-    // Compass direction from one object to another (+x is north, +y is west).
-    static char const* CompassFrom(WorldObject const* from, WorldObject const* to)
+    // Compass direction of a point from an object (+x is north, +y is west).
+    static char const* CompassXY(WorldObject const* from, float x, float y)
     {
-        float const dx = to->GetPositionX() - from->GetPositionX();
-        float const dy = to->GetPositionY() - from->GetPositionY();
+        float const dx = x - from->GetPositionX();
+        float const dy = y - from->GetPositionY();
         float b = atan2(dy, dx); // 0 = north, +pi/2 = west
         if (b < 0) b += 2.0f * float(M_PI);
         static char const* const kDir[8] = { "north", "north-west", "west", "south-west", "south", "south-east", "east", "north-east" };
         return kDir[int(b / (float(M_PI) / 4.0f) + 0.5f) % 8];
+    }
+
+    static char const* CompassFrom(WorldObject const* from, WorldObject const* to)
+    {
+        return CompassXY(from, to->GetPositionX(), to->GetPositionY());
+    }
+
+    // ---- Lore lookups (world DB): what drops X, who sells X, who gives quest X ----
+    // The item may be linked (players do that) or named; a name is matched exactly first,
+    // then as the shortest containing name.
+    static uint32 EntryFromLowerLink(std::string const& lower)
+    {
+        std::string::size_type p = lower.find("hitem:");
+        if (p == std::string::npos) return 0;
+        return uint32(atoi(lower.c_str() + p + 6));
+    }
+
+    static std::string AfterPhrase(std::string const& lower, std::initializer_list<char const*> leads)
+    {
+        for (char const* l : leads)
+        {
+            std::string::size_type p = lower.find(l);
+            if (p == std::string::npos) continue;
+            std::string rest = lower.substr(p + strlen(l));
+            std::string::size_type e = rest.find_first_of("?.!,|");
+            if (e != std::string::npos) rest.resize(e);
+            static char const* const kTail[] = { " drop from", " drops from", " dropped", " drop", " drops", " come from", " from", " at" };
+            for (char const* t : kTail)
+            {
+                std::string::size_type q = rest.rfind(t);
+                if (q != std::string::npos && q + strlen(t) == rest.size()) { rest.resize(q); break; }
+            }
+            while (!rest.empty() && rest.back() == ' ') rest.pop_back();
+            while (!rest.empty() && rest.front() == ' ') rest.erase(rest.begin());
+            static char const* const kArt[] = { "the ", "a ", "an ", "some " };
+            for (char const* a : kArt)
+                if (rest.rfind(a, 0) == 0) { rest.erase(0, strlen(a)); break; }
+            if (rest.size() >= 3 && rest.size() <= 40) return rest;
+        }
+        return std::string();
+    }
+
+    static uint32 ItemByName(std::string const& name, std::string& realName)
+    {
+        std::string esc = name; WorldDatabase.escape_string(esc);
+        QueryResult* r = WorldDatabase.PQuery("SELECT entry, name FROM item_template WHERE name LIKE '%s' ORDER BY entry LIMIT 1", esc.c_str());
+        if (!r) r = WorldDatabase.PQuery("SELECT entry, name FROM item_template WHERE name LIKE '%%%s%%' ORDER BY LENGTH(name), entry LIMIT 1", esc.c_str());
+        if (!r) return 0;
+        uint32 const e = r->Fetch()[0].GetUInt32();
+        realName = r->Fetch()[1].GetCppString();
+        delete r;
+        return e;
+    }
+
+    // Where a spawn point lies relative to the asker: distance and direction on the same map, else its zone.
+    static std::string WhereIs(Player* asker, uint32 map, float x, float y, float z)
+    {
+        std::string const zone = AreaName(sTerrainMgr.GetZoneId(map, x, y, z));
+        if (map == asker->GetMapId())
+            return "about " + std::to_string(int(asker->GetDistance2d(x, y))) + " yards to the " + CompassXY(asker, x, y) +
+                   (zone.empty() ? std::string() : ", in " + zone);
+        return zone.empty() ? std::string("on another continent") : "in " + zone;
+    }
+
+    static bool DropFact(uint32 entry, std::string const& item, std::string& fact)
+    {
+        std::string s;
+        if (QueryResult* r = WorldDatabase.PQuery(
+                "SELECT ct.name, clt.ChanceOrQuestChance FROM creature_loot_template clt JOIN creature_template ct ON ct.entry = clt.entry "
+                "WHERE clt.item = %u AND clt.ChanceOrQuestChance > 0 AND clt.mincountOrRef > 0 ORDER BY clt.ChanceOrQuestChance DESC LIMIT 3", entry))
+        {
+            do
+            {
+                Field* f = r->Fetch();
+                if (!s.empty()) s += ", ";
+                s += f[0].GetCppString() + " (" + std::to_string(int(f[1].GetFloat())) + "%)";
+            } while (r->NextRow());
+            delete r;
+        }
+        if (!s.empty())
+            fact = item + " drops from " + s + ".";
+        if (QueryResult* r = WorldDatabase.PQuery("SELECT COUNT(*) FROM skinning_loot_template WHERE item = %u", entry))
+        {
+            if (r->Fetch()[0].GetUInt32())
+                fact += (fact.empty() ? item + " is" : std::string(" It is also")) + " skinned from beasts.";
+            delete r;
+        }
+        if (QueryResult* r = WorldDatabase.PQuery(
+                "SELECT gt.name FROM gameobject_loot_template glt JOIN gameobject_template gt ON gt.data1 = glt.entry "
+                "WHERE glt.item = %u AND gt.type = 3 AND glt.ChanceOrQuestChance > 0 GROUP BY gt.name ORDER BY MAX(glt.ChanceOrQuestChance) DESC LIMIT 2", entry))
+        {
+            std::string g;
+            do { if (!g.empty()) g += " and "; g += r->Fetch()[0].GetCppString(); } while (r->NextRow());
+            delete r;
+            if (!g.empty())
+                fact += (fact.empty() ? item + " comes" : std::string(" It also comes")) + " from " + g + ".";
+        }
+        if (fact.empty())
+            fact = "I have never seen " + item + " drop from anything.";
+        return true;
+    }
+
+    static bool VendorFact(Player* asker, uint32 entry, std::string const& item, std::string& fact)
+    {
+        QueryResult* r = WorldDatabase.PQuery(
+            "SELECT ct.name, c.map, c.position_x, c.position_y, c.position_z FROM npc_vendor v JOIN creature c ON c.id = v.entry "
+            "JOIN creature_template ct ON ct.entry = v.entry WHERE v.item = %u LIMIT 200", entry);
+        if (!r)
+        {
+            fact = "No vendor I know of sells " + item + ".";
+            return true;
+        }
+        std::string bestName; float bestD = 1.0e12f; uint32 bestMap = 0; float bx = 0, by = 0, bz = 0; uint32 n = 0;
+        do
+        {
+            Field* f = r->Fetch();
+            ++n;
+            uint32 const map = f[1].GetUInt32();
+            float const x = f[2].GetFloat(), y = f[3].GetFloat(), z = f[4].GetFloat();
+            float const d = (map == asker->GetMapId()) ? asker->GetDistance2d(x, y) : 1.0e9f + float(n);
+            if (d < bestD) { bestD = d; bestName = f[0].GetCppString(); bestMap = map; bx = x; by = y; bz = z; }
+        } while (r->NextRow());
+        delete r;
+        fact = bestName + " sells " + item + ", " + WhereIs(asker, bestMap, bx, by, bz) +
+               (n > 1 ? " (" + std::to_string(n) + " vendors carry it)" : std::string()) + ".";
+        return true;
+    }
+
+    static bool QuestFact(Player* asker, std::string const& title, std::string& fact)
+    {
+        std::string esc = title; WorldDatabase.escape_string(esc);
+        QueryResult* q = WorldDatabase.PQuery("SELECT entry, Title, MinLevel FROM quest_template WHERE Title LIKE '%s' LIMIT 1", esc.c_str());
+        if (!q) q = WorldDatabase.PQuery("SELECT entry, Title, MinLevel FROM quest_template WHERE Title LIKE '%%%s%%' ORDER BY LENGTH(Title) LIMIT 1", esc.c_str());
+        if (!q)
+        {
+            fact = "I know of no quest called " + title + ".";
+            return true;
+        }
+        uint32 const qe = q->Fetch()[0].GetUInt32();
+        std::string const qt = q->Fetch()[1].GetCppString();
+        uint32 const lvl = q->Fetch()[2].GetUInt32();
+        delete q;
+        QueryResult* r = WorldDatabase.PQuery(
+            "SELECT ct.name, c.map, c.position_x, c.position_y, c.position_z FROM creature_questrelation qr JOIN creature c ON c.id = qr.id "
+            "JOIN creature_template ct ON ct.entry = qr.id WHERE qr.quest = %u LIMIT 50", qe);
+        if (!r)
+        {
+            fact = "The quest " + qt + " is not handed out by anyone I know of.";
+            return true;
+        }
+        std::string bestName; float bestD = 1.0e12f; uint32 bestMap = 0; float bx = 0, by = 0, bz = 0; uint32 n = 0;
+        do
+        {
+            Field* f = r->Fetch();
+            ++n;
+            uint32 const map = f[1].GetUInt32();
+            float const x = f[2].GetFloat(), y = f[3].GetFloat(), z = f[4].GetFloat();
+            float const d = (map == asker->GetMapId()) ? asker->GetDistance2d(x, y) : 1.0e9f + float(n);
+            if (d < bestD) { bestD = d; bestName = f[0].GetCppString(); bestMap = map; bx = x; by = y; bz = z; }
+        } while (r->NextRow());
+        delete r;
+        fact = "The quest " + qt + " (level " + std::to_string(lvl) + ") is given by " + bestName + ", " + WhereIs(asker, bestMap, bx, by, bz) + ".";
+        return true;
+    }
+
+    // Recognise a lore question and answer it from the world DB (rare, a few ms).
+    static bool BuildLoreFact(Player* asker, std::string const& lower, std::string& fact)
+    {
+        bool const quest = lower.find("quest") != std::string::npos;
+        bool const sell  = lower.find("sell") != std::string::npos || lower.find("buy") != std::string::npos || lower.find("vendor") != std::string::npos;
+        bool const drop  = lower.find("drop") != std::string::npos || lower.find("farm") != std::string::npos ||
+                           lower.find("come from") != std::string::npos || lower.find("comes from") != std::string::npos ||
+                           (lower.find("where") != std::string::npos && lower.find(" get ") != std::string::npos);
+        if (!quest && !sell && !drop)
+            return false;
+        if (quest)
+        {
+            std::string const t = AfterPhrase(lower, { "quest called ", "quest named ", "the quest ", "quest " });
+            if (t.empty()) return false;
+            return QuestFact(asker, t, fact);
+        }
+        uint32 entry = EntryFromLowerLink(lower);
+        std::string item;
+        if (entry)
+        {
+            if (ItemPrototype const* pr = sObjectMgr.GetItemPrototype(entry)) item = pr->Name1;
+            else entry = 0;
+        }
+        if (!entry)
+        {
+            std::string const name = AfterPhrase(lower, { "what drops ", "who drops ", "where does ", "where do ", "where can i get ",
+                                                          "where do i get ", "how do i get ", "where to farm ", "where can i farm ",
+                                                          "who sells ", "where can i buy ", "where to buy ", "where do i buy ",
+                                                          "vendor for ", "buy " });
+            if (name.empty()) return false;
+            entry = ItemByName(name, item);
+            if (!entry)
+            {
+                fact = "I know of no item called " + name + ".";
+                return true;
+            }
+        }
+        return sell ? VendorFact(asker, entry, item, fact) : DropFact(entry, item, fact);
     }
 
     // Recognise a location question and what it is after. False if it is not one.
@@ -1180,10 +1398,12 @@ namespace
         if (has("vendor") || has("merchant") || has("sells") || has("buy "))
         {
             static char const* const kGoods[] = { "reagent", "food", "drink", "water", "trade supplies", "trade goods", "weapon", "armor",
-                                                  "poison", "bag", "fishing", "bow", "gun", "cloth", "leather", "general", "tabard", "pet" };
+                                                  "poison", "bag", "fishing", "bow", "gun", "general", "tabard", "pet" };
             flags = UNIT_NPC_FLAG_VENDOR; thing = "vendor";
             for (char const* k : kGoods)
                 if (has(k)) { sub = k; thing = std::string(k) + " vendor"; break; }
+            if (sub.empty() && (has("sells") || has("buy ")))
+                return false; // "who sells X" / "where can I buy X": a named item, the lore lookup answers
             return true;
         }
         // "where is <name>": a person by name.
@@ -1207,7 +1427,7 @@ namespace
     {
         uint32 flags = 0; std::string sub, name, thing; bool mailbox = false;
         if (!LocationQuery(lower, flags, sub, name, thing, mailbox))
-            return false;
+            return BuildLoreFact(asker, lower, fact); // not a place: maybe an item or a quest
         float const R = 600.f;
         WorldObject* found = nullptr; float bestD = R + 1.f; std::string label;
         if (mailbox)
@@ -1332,6 +1552,160 @@ namespace
         g_llmJobs.back().suffix = suffix;
     }
 
+    // ---- Group, guild and emotes ----
+    static bool SayInParty(Player* b, std::string const& line)
+    {
+        Group* g = b->GetGroup();
+        if (!g)
+            return false;
+        WorldPacket data;
+        ChatHandler::BuildChatPacket(data, CHAT_MSG_PARTY, line, LANG_UNIVERSAL, CHAT_TAG_NONE, b->GetObjectGuid(), b->GetName());
+        g->BroadcastPacket(&data, false);
+        if (b->GetSession())
+            sWorld.LogChat(b->GetSession(), "Group", line, nullptr, g->GetId());
+        return true;
+    }
+
+    static bool SayInGuild(Player* b, std::string const& line)
+    {
+        Guild* g = b->GetGuildId() ? sGuildMgr.GetGuildById(b->GetGuildId()) : nullptr;
+        if (!g || !b->GetSession())
+            return false;
+        g->BroadcastToGuild(b->GetSession(), line);
+        sWorld.LogChat(b->GetSession(), "Guild", line);
+        return true;
+    }
+
+    static char const* EmoteWord(uint32 textEmote)
+    {
+        switch (textEmote)
+        {
+            case 101: return "waves at";      case 17: return "bows to";        case 78: return "salutes";
+            case 21:  return "cheers for";    case 34: return "dances with";    case 60: return "laughs at";
+            case 56:  return "hugs";          case 58: return "kisses";         case 97: return "thanks";
+            case 77:  return "makes a rude gesture at"; case 72: return "points at";
+            case 5:   return "applauds";      case 26: return "flexes at";      case 41: return "greets";
+            case 47:  return "kneels before"; case 71: return "pokes";          case 89: return "tickles";
+            default:  return nullptr;
+        }
+    }
+
+    // A real player emotes: the resident it is aimed at (or, for an untargeted emote, a
+    // neighbour within arm reach, sometimes) turns, gestures back after a beat and says a
+    // word about it in character.
+    static void ReactToEmote(Player* from, uint32 textEmote, ObjectGuid target)
+    {
+        uint32 const nowMs = WorldTimer::getMSTime();
+        Player* res = nullptr;
+        bool const targeted = target.IsPlayer() && g_turtleResidents.count(target.GetCounter());
+        if (targeted)
+        {
+            res = sObjectAccessor.FindPlayer(target);
+            if (res && (!res->IsInWorld() || res->GetMapId() != from->GetMapId() || from->GetDistance(res) > 30.f))
+                res = nullptr;
+        }
+        else if (target.IsEmpty() && urand(0, 99) < 40)
+        {
+            float bestD = 8.f;
+            for (uint32 low : g_turtleResidents)
+            {
+                Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+                if (!r || r == from || !r->IsInWorld() || r->GetMapId() != from->GetMapId()) continue;
+                float const d = from->GetDistance(r);
+                if (d < bestD) { bestD = d; res = r; }
+            }
+        }
+        if (!res)
+            return;
+        auto ra = g_emoteReactAt.find(from->GetGUIDLow());
+        if (ra != g_emoteReactAt.end() && int32(ra->second - nowMs) > 0)
+            return;
+        g_emoteReactAt[from->GetGUIDLow()] = nowMs + 8000u;
+        EmotesTextEntry const* em = sEmotesTextStore.LookupEntry(textEmote);
+        uint32 const anim = em ? em->textid : 0;
+        if (!g_fishing.count(res->GetGUIDLow()))
+            res->SetFacingTo(res->GetAngle(from));
+        if (anim)
+        {
+            g_pendingEmotes.push_back({ res->GetGUIDLow(), anim, nowMs + urand(800, 2000) });
+            if (anim == EMOTE_STATE_DANCE)
+                g_pendingEmotes.push_back({ res->GetGUIDLow(), 0, nowMs + 8000u }); // stop dancing again
+        }
+        char const* word = EmoteWord(textEmote);
+        if (targeted && word)
+            QueueLlm(res, ResidentSystemPrompt(res),
+                     std::string(from->GetName()) + " " + word + " you. React in one short line, in character.",
+                     std::string(), LLM_SAY, from->GetGUIDLow(), nowMs + urand(1500, 3000), "emote", 2, 0);
+        sLog.outString("[mod-turtlebots] emote: %s %s %s (anim %u).", from->GetName(), word ? word : "emotes at", res->GetName(), anim);
+    }
+
+    // Party and guild lines heard by a resident: answer when called by name or asked,
+    // now and then otherwise; one line per group/guild per 15-20 s.
+    static void HandleGroupLine(Player* bot, Player* from, std::string const& msg)
+    {
+        Group* g = bot->GetGroup();
+        if (!g || from->GetGroup() != g)
+            return;
+        uint32 const nowMs = WorldTimer::getMSTime();
+        std::string const lower = LowerStr(msg);
+        bool const named = lower.find(LowerStr(bot->GetName())) != std::string::npos;
+        bool const question = lower.find("?") != std::string::npos;
+        if (!named && !question && urand(0, 99) >= 20)
+            return;
+        auto ta = g_groupTalkAt.find(g->GetId());
+        if (ta != g_groupTalkAt.end() && int32(ta->second - nowMs) > 0)
+            return;
+        g_groupTalkAt[g->GetId()] = nowMs + 15000u;
+        std::string usr = std::string(from->GetName()) + " says in your party: " + msg;
+        std::string fact;
+        if (BuildFact(from, lower, fact))
+            usr += FactClause(fact);
+        else
+            usr += " Answer your party in one short line.";
+        QueueLlm(bot, ResidentSystemPrompt(bot), usr, std::string(), LLM_PARTY, from->GetGUIDLow(),
+                 nowMs + urand(1500, 3000), "party", 2, 0);
+    }
+
+    static void HandleGuildLine(Player* bot, Player* from, std::string const& msg)
+    {
+        if (!bot->GetGuildId() || from->GetGuildId() != bot->GetGuildId())
+            return;
+        uint32 const nowMs = WorldTimer::getMSTime();
+        std::string const lower = LowerStr(msg);
+        bool const named = lower.find(LowerStr(bot->GetName())) != std::string::npos;
+        bool const question = lower.find("?") != std::string::npos;
+        if (!named && !question && urand(0, 99) >= 15)
+            return;
+        auto ta = g_guildTalkAt.find(bot->GetGuildId());
+        if (ta != g_guildTalkAt.end() && int32(ta->second - nowMs) > 0)
+            return;
+        g_guildTalkAt[bot->GetGuildId()] = nowMs + 20000u;
+        std::string usr = std::string(from->GetName()) + " says in your guild chat: " + msg;
+        std::string fact;
+        if (BuildFact(from, lower, fact))
+            usr += FactClause(fact);
+        else
+            usr += " Answer the guild in one short line.";
+        QueueLlm(bot, ResidentSystemPrompt(bot), usr, std::string(), LLM_GUILD, from->GetGUIDLow(),
+                 nowMs + urand(1500, 3000), "guild", 2, 0);
+    }
+
+    // A real player invited the resident into a guild: it accepts and greets the guild.
+    static void HandleGuildInvite(Player* bot, std::string const& inviter, std::string const& guildName)
+    {
+        Player* who = sObjectAccessor.FindPlayerByName(inviter.c_str());
+        if (!who || !who->GetSession() || who->GetSession()->IsHeadless() || !bot->GetGuildIdInvited())
+            return;
+        WorldPacket p;
+        bot->GetSession()->HandleGuildAcceptOpcode(p);
+        sLog.outString("[mod-turtlebots] guild: %s accepts the invitation of %s into <%s>.", bot->GetName(), who->GetName(), guildName.c_str());
+        QueueLlm(bot, ResidentSystemPrompt(bot),
+                 std::string("You have just joined the guild ") + guildName + " on the invitation of " + who->GetName() +
+                 ". Greet the guild in one short line, in character.",
+                 std::string("Greetings, guild - glad to be aboard."), LLM_GUILD, who->GetGUIDLow(),
+                 WorldTimer::getMSTime() + 4000u, "guild", 2, 0);
+    }
+
     // Say a line out loud, with the talk gesture, and log it like any player's chat.
     static void ResidentSay(Player* b, std::string const& line)
     {
@@ -1450,6 +1824,16 @@ namespace
             if (!SayInChannel(b, j.channel, line))
                 return;
         }
+        else if (j.mode == LLM_PARTY)
+        {
+            if (!SayInParty(b, line))
+                return; // left the group meanwhile
+        }
+        else if (j.mode == LLM_GUILD)
+        {
+            if (!SayInGuild(b, line))
+                return;
+        }
         else if (j.mode == LLM_WHISPER)
         {
             Player* t = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, j.targetGuid));
@@ -1473,7 +1857,8 @@ namespace
         else ++g_llmStat.empty;
         if (g_llmLog)
             sLog.outString("[mod-turtlebots] llm %s/%s %s: %s (%u ms, %s)", j.tag,
-                           j.mode == LLM_WHISPER ? "whisper" : j.mode == LLM_CHANNEL ? "channel" : "say",
+                           j.mode == LLM_WHISPER ? "whisper" : j.mode == LLM_CHANNEL ? "channel" :
+                           j.mode == LLM_PARTY ? "party" : j.mode == LLM_GUILD ? "guild" : "say",
                            b->GetName(), line.c_str(), j.res->ms, how);
         if (!j.off && (strcmp(j.tag, "ambient") == 0 || strcmp(j.tag, "dialogue") == 0))
             MaybeAnswerLine(b, line, j.depth, j.partnerGuid);
@@ -2267,7 +2652,27 @@ namespace
             g_ambientTokens = std::min(float(g_llmAmbientPerMin),
                                        g_ambientTokens + float(g_llmAmbientPerMin) * float(diff) / 60000.f);
 
-            // Whispers that reached a resident's session (captured on the packet hook).
+            // Gestures back, after their human beat.
+            if (!g_pendingEmotes.empty())
+            {
+                uint32 const nowMs = WorldTimer::getMSTime();
+                for (size_t i = 0; i < g_pendingEmotes.size(); )
+                {
+                    if (int32(nowMs - g_pendingEmotes[i].atMs) < 0) { ++i; continue; }
+                    if (Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, g_pendingEmotes[i].bot)))
+                        if (b->IsInWorld())
+                        {
+                            if (g_pendingEmotes[i].anim)
+                                b->HandleEmote(g_pendingEmotes[i].anim);
+                            else
+                                b->SetUInt32Value(UNIT_NPC_EMOTESTATE, 0);
+                        }
+                    g_pendingEmotes[i] = g_pendingEmotes.back();
+                    g_pendingEmotes.pop_back();
+                }
+            }
+
+            // Whispers, party and guild lines that reached a resident's session (captured on the packet hook).
             ProcessWhisperInbox();
             if (!g_pendingOffers.empty())
                 ReplayPendingOffers(WorldTimer::getMSTime());
@@ -2667,6 +3072,39 @@ namespace
                 return; // teleport finishes next tick via CompleteBotTeleport
             }
 
+            // A real player's group invitation is accepted (the portal and trade flows accept
+            // their own); the resident stays half an hour, or until no player is left in it.
+            {
+                bool special = false;
+                for (auto const& kv : g_sellIntent) if (kv.second.resident == low) { special = true; break; }
+                for (auto const& pp : g_pendingPortals) if (pp.mage == low) { special = true; break; }
+                if (!special && bot->GetGroupInvite())
+                {
+                    Player* leader = sObjectAccessor.FindPlayer(bot->GetGroupInvite()->GetLeaderGuid());
+                    bool const realLeader = leader && leader->GetSession() && !leader->GetSession()->IsHeadless();
+                    if (realLeader || g_socialSelfTest)
+                    {
+                        WorldPacket gp;
+                        bot->GetSession()->HandleGroupAcceptOpcode(gp);
+                        g_groupJoinedMs[low] = WorldTimer::getMSTime();
+                        sLog.outString("[mod-turtlebots] group: %s joins the group of %s.", bot->GetName(), leader ? leader->GetName() : "someone");
+                    }
+                }
+                else if (!special && bot->GetGroup() && g_groupJoinedMs.count(low))
+                {
+                    bool realIn = false;
+                    for (GroupReference* r = bot->GetGroup()->GetFirstMember(); r; r = r->next())
+                        if (Player* m = r->getSource())
+                            if (m != bot && m->GetSession() && !m->GetSession()->IsHeadless()) { realIn = true; break; }
+                    if ((!realIn && !g_socialSelfTest) || WorldTimer::getMSTime() - g_groupJoinedMs[low] > 30u * 60000u)
+                    {
+                        bot->RemoveFromGroup();
+                        g_groupJoinedMs.erase(low);
+                        sLog.outString("[mod-turtlebots] group: %s leaves the group (%s).", bot->GetName(), realIn ? "half an hour is up" : "no player left in it");
+                    }
+                }
+            }
+
             // Debug.FactSelfTest: each resident asks the standard location questions once
             // from where it stands and logs the facts (checks the lookup without a client).
             if (g_factSelfTest && !g_factTested.count(low) && !bot->IsBeingTeleported())
@@ -2674,7 +3112,9 @@ namespace
                 g_factTested.insert(low);
                 static char const* const kQ[] = { "where is the bank?", "where is the auction house?", "where is the flight master?",
                                                   "where is the mage trainer?", "where is the inn?", "where is gryshka?",
-                                                  "where is the mailbox?", "where can i buy reagents?", "where is the warsong battlemaster?" };
+                                                  "where is the mailbox?", "where can i buy reagents?", "where is the warsong battlemaster?",
+                                                  "what drops linen cloth?", "where does copper ore come from?", "who sells refreshing spring water?",
+                                                  "who gives the quest cutting teeth?", "where can i buy light leather?" };
                 for (char const* q : kQ)
                 {
                     std::string fact;
@@ -3279,6 +3719,49 @@ namespace
             }
         }
 
+        // Debug.SocialSelfTest: two residents act out an emote and a party exchange
+        // (B waves at A; A invites B; A asks in party; B answers) - the plumbing that a
+        // real player would trigger, checked without a client.
+        void SocialSelfTestTick(uint32 nowMs)
+        {
+            if (!g_socialSelfTest || g_socialStage == 3)
+                return;
+            if (g_socialStage == 0)
+            {
+                std::vector<Player*> up;
+                for (uint32 low : g_turtleResidents)
+                    if (_placed.count(low))
+                        if (Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low)))
+                            if (r->IsInWorld() && !r->IsBeingTeleported() && !r->GetGroup() && !r->GetGroupInvite())
+                                up.push_back(r);
+                if (up.size() < 2)
+                    return;
+                Player* a = up[0]; Player* b = up[1];
+                g_socialA = a->GetGUIDLow(); g_socialB = b->GetGUIDLow();
+                ReactToEmote(b, 101, a->GetObjectGuid()); // B waves at A
+                BotInvitePlayer(a, b);                     // A invites B; B accepts on its next decision
+                g_socialStage = 1; g_socialAtMs = nowMs;
+                sLog.outString("[mod-turtlebots] social-test: %s waves at %s and invites it.", b->GetName(), a->GetName());
+                return;
+            }
+            if (g_socialStage == 1 && nowMs - g_socialAtMs >= 40000u)
+            {
+                Player* a = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, g_socialA));
+                Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, g_socialB));
+                if (a && b && a->GetGroup() && a->GetGroup() == b->GetGroup())
+                {
+                    SayInParty(a, std::string("Hey ") + b->GetName() + ", ready to head out to the Barrens with me?");
+                    sLog.outString("[mod-turtlebots] social-test: %s asks %s in party.", a->GetName(), b->GetName());
+                }
+                else
+                    sLog.outString("[mod-turtlebots] social-test: no shared group after 40 s (a=%p b=%p).", (void*)a, (void*)b);
+                g_socialStage = 2; g_socialAtMs = nowMs;
+                return;
+            }
+            if (g_socialStage == 2 && nowMs - g_socialAtMs >= 30000u)
+                g_socialStage = 3;
+        }
+
         // Live-tunable knobs: the panel writes the module conf and issues the console
         // command reload config; reading them on every reconcile picks a change up
         // within 5 s without a restart. Cheap: a handful of config lookups.
@@ -3343,6 +3826,7 @@ namespace
             }
 
             MarketCall(WorldTimer::getMSTime());
+            SocialSelfTestTick(WorldTimer::getMSTime());
 
             if (online != _lastReportedOnline)
             {
@@ -3499,8 +3983,16 @@ class TurtleBotsChatScript : public PlayerScript
 {
 public:
     TurtleBotsChatScript()
-        : PlayerScript("mod-turtlebots_chat", { PLAYERHOOK_ON_CHAT_SAY, PLAYERHOOK_ON_CHAT_YELL, PLAYERHOOK_ON_CHAT_CHANNEL })
+        : PlayerScript("mod-turtlebots_chat", { PLAYERHOOK_ON_CHAT_SAY, PLAYERHOOK_ON_CHAT_YELL, PLAYERHOOK_ON_CHAT_CHANNEL,
+                                                PLAYERHOOK_ON_TEXT_EMOTE })
     {
+    }
+
+    void OnTextEmote(Player* from, uint32 textEmote, uint32 /*emoteNum*/, ObjectGuid guid) override
+    {
+        if (!from || !from->GetSession() || from->GetSession()->IsHeadless())
+            return;
+        ReactToEmote(from, textEmote, guid);
     }
 
     void OnChatSay(Player* from, float range, char const* msg) override
@@ -4032,6 +4524,23 @@ public:
             catch (...) {}
             return true;
         }
+        if (session && session->IsHeadless() && packet.GetOpcode() == SMSG_GUILD_INVITE)
+        {
+            try
+            {
+                WorldPacket p(packet);
+                p.rpos(0);
+                std::string inviter, guild;
+                p >> inviter >> guild;
+                if (Player* bot = session->GetPlayer())
+                {
+                    std::lock_guard<std::mutex> guard(g_whisperInboxMx);
+                    g_whisperInbox.push_back({ bot->GetGUIDLow(), 0, inviter, 3, guild });
+                }
+            }
+            catch (...) {}
+            return true;
+        }
         if (!session || !session->IsHeadless() || packet.GetOpcode() != SMSG_MESSAGECHAT || packet.size() < 17)
             return true;
         try
@@ -4040,15 +4549,23 @@ public:
             p.rpos(0);
             uint8 type; uint32 lang;
             p >> type >> lang;
-            if (type != CHAT_MSG_WHISPER || lang == uint32(LANG_ADDON))
+            if (lang == uint32(LANG_ADDON))
+                return true;
+            uint8 kind = 255;
+            if (type == CHAT_MSG_WHISPER)    kind = 0;
+            else if (type == CHAT_MSG_PARTY) kind = 1;
+            else if (type == CHAT_MSG_GUILD) kind = 2;
+            if (kind == 255)
                 return true;
             ObjectGuid sender; uint32 len; std::string msg;
-            p >> sender >> len >> msg;
+            p >> sender;
+            if (type == CHAT_MSG_PARTY) { ObjectGuid again; p >> again; } // say/party/yell carry the guid twice
+            p >> len >> msg;
             Player* bot = session->GetPlayer();
             if (!bot || msg.empty())
                 return true;
             std::lock_guard<std::mutex> guard(g_whisperInboxMx);
-            g_whisperInbox.push_back({ bot->GetGUIDLow(), sender.GetRawValue(), msg });
+            g_whisperInbox.push_back({ bot->GetGUIDLow(), sender.GetRawValue(), msg, kind, std::string() });
         }
         catch (...) {}
         return true; // never swallow the packet
@@ -4081,9 +4598,20 @@ namespace
             if (!g_turtleResidents.count(w.botLow))
                 continue;
             Player* bot  = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, w.botLow));
-            Player* from = sObjectAccessor.FindPlayer(ObjectGuid(w.sender));
-            if (!bot || !bot->IsInWorld() || !from || !from->IsInWorld() || !from->GetSession() || from->GetSession()->IsHeadless())
+            if (!bot || !bot->IsInWorld())
                 continue;
+            if (w.kind == 3)
+            {
+                HandleGuildInvite(bot, w.msg, w.extra);
+                continue;
+            }
+            Player* from = sObjectAccessor.FindPlayer(ObjectGuid(w.sender));
+            if (!from || !from->IsInWorld() || !from->GetSession())
+                continue;
+            if (from->GetSession()->IsHeadless() && !(g_socialSelfTest && w.kind != 0))
+                continue; // other bots do not get answers (except in the self-test)
+            if (w.kind == 1) { HandleGroupLine(bot, from, w.msg); continue; }
+            if (w.kind == 2) { HandleGuildLine(bot, from, w.msg); continue; }
             std::string lower(w.msg);
             for (char& c : lower)
                 if (c >= 'A' && c <= 'Z') c = char(c + 32);
