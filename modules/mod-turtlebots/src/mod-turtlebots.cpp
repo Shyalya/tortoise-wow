@@ -2370,8 +2370,43 @@ namespace
             }
         }
 
+        // Live-tunable knobs: the panel writes the module conf and issues the console
+        // command reload config; reading them on every reconcile picks a change up
+        // within 5 s without a restart. Cheap: a handful of config lookups.
+        void RereadLiveConfig()
+        {
+            _target             = sConfig.GetIntDefault("mod-turtlebots.Count", 3);
+            _residents          = sConfig.GetIntDefault("mod-turtlebots.Residents", 1);
+            _townEnable         = sConfig.GetBoolDefault("mod-turtlebots.Town.Enable", false);
+            _townWakeBatch      = sConfig.GetIntDefault("mod-turtlebots.Town.WakeBatch", 5);
+            _townWakeIntervalMs = sConfig.GetIntDefault("mod-turtlebots.Town.WakeIntervalMs", 10000);
+            _townSleepGraceSec  = sConfig.GetIntDefault("mod-turtlebots.Town.SleepGraceSec", 600);
+            _townFill           = sConfig.GetIntDefault("mod-turtlebots.Town.Fill", 0);
+            if (!_townFill) _townFill = _residents;
+            if (_target > _maxIndexSeen) _maxIndexSeen = _target;
+        }
+
+        // The target was lowered live: bots with an index at or above the new target
+        // log out (they stay provisioned and come back if the target rises again).
+        void ShrinkToTarget()
+        {
+            for (uint32 i = _target; i < _maxIndexSeen; ++i)
+            {
+                if (!_charByIndex.count(i))
+                    continue;
+                ObjectGuid guid(HIGHGUID_PLAYER, _charByIndex[i]);
+                if (sWorld.GetHeadlessSessionState(guid) == HeadlessSessionState::Active)
+                {
+                    sWorld.StopHeadlessSession(guid, true);
+                    sLog.outString("[mod-turtlebots] target lowered to %u: %s logs out.", _target, BotCharName(i).c_str());
+                }
+            }
+        }
+
         void Reconcile()
         {
+            RereadLiveConfig();
+            ShrinkToTarget();
             if (_townEnable)
             {
                 ReadTownForceAwake();
@@ -2492,6 +2527,7 @@ namespace
 
         bool   _enabled;
         uint32 _target;
+        uint32 _maxIndexSeen = 0;              // highest bot index provisioned so far (live shrink)
         uint32 _startDelayMs;
         uint32 _reconcileTimer;
         uint32 _lastReportedOnline = 0xFFFFFFFF;
