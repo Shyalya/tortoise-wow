@@ -45,3 +45,42 @@ mod-turtlebots.Town.PoolAccountPrefix = RNDBOT
 # alone (so its next shift can pick it up) before it may come home again.
 mod-turtlebots.Town.PoolRefreshSec = 300
 mod-turtlebots.Town.ReleaseCooldownSec = 600
+
+###################################################################################################
+# RESIDENTS' VOICE (LLM)
+#
+#    mod-turtlebots.LLM.Enabled
+#        Residents speak through an OpenAI-style chat endpoint (Ollama). Off = canned lines only.
+#        Default: 1
+#
+#    mod-turtlebots.LLM.Url / mod-turtlebots.LLM.Model / mod-turtlebots.LLM.TimeoutMs
+#        Endpoint (plain http), model name, and how long a line may take before the canned
+#        fallback is spoken instead. Default: http://100.69.207.60:11434/v1/chat/completions,
+#        qwen2.5:32b-instruct-q4_K_M, 5000
+#
+#    mod-turtlebots.LLM.Ambient
+#        Ambient small talk out loud, generated from what the resident is doing and who is around.
+#        Default: 1
+#
+#    mod-turtlebots.LLM.AmbientPerMinute
+#        City-wide cap on ambient lines per minute across all residents (LLM or canned).
+#        Default: 6
+#
+#    mod-turtlebots.LLM.DialogueChance
+#        Chance (%) that a neighbour within earshot answers a spoken line (bot-to-bot dialogue,
+#        at most two answers per opening line). Default: 60
+#
+#    mod-turtlebots.LLM.Log
+#        Log every delivered line with its latency ([mod-turtlebots] llm ...). Default: 1
+#
+# All of these are live: change the file and issue "reload config" on the console.
+###################################################################################################
+
+mod-turtlebots.LLM.Enabled = 1
+mod-turtlebots.LLM.Url = http://100.69.207.60:11434/v1/chat/completions
+mod-turtlebots.LLM.Model = qwen2.5:32b-instruct-q4_K_M
+mod-turtlebots.LLM.TimeoutMs = 5000
+mod-turtlebots.LLM.Ambient = 1
+mod-turtlebots.LLM.AmbientPerMinute = 6
+mod-turtlebots.LLM.DialogueChance = 60
+mod-turtlebots.LLM.Log = 1

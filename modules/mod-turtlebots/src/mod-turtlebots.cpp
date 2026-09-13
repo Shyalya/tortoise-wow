@@ -36,6 +36,7 @@
 #include "Creature.h"
 #include "PathFinder.h"
 #include "SpellMgr.h"
+#include "SpellAuras.h"
 #include "Timer.h"
 #include "Util.h"
 #include "Chat.h"
@@ -62,6 +63,9 @@
 #include <thread>
 #include <atomic>
 #include <memory>
+#include <mutex>
+#include <deque>
+#include <chrono>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -415,9 +419,39 @@ namespace
     static std::string g_llmPath  = "/v1/chat/completions";
     static uint32      g_llmDeadlineMs = 5000;
 
-    struct LlmResult { std::atomic<bool> done; std::string text; LlmResult() : done(false) {} };
-    struct LlmJob { uint32 botGuid; std::string fallback; std::shared_ptr<LlmResult> res; time_t deadline; };
+    enum LlmMode : uint8 { LLM_SAY = 0, LLM_WHISPER = 1 };
+    struct LlmResult { std::atomic<bool> done; std::string text; uint32 ms; LlmResult() : done(false), ms(0) {} };
+    struct LlmJob
+    {
+        uint32 botGuid;      // who speaks
+        uint32 targetGuid;   // player addressed (whisper target / conversation partner); 0 = nobody in particular
+        uint8  mode;         // LLM_SAY / LLM_WHISPER
+        uint8  depth;        // dialogue depth: 0 = opening line, replies stop at 2
+        bool   off;          // no request was made (LLM off / at capacity): the fallback goes out, counted as "off"
+        uint32 partnerGuid;  // resident this line answers (dialogue); 0 = none
+        uint32 notBeforeMs;  // hold the finished line until then (a human beat); 0 = as soon as it is ready
+        char const* tag;     // ambient / dialogue / reply / whisper / service / thanks (for the log)
+        std::string fallback;
+        std::shared_ptr<LlmResult> res;
+        time_t deadline;
+    };
     static std::vector<LlmJob> g_llmJobs;
+    static bool   g_llmAmbient = true;          // ambient small talk through the LLM (canned pool = fallback)
+    static uint32 g_llmAmbientPerMin = 6;       // city-wide cap on ambient lines per minute (LLM or canned)
+    static uint32 g_llmDialogueChance = 60;     // % that a neighbour answers a line (bot-to-bot dialogue)
+    static bool   g_llmLog = true;              // log every delivered line with its latency
+    struct LlmStat { uint32 asked, delivered, ok, timeout, empty, off; uint64 sumMs; };
+    static LlmStat g_llmStat = { 0, 0, 0, 0, 0, 0, 0 };
+    static uint32  g_llmStatMs = 0;             // ms toward the next once-a-minute summary
+    static float   g_ambientTokens = 3.f;       // chatter budget (refilled AmbientPerMinute per minute)
+    static std::map<uint32, uint32> g_lastAmbientMs;   // botGuid -> last ambient line (per-bot spacing)
+    struct ConvoLine { bool bot; std::string text; time_t at; };
+    static std::map<uint64, std::deque<ConvoLine>> g_convo; // (bot<<32|player) -> last lines exchanged
+    struct InWhisper { uint32 botLow; uint64 sender; std::string msg; };
+    static std::vector<InWhisper> g_whisperInbox;  // filled on the packet hook (any thread), drained on the world thread
+    static std::mutex g_whisperInboxMx;
+    static std::map<uint32, uint32> g_thankCheckMs;  // botGuid -> last aura scan
+    static std::map<uint64, time_t> g_thanked;       // (bot<<32|caster) -> last thank-you
 
     static void ParseLlmUrl()
     {
@@ -539,13 +573,17 @@ namespace
         return o;
     }
 
-    static std::string LlmChat(std::string const& system, std::string const& user)
+    // Runs on a worker thread: everything it needs is passed in (the globals may be
+    // rewritten by a live config reload on the world thread meanwhile).
+    static std::string LlmChat(std::string const& system, std::string const& user,
+                               std::string const& host, uint16_t port, std::string const& path,
+                               std::string const& model, uint32 timeoutMs)
     {
-        std::string body = std::string("{\"model\":\"") + g_llmModel +
+        std::string body = std::string("{\"model\":\"") + model +
             "\",\"messages\":[{\"role\":\"system\",\"content\":\"" + JsonEscape(system) +
             "\"},{\"role\":\"user\",\"content\":\"" + JsonEscape(user) +
             "\"}],\"max_tokens\":80,\"temperature\":0.8}";
-        std::string line = ExtractContent(HttpPost(g_llmHost, g_llmPort, g_llmPath, body, g_llmDeadlineMs + 2000));
+        std::string line = ExtractContent(HttpPost(host, port, path, body, timeoutMs));
         while (!line.empty() && (line.front() == ' ' || line.front() == '"')) line.erase(line.begin());
         while (!line.empty() && (line.back()  == ' ' || line.back()  == '"')) line.pop_back();
         if (line.size() > 250) line.resize(250);
@@ -586,29 +624,44 @@ namespace
         }
     }
 
-    // Fire an in-character line via the LLM on a worker thread; the fallback is
-    // spoken instead if the LLM is off, at capacity, errors, or misses the deadline.
+    // Ask the LLM for an in-character line on a worker thread; the line (or the
+    // fallback if the LLM is off, at capacity, errors, or misses the deadline) is
+    // delivered on the world thread by the OnUpdate loop, as /say or as a whisper.
+    static void QueueLlm(Player* bot, std::string const& system, std::string const& user,
+                         std::string const& fallback, uint8 mode, uint32 targetGuid,
+                         uint32 notBeforeMs, char const* tag, uint8 depth, uint32 partnerGuid)
+    {
+        LlmJob j;
+        j.botGuid = bot->GetGUIDLow(); j.targetGuid = targetGuid; j.mode = mode; j.depth = depth;
+        j.partnerGuid = partnerGuid; j.notBeforeMs = notBeforeMs; j.tag = tag; j.fallback = fallback;
+        j.res = std::make_shared<LlmResult>();
+        j.deadline = time(nullptr) + time_t((g_llmDeadlineMs + 999) / 1000);
+        j.off = !g_llmEnabled || g_llmJobs.size() >= 8;
+        if (j.off)
+            j.res->done.store(true); // nothing to wait for: the fallback goes out on the next tick
+        else
+        {
+            ++g_llmStat.asked;
+            auto res = j.res;
+            std::string const sys = system, usr = user, host = g_llmHost, path = g_llmPath, model = g_llmModel;
+            uint16_t const port = g_llmPort;
+            uint32 const timeoutMs = g_llmDeadlineMs + 2000;
+            std::thread([res, sys, usr, host, port, path, model, timeoutMs]() {
+                auto const t0 = std::chrono::steady_clock::now();
+                std::string out = LlmChat(sys, usr, host, port, path, model, timeoutMs);
+                res->ms = uint32(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
+                res->text = out;
+                res->done.store(true);
+            }).detach();
+        }
+        g_llmJobs.push_back(j);
+    }
+
+    // Service lines: spoken out loud, no dialogue chain behind them.
     static void QueueLlmSay(Player* bot, std::string const& system,
                             std::string const& user, std::string const& fallback)
     {
-        if (!g_llmEnabled || g_llmJobs.size() >= 8)
-        {
-            bot->Say(fallback, LANG_UNIVERSAL);
-            return;
-        }
-        auto res = std::make_shared<LlmResult>();
-        std::string sys = system, usr = user;
-        std::thread([res, sys, usr]() {
-            std::string out = LlmChat(sys, usr);
-            res->text = out;
-            res->done.store(true);
-        }).detach();
-        LlmJob j;
-        j.botGuid = bot->GetGUIDLow();
-        j.fallback = fallback;
-        j.res = res;
-        j.deadline = time(nullptr) + time_t((g_llmDeadlineMs + 999) / 1000);
-        g_llmJobs.push_back(j);
+        QueueLlm(bot, system, user, fallback, LLM_SAY, 0, 0, "service", 2, 0);
     }
 
     // Map a "portal to <city>" request to the Horde city portal spell + the
@@ -836,6 +889,421 @@ namespace
         player->GetSession()->SendPacket(&data);
     }
 
+    // ---- Residents' voice: context for the LLM, ambient talk, dialogue, whispers, thanks ----
+    void ProcessWhisperInbox(); // defined after the chat script (service requests are handed to it)
+
+    // LLM knobs are live: read at startup and on every reconcile (5 s), so the panel
+    // can switch the voice, the model or the chatter budget with "reload config".
+    static void ReadLlmConfig()
+    {
+        g_llmEnabled        = sConfig.GetBoolDefault("mod-turtlebots.LLM.Enabled", true);
+        g_llmUrl            = sConfig.GetStringDefault("mod-turtlebots.LLM.Url", "http://100.69.207.60:11434/v1/chat/completions");
+        g_llmModel          = sConfig.GetStringDefault("mod-turtlebots.LLM.Model", "qwen2.5:32b-instruct-q4_K_M");
+        g_llmDeadlineMs     = sConfig.GetIntDefault("mod-turtlebots.LLM.TimeoutMs", 5000);
+        g_llmAmbient        = sConfig.GetBoolDefault("mod-turtlebots.LLM.Ambient", true);
+        g_llmAmbientPerMin  = sConfig.GetIntDefault("mod-turtlebots.LLM.AmbientPerMinute", 6);
+        g_llmDialogueChance = sConfig.GetIntDefault("mod-turtlebots.LLM.DialogueChance", 60);
+        g_llmLog            = sConfig.GetBoolDefault("mod-turtlebots.LLM.Log", true);
+        ParseLlmUrl();
+    }
+
+    static char const* RaceWord(uint8 r)
+    {
+        switch (r)
+        {
+            case 1: return "human";   case 2: return "orc";    case 3: return "dwarf";  case 4: return "night elf";
+            case 5: return "undead";  case 6: return "tauren"; case 7: return "gnome";  case 8: return "troll";
+            case 9: return "goblin";  case 10: return "high elf";
+            default: return "traveler";
+        }
+    }
+
+    static char const* TimeOfDay()
+    {
+        time_t const t = time(nullptr);
+        struct tm lt; localtime_r(&t, &lt);
+        int const h = lt.tm_hour;
+        return h < 6 ? "night" : h < 12 ? "morning" : h < 18 ? "afternoon" : h < 22 ? "evening" : "night";
+    }
+
+    static std::string AreaName(uint32 id)
+    {
+        AreaEntry const* a = AreaEntry::GetById(id);
+        return (a && a->Name) ? std::string(a->Name) : std::string();
+    }
+
+    // The named parts of a city (its sub-areas), so the model anchors itself to real
+    // places instead of inventing buildings. Built once per zone from the area table.
+    static std::string const& CityPlaces(uint32 zoneId, uint32 mapId)
+    {
+        static std::map<uint32, std::string> cache;
+        auto it = cache.find(zoneId);
+        if (it != cache.end())
+            return it->second;
+        std::string out; uint32 n = 0;
+        for (auto itr = sAreaStorage.begin<AreaEntry>(); itr < sAreaStorage.end<AreaEntry>(); ++itr)
+        {
+            AreaEntry const* a = *itr;
+            if (!a || a->ZoneId != zoneId || a->MapId != mapId || !a->Name || !*a->Name)
+                continue;
+            if (n++) out += ", ";
+            out += a->Name;
+            if (n >= 14) break;
+        }
+        return cache.emplace(zoneId, out).first->second;
+    }
+
+    static std::string ProfessionsOf(Player* bot)
+    {
+        static struct { uint16 id; char const* word; } const k[] = {
+            { 171, "alchemist" }, { 164, "blacksmith" }, { 333, "enchanter" }, { 202, "engineer" }, { 182, "herbalist" },
+            { 165, "leatherworker" }, { 186, "miner" }, { 393, "skinner" }, { 197, "tailor" } };
+        std::string s;
+        for (auto const& e : k)
+            if (bot->HasSkill(e.id)) { if (!s.empty()) s += " and "; s += e.word; }
+        return s;
+    }
+
+    // What the resident is doing right now, from the module's own state.
+    static std::string ActivityOf(Player* bot)
+    {
+        uint32 const low = bot->GetGUIDLow();
+        if (g_fishing.count(low)) return "fishing at the water's edge";
+        if (g_cooking.count(low)) return "cooking your catch over a campfire";
+        if (bot->GetTradeData()) return "trading with someone";
+        auto e = g_errand.find(low);
+        if (e != g_errand.end())
+        {
+            Poi const& p = kPois[e->second.idx % kPoiCount];
+            return std::string(e->second.phase == ERR_GO ? "walking over to " : "standing at ") + p.kind;
+        }
+        auto f = g_botFollow.find(low);
+        if (f != g_botFollow.end())
+            if (Player* m = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, f->second.target)))
+                return std::string("walking along with ") + m->GetName();
+        if (bot->GetStandState() == UNIT_STAND_STATE_SIT) return "sitting down for a rest";
+        return "idling in the street";
+    }
+
+    // Who is around: the nearest fellow resident, a real player, an NPC at arm's length.
+    static std::string NearbyOf(Player* bot)
+    {
+        std::string s;
+        Player* best = nullptr; float bestD = 15.f;
+        for (uint32 low2 : g_turtleResidents)
+        {
+            if (low2 == bot->GetGUIDLow()) continue;
+            Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low2));
+            if (!r || !r->IsInWorld() || r->GetMapId() != bot->GetMapId()) continue;
+            float const d = bot->GetDistance(r);
+            if (d < bestD) { bestD = d; best = r; }
+        }
+        if (best)
+            s += std::string("Your neighbour ") + best->GetName() + " (a " + RaceWord(best->GetRace()) + " " +
+                 ClassWord(best->GetClass()) + ") is right beside you. ";
+        std::list<Player*> players;
+        MaNGOS::AnyPlayerInObjectRangeCheck pchk(bot, 15.0f);
+        MaNGOS::PlayerListSearcher<MaNGOS::AnyPlayerInObjectRangeCheck> psrch(players, pchk);
+        Cell::VisitWorldObjects(bot, psrch, 15.0f);
+        for (Player* p : players)
+            if (p != bot && p->GetSession() && !p->GetSession()->IsHeadless())
+            {
+                s += std::string("The adventurer ") + p->GetName() + " is nearby. ";
+                break;
+            }
+        std::list<Unit*> units;
+        MaNGOS::AnyUnitInObjectRangeCheck uchk(bot, 8.0f);
+        MaNGOS::UnitListSearcher<MaNGOS::AnyUnitInObjectRangeCheck> usrch(units, uchk);
+        Cell::VisitGridObjects(bot, usrch, 8.0f);
+        for (Unit* u : units)
+        {
+            Creature* c = u->ToCreature();
+            if (!c || c->IsPet() || c->IsTotem() || !c->GetName() || !*c->GetName()) continue;
+            s += std::string(c->GetName()) + " stands close by. ";
+            break;
+        }
+        return s;
+    }
+
+    // The role prompt: who the resident is, where, doing what, with whom, and the rules.
+    // Behaviour is described, never quoted (a quoted example becomes the universal answer).
+    static std::string ResidentSystemPrompt(Player* bot)
+    {
+        std::string const& pers = PersonalityFor(bot->GetGUIDLow());
+        std::string const city = AreaName(bot->GetZoneId());
+        std::string const sub  = AreaName(bot->GetAreaId());
+        std::string const& places = CityPlaces(bot->GetZoneId(), bot->GetMapId());
+        std::string const profs = ProfessionsOf(bot);
+        std::string s = std::string("You are ") + bot->GetName() + ", a " + PersonalityDesc(pers) + " level " +
+            std::to_string(bot->GetLevel()) + " " + RaceWord(bot->GetRace()) + " " + ClassWord(bot->GetClass()) +
+            " who lives in " + (city.empty() ? std::string("the city") : city) +
+            " in World of Warcraft (vanilla era, Turtle WoW server). ";
+        if (!profs.empty()) s += "By trade you are a " + profs + ". ";
+        s += "Right now you are " + ActivityOf(bot) + (sub.empty() ? std::string() : " in " + sub) +
+             "; it is " + TimeOfDay() + ". ";
+        s += NearbyOf(bot);
+        if (!places.empty() && !city.empty())
+            s += "Parts of " + city + " you know: " + places + ". Never invent other buildings or places. ";
+        s += "Speak as this character in plain English: one short line, under 20 words, varied phrasing, "
+             "stay in the era. No emotes, no asterisks, no quotation marks, no name prefixes, never mention being an AI.";
+        return s;
+    }
+
+    // A short memory of one conversation (resident <-> player), so follow-ups make sense.
+    static void ConvoPush(uint32 botLow, uint32 playerLow, bool fromBot, std::string const& text)
+    {
+        auto& d = g_convo[(uint64(botLow) << 32) | playerLow];
+        d.push_back({ fromBot, text, time(nullptr) });
+        while (d.size() > 6) d.pop_front();
+    }
+
+    static std::string ConvoContext(Player* bot, Player* player)
+    {
+        auto it = g_convo.find((uint64(bot->GetGUIDLow()) << 32) | player->GetGUIDLow());
+        if (it == g_convo.end()) return std::string();
+        time_t const now = time(nullptr);
+        std::string s;
+        for (ConvoLine const& l : it->second)
+        {
+            if (now - l.at > 900) continue;
+            s += (l.bot ? std::string("You said: ") : std::string(player->GetName()) + " said: ") + l.text + " ";
+        }
+        return s.empty() ? s : "Earlier in this conversation: " + s + "Now: ";
+    }
+
+    static bool HasServiceKeyword(std::string const& lower)
+    {
+        static char const* const k[] = { "water", "drink", "mana", "food", "eat", "hungry", "bread", "healthstone",
+                                         "health stone", "portal", "buff", "bless", "follow me", "come with",
+                                         "come along", "stop following", "stay here", "wait here" };
+        for (char const* w : k)
+            if (lower.find(w) != std::string::npos) return true;
+        return ContainsWord(lower, "port");
+    }
+
+    // Say a line out loud, with the talk gesture, and log it like any player's chat.
+    static void ResidentSay(Player* b, std::string const& line)
+    {
+        b->Say(line, LANG_UNIVERSAL);
+        b->HandleEmoteCommand(EMOTE_ONESHOT_TALK);
+        if (b->GetSession())
+            sWorld.LogChat(b->GetSession(), "Say", line);
+    }
+
+    // Models like to prefix the speaker or wrap the line in an emote; the client shows the name already.
+    static std::string CleanLine(std::string line, char const* botName)
+    {
+        std::string const pre = std::string(botName) + ":";
+        if (line.compare(0, pre.size(), pre) == 0) line.erase(0, pre.size());
+        while (!line.empty() && (line.front() == ' ' || line.front() == '"' || line.front() == '*')) line.erase(line.begin());
+        while (!line.empty() && (line.back() == ' ' || line.back() == '"' || line.back() == '*')) line.pop_back();
+        return line;
+    }
+
+    static char const* PickCityLine(Player* bot)
+    {
+        // Canned city chatter: the fallback when the LLM is off or does not answer in time.
+        static char const* const kShared[] = {
+            "Lok'tar ogar!",
+            "Zug zug.",
+            "Anyone heading to the Crossroads?",
+            "Heard the Warchief has new orders.",
+            "Trade goods, cheap! Come see.",
+            "Time for a drink at the inn.",
+            "Stay sharp, the Alliance grows bold."
+        };
+        // Martial classes: warrior / rogue / hunter / paladin.
+        static char const* const kMartial[] = {
+            "Long day guarding the city...",
+            "Best forge in Orgrimmar, right here.",
+            "My blade's thirsty for Alliance blood.",
+            "Anyone up for a scrap in the ring?"
+        };
+        // Mana users who beg for water: warlock / priest.
+        static char const* const kCaster[] = {
+            "Need a mage for water over here!",
+            "So low on mana... need a drink.",
+            "Careful, the arcane grows restless."
+        };
+        // Mage: offers water and portals instead of begging.
+        static char const* const kMage[] = {
+            "Fresh water and food, conjured to order!",
+            "Need a portal? I can open one.",
+            "Mind the sheep - that used to be someone."
+        };
+        // Nature / spirit: shaman / druid.
+        static char const* const kNature[] = {
+            "The elements whisper today.",
+            "The spirits are uneasy of late.",
+            "Nature's balance must be kept."
+        };
+
+        char const* const* pool = kShared;
+        uint32 n = sizeof(kShared) / sizeof(kShared[0]);
+        // 55% shared, otherwise a class-appropriate bucket.
+        if (urand(0, 99) >= 55)
+        {
+            switch (bot->GetClass())
+            {
+                case CLASS_WARRIOR:
+                case CLASS_ROGUE:
+                case CLASS_HUNTER:
+                case CLASS_PALADIN:
+                    pool = kMartial; n = sizeof(kMartial) / sizeof(kMartial[0]);
+                    break;
+                case CLASS_MAGE:
+                    pool = kMage; n = sizeof(kMage) / sizeof(kMage[0]);
+                    break;
+                case CLASS_WARLOCK:
+                case CLASS_PRIEST:
+                    pool = kCaster; n = sizeof(kCaster) / sizeof(kCaster[0]);
+                    break;
+                case CLASS_SHAMAN:
+                case CLASS_DRUID:
+                    pool = kNature; n = sizeof(kNature) / sizeof(kNature[0]);
+                    break;
+                default:
+                    break;
+            }
+        }
+        return pool[urand(0, n - 1)];
+    }
+
+    static void MaybeAnswerLine(Player* speaker, std::string const& line, uint8 depth, uint32 preferLow);
+
+    // Finished line -> the world: /say or whisper, conversation memory, stats, log,
+    // and possibly a neighbour's answer (dialogue).
+    static void DeliverLlmLine(LlmJob const& j, std::string line, char const* how)
+    {
+        Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, j.botGuid));
+        if (!b || !b->IsInWorld())
+            return;
+        line = CleanLine(line, b->GetName());
+        if (line.empty())
+            return; // a dialogue turn with nothing to say stays silent
+        if (j.mode == LLM_WHISPER)
+        {
+            Player* t = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, j.targetGuid));
+            if (!t || !t->IsInWorld() || !t->GetSession())
+                return;
+            SendBotWhisper(b, t, line);
+            if (b->GetSession())
+                sWorld.LogChat(b->GetSession(), "Whisp", line);
+        }
+        else
+            ResidentSay(b, line);
+        if (j.targetGuid)
+            ConvoPush(j.botGuid, j.targetGuid, true, line);
+        ++g_llmStat.delivered;
+        if (j.off) { ++g_llmStat.off; how = "off"; }
+        else if (strcmp(how, "ok") == 0) { ++g_llmStat.ok; g_llmStat.sumMs += j.res->ms; }
+        else if (strcmp(how, "timeout") == 0) ++g_llmStat.timeout;
+        else ++g_llmStat.empty;
+        if (g_llmLog)
+            sLog.outString("[mod-turtlebots] llm %s/%s %s: %s (%u ms, %s)", j.tag,
+                           j.mode == LLM_WHISPER ? "whisper" : "say", b->GetName(), line.c_str(), j.res->ms, how);
+        if (!j.off && (strcmp(j.tag, "ambient") == 0 || strcmp(j.tag, "dialogue") == 0))
+            MaybeAnswerLine(b, line, j.depth, j.partnerGuid);
+    }
+
+    // Ambient small talk within the city-wide budget: at most AmbientPerMinute lines a
+    // minute across all residents, and one per resident per minute. Returns false
+    // when the budget said no (the resident just stays quiet this beat).
+    static bool AmbientSay(Player* bot)
+    {
+        uint32 const now = WorldTimer::getMSTime();
+        uint32 const low = bot->GetGUIDLow();
+        auto la = g_lastAmbientMs.find(low);
+        if (la != g_lastAmbientMs.end() && now - la->second < 60000)
+            return false;
+        if (g_ambientTokens < 1.f)
+            return false;
+        g_ambientTokens -= 1.f;
+        g_lastAmbientMs[low] = now;
+        char const* canned = PickCityLine(bot);
+        if (!g_llmEnabled || !g_llmAmbient)
+        {
+            ResidentSay(bot, canned);
+            return true;
+        }
+        QueueLlm(bot, ResidentSystemPrompt(bot),
+                 "Say one line of small talk out loud, fitting what you are doing and who is around you right now.",
+                 canned, LLM_SAY, 0, 0, "ambient", 0, 0);
+        return true;
+    }
+
+    // Bot-to-bot dialogue: a neighbour within earshot answers a spoken line after a
+    // human beat; the answer may be answered once more, then the exchange ends.
+    static void MaybeAnswerLine(Player* speaker, std::string const& line, uint8 depth, uint32 preferLow)
+    {
+        if (depth >= 2 || !g_llmEnabled || !g_llmAmbient)
+            return;
+        uint32 const chance = depth == 0 ? g_llmDialogueChance : g_llmDialogueChance / 2;
+        if (urand(0, 99) >= chance)
+            return;
+        Player* partner = nullptr;
+        if (preferLow)
+        {
+            Player* p = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, preferLow));
+            if (p && p->IsInWorld() && p->GetMapId() == speaker->GetMapId() && speaker->GetDistance(p) <= 15.f)
+                partner = p;
+        }
+        if (!partner)
+        {
+            float bestD = 12.f;
+            for (uint32 low2 : g_turtleResidents)
+            {
+                if (low2 == speaker->GetGUIDLow()) continue;
+                Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low2));
+                if (!r || !r->IsInWorld() || r->GetMapId() != speaker->GetMapId()) continue;
+                if (g_fishing.count(low2) || g_cooking.count(low2) || r->GetTradeData() || r->IsNonMeleeSpellCasted(false))
+                    continue; // busy residents don't join in
+                float const d = speaker->GetDistance(r);
+                if (d < bestD) { bestD = d; partner = r; }
+            }
+        }
+        if (!partner)
+            return;
+        partner->SetFacingTo(partner->GetAngle(speaker));
+        std::string usr = std::string(speaker->GetName()) + ", standing next to you, just said: " + line +
+                          " Answer them in one short line.";
+        QueueLlm(partner, ResidentSystemPrompt(partner), usr, std::string(), LLM_SAY, 0,
+                 WorldTimer::getMSTime() + urand(2500, 5000), "dialogue", uint8(depth + 1), speaker->GetGUIDLow());
+    }
+
+    // A real player's buff earns a thank-you (once per person per ten minutes).
+    static void ThankForBuffs(Player* bot, uint32 nowMs)
+    {
+        uint32 const low = bot->GetGUIDLow();
+        uint32& last = g_thankCheckMs[low];
+        if (last && nowMs - last < 3000)
+            return;
+        last = nowMs;
+        time_t const tnow = time(nullptr);
+        for (auto const& kv : bot->GetSpellAuraHolderMap())
+        {
+            SpellAuraHolder* h = kv.second;
+            if (!h || !h->IsPositive()) continue;
+            ObjectGuid const& cg = h->GetCasterGuid();
+            if (!cg.IsPlayer() || cg == bot->GetObjectGuid()) continue;
+            if (tnow - h->GetAuraApplyTime() > 20) continue; // only a fresh buff
+            Player* caster = sObjectAccessor.FindPlayer(cg);
+            if (!caster || !caster->GetSession() || caster->GetSession()->IsHeadless()) continue;
+            uint64 const key = (uint64(low) << 32) | caster->GetGUIDLow();
+            auto t = g_thanked.find(key);
+            if (t != g_thanked.end() && tnow - t->second < 600) continue;
+            g_thanked[key] = tnow;
+            SpellEntry const* se = h->GetSpellProto();
+            std::string const spell = (se && !se->SpellName[0].empty()) ? se->SpellName[0] : std::string("a blessing");
+            bot->SetFacingTo(bot->GetAngle(caster));
+            QueueLlm(bot, ResidentSystemPrompt(bot),
+                     std::string(caster->GetName()) + " just cast " + spell + " on you. Thank them in one short line.",
+                     RPick({ "Thanks for the buff, friend!", "Much obliged - that helps.", "Kind of you, traveler. Thanks!" }),
+                     LLM_SAY, caster->GetGUIDLow(), nowMs + urand(1000, 2500), "thanks", 2, 0);
+            return;
+        }
+    }
+
     // The nine primary trade skills and the three secondaries. Residents (who are also
     // adventurers when they rotate out) get real professions so they can gather in the
     // world and craft in the city.
@@ -1059,12 +1527,11 @@ namespace
             sLog.outString("[mod-turtlebots] town mode %s (wake %u per %u ms, sleep grace %u s, forced-awake zones: %u).",
                            _townEnable ? "ON" : "off", _townWakeBatch, _townWakeIntervalMs, _townSleepGraceSec,
                            uint32(_townForceAwake.size()));
-            g_llmEnabled    = sConfig.GetBoolDefault("mod-turtlebots.LLM.Enabled", true);
-            g_llmUrl        = sConfig.GetStringDefault("mod-turtlebots.LLM.Url", "http://100.69.207.60:11434/v1/chat/completions");
-            g_llmModel      = sConfig.GetStringDefault("mod-turtlebots.LLM.Model", "qwen2.5:32b-instruct-q4_K_M");
-            g_llmDeadlineMs = sConfig.GetIntDefault("mod-turtlebots.LLM.TimeoutMs", 5000);
+            ReadLlmConfig();
             g_marketFactorPct = sConfig.GetIntDefault("mod-turtlebots.Market.FactorPct", 100);
-            ParseLlmUrl();
+            sLog.outString("[mod-turtlebots] voice: LLM %s (%s, ambient %s, %u lines/min, dialogue %u%%, timeout %u ms).",
+                           g_llmEnabled ? "on" : "off", g_llmModel.c_str(), g_llmAmbient ? "on" : "off",
+                           g_llmAmbientPerMin, g_llmDialogueChance, g_llmDeadlineMs);
             sLog.outString("[mod-turtlebots] loaded (enable=%u, target=%u, residents=%u, advLevel=%u).",
                            _enabled ? 1 : 0, _target, _residents, _advLevel);
 
@@ -1464,22 +1931,50 @@ namespace
                 else ++it;
             }
 
+            // Chatter budget: refill the city-wide ambient tokens (AmbientPerMinute per minute, capped).
+            g_ambientTokens = std::min(float(g_llmAmbientPerMin),
+                                       g_ambientTokens + float(g_llmAmbientPerMin) * float(diff) / 60000.f);
+
+            // Whispers that reached a resident's session (captured on the packet hook).
+            ProcessWhisperInbox();
+
             // Deliver finished (or timed-out) in-character LLM lines on the main thread.
-            for (size_t i = 0; i < g_llmJobs.size(); )
             {
-                LlmJob& j = g_llmJobs[i];
-                bool fire = false; std::string line;
-                if (j.res->done.load()) { line = j.res->text.empty() ? j.fallback : j.res->text; fire = true; }
-                else if (time(nullptr) >= j.deadline) { line = j.fallback; fire = true; }
-                if (fire)
+                uint32 const nowMs = WorldTimer::getMSTime();
+                for (size_t i = 0; i < g_llmJobs.size(); )
                 {
-                    if (Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, j.botGuid)))
-                        if (b->IsInWorld())
-                            b->Say(line, LANG_UNIVERSAL);
+                    LlmJob& j = g_llmJobs[i];
+                    bool fire = false; std::string line; char const* how = "ok";
+                    if (j.res->done.load())
+                    {
+                        if (j.res->text.empty()) { line = j.fallback; how = "empty"; }
+                        else line = j.res->text;
+                        fire = true;
+                    }
+                    else if (time(nullptr) >= j.deadline) { line = j.fallback; how = "timeout"; fire = true; }
+                    if (!fire || (j.notBeforeMs && int32(nowMs - j.notBeforeMs) < 0))
+                    {
+                        ++i; // not ready, or holding the human beat
+                        continue;
+                    }
+                    LlmJob const done = j;
                     g_llmJobs[i] = g_llmJobs.back();
                     g_llmJobs.pop_back();
+                    DeliverLlmLine(done, line, how); // may queue a dialogue answer
                 }
-                else ++i;
+            }
+
+            // Once a minute: how the residents' voice is doing.
+            g_llmStatMs += diff;
+            if (g_llmStatMs >= 60000)
+            {
+                g_llmStatMs = 0;
+                if (g_llmStat.asked || g_llmStat.delivered)
+                    sLog.outString("[mod-turtlebots] llm/min: asked %u, delivered %u (ok %u avg %u ms, timeout %u, empty %u, off %u), ambient budget %.1f/%u",
+                                   g_llmStat.asked, g_llmStat.delivered, g_llmStat.ok,
+                                   g_llmStat.ok ? uint32(g_llmStat.sumMs / g_llmStat.ok) : 0u,
+                                   g_llmStat.timeout, g_llmStat.empty, g_llmStat.off, g_ambientTokens, g_llmAmbientPerMin);
+                g_llmStat = LlmStat{ 0, 0, 0, 0, 0, 0, 0 };
             }
 
             // Slowly top warlocks' soul-shard reserves back up (one per minute).
@@ -1729,11 +2224,12 @@ namespace
                     bot->SetFacingTo(atan2(fs.y - bot->GetPositionY(), fs.x - bot->GetPositionX())); // face the water
                     EnsureFishingPole(bot);           // best-effort: pole + real cast are just for the visual
                     bot->CastSpell(bot, 7620, false); // if a pole got equipped this places a real bobber
-                    sLog.outString("TBFISH2 %s wait-phase", bot->GetName()); // channel Fishing (apprentice rank)
                     fs.phase = FISH_WAIT; fs.atMs = now;
                     return;
                 case FISH_WAIT:
                 {
+                    if (urand(0, 999) < 4)
+                        AmbientSay(bot); // now and then a word over the water
                     GameObject* bob = bot->GetGameObject(7620u);
                     if (!bob) { ObjectGuid cg = bot->GetChannelObjectGuid(); if (cg) bob = bot->GetMap()->GetGameObject(cg); }
                     if (bob && bob->getLootState() == GO_READY) // faithful catch: the bite landed
@@ -1751,7 +2247,6 @@ namespace
                     // pragmatic real catch: proper skill roll + a real zone fish, then cast again.
                     if (now - fs.atMs >= 15000)
                     {
-                        sLog.outString("TBFISH2 %s pragmatic catch", bot->GetName());
                         bot->UpdateFishingSkill();
                         static uint32 const kFish[] = { 6291, 6289, 6303, 6317 };
                         bot->StoreNewItemInInventorySlot(kFish[urand(0, 3)], 1);
@@ -1812,6 +2307,8 @@ namespace
                 StandUp(bot);
                 bot->HandleEmoteCommand(EMOTE_ONESHOT_TALK); // browse / read on arrival
                 er.phase = ERR_DWELL; er.atMs = now; er.dwellMs = urand(10000, 30000);
+                if (urand(0, 99) < 40)
+                    AmbientSay(bot); // a word about the place on arrival (context says "standing at ...")
                 return;
             }
             if (now - er.atMs < er.dwellMs)
@@ -1922,6 +2419,7 @@ namespace
             uint32& nextAt = _nextAt[bot->GetGUIDLow()];
             if (nextAt == 0)
                 nextAt = now + urand(1000, 6000); // stagger the first decision
+            ThankForBuffs(bot, now); // a real player's buff earns a thank-you, even between decisions
             if (now < nextAt)
                 return; // standing calmly between actions
 
@@ -1995,6 +2493,11 @@ namespace
                 }
             }
 
+            // Talk happens alongside whatever comes next (people chat while they walk):
+            // a fair share of decisions opens with a line, within the city-wide budget.
+            if (urand(0, 99) < 15)
+                AmbientSay(bot);
+
             // Calm town-life cadence: mostly stand, sometimes stroll, rarely
             // emote or sit. A dwell timer between decisions keeps it unhurried.
             // Mostly run a purposeful errand to a POI; jitter is gone.
@@ -2025,9 +2528,10 @@ namespace
             }
             else if (roll < 46)
             {
-                // Small talk (Phase 1: canned lines; Ollama comes next).
+                // Small talk: one line through the LLM with what the resident is doing
+                // and who is around (canned pool as fallback), within the city-wide budget.
                 StandUp(bot);
-                SayCityLine(bot);
+                AmbientSay(bot);
                 nextAt = now + urand(9000, 15000);
             }
             else if (roll < 50)
@@ -2040,75 +2544,6 @@ namespace
                 StandUp(bot);
                 nextAt = now + urand(4000, 9000);
             }
-        }
-
-        void SayCityLine(Player* bot)
-        {
-            // Shared city chatter any resident may say.
-            static char const* const kShared[] = {
-                "Lok'tar ogar!",
-                "Zug zug.",
-                "Anyone heading to the Crossroads?",
-                "Heard the Warchief has new orders.",
-                "Trade goods, cheap! Come see.",
-                "Time for a drink at the inn.",
-                "Stay sharp, the Alliance grows bold."
-            };
-            // Martial classes: warrior / rogue / hunter / paladin.
-            static char const* const kMartial[] = {
-                "Long day guarding the city...",
-                "Best forge in Orgrimmar, right here.",
-                "My blade's thirsty for Alliance blood.",
-                "Anyone up for a scrap in the ring?"
-            };
-            // Mana users who beg for water: warlock / priest.
-            static char const* const kCaster[] = {
-                "Need a mage for water over here!",
-                "So low on mana... need a drink.",
-                "Careful, the arcane grows restless."
-            };
-            // Mage: offers water and portals instead of begging.
-            static char const* const kMage[] = {
-                "Fresh water and food, conjured to order!",
-                "Need a portal? I can open one.",
-                "Mind the sheep - that used to be someone."
-            };
-            // Nature / spirit: shaman / druid.
-            static char const* const kNature[] = {
-                "The elements whisper today.",
-                "The spirits are uneasy of late.",
-                "Nature's balance must be kept."
-            };
-
-            char const* const* pool = kShared;
-            uint32 n = sizeof(kShared) / sizeof(kShared[0]);
-            // 55% shared, otherwise a class-appropriate bucket.
-            if (urand(0, 99) >= 55)
-            {
-                switch (bot->GetClass())
-                {
-                    case CLASS_WARRIOR:
-                    case CLASS_ROGUE:
-                    case CLASS_HUNTER:
-                    case CLASS_PALADIN:
-                        pool = kMartial; n = sizeof(kMartial) / sizeof(kMartial[0]);
-                        break;
-                    case CLASS_MAGE:
-                        pool = kMage; n = sizeof(kMage) / sizeof(kMage[0]);
-                        break;
-                    case CLASS_WARLOCK:
-                    case CLASS_PRIEST:
-                        pool = kCaster; n = sizeof(kCaster) / sizeof(kCaster[0]);
-                        break;
-                    case CLASS_SHAMAN:
-                    case CLASS_DRUID:
-                        pool = kNature; n = sizeof(kNature) / sizeof(kNature[0]);
-                        break;
-                    default:
-                        break;
-                }
-            }
-            bot->Say(pool[urand(0, n - 1)], LANG_UNIVERSAL);
         }
 
         // Adventurer (playing) behaviour: a basic grind loop. Improve later with
@@ -2384,6 +2819,7 @@ namespace
             _townFill           = sConfig.GetIntDefault("mod-turtlebots.Town.Fill", 0);
             if (!_townFill) _townFill = _residents;
             if (_target > _maxIndexSeen) _maxIndexSeen = _target;
+            ReadLlmConfig(); // the voice knobs are live too
         }
 
         // The target was lowered live: bots with an index at or above the new target
@@ -2833,18 +3269,17 @@ public:
                 return;
             }
 
-        // General chat -> the nearest resident greets or acknowledges.
+        // General chat -> the nearest resident answers in character, with its context
+        // (place, activity, company) and a short memory of this conversation.
         if (Player* res = NearestResident(from, R, 0))
         {
-            std::string const& pers = PersonalityFor(res->GetGUIDLow());
-            std::string sys = std::string("You are ") + PersonalityDesc(pers) + ", a " +
-                ClassWord(res->GetClass()) + " who lives in the city in World of Warcraft. "
-                "A passerby speaks to you. Reply with ONE short in-character line in plain English, "
-                "under 20 words. No emotes, no asterisks, no quotation marks, no bracketed names.";
-            std::string usr = std::string(from->GetName()) + " says: " + msg;
+            std::string usr = ConvoContext(res, from) + std::string(from->GetName()) + " says to you: " + msg;
+            ConvoPush(res->GetGUIDLow(), from->GetGUIDLow(), false, msg);
             std::string fallback = RPick({ "Well met, traveler.", "Hm? What is it?",
                                            "Good to see a friendly face.", "Aye, what can I do for you?" });
-            QueueLlmSay(res, sys, usr, fallback);
+            res->SetFacingTo(res->GetAngle(from));
+            QueueLlm(res, ResidentSystemPrompt(res), usr, fallback, LLM_SAY, from->GetGUIDLow(),
+                     WorldTimer::getMSTime() + urand(1200, 2500), "reply", 2, 0);
         }
     }
 
@@ -2973,8 +3408,88 @@ private:
     }
 };
 
+static TurtleBotsChatScript* g_chatScript = nullptr;
+
+// Whispers addressed to a resident arrive as SMSG_MESSAGECHAT on its headless session
+// (MasterPlayer::Whisper -> WorldSession::SendPacket -> this hook). The hook may run on
+// any thread, so it only parses and queues; the world thread answers (ProcessWhisperInbox).
+class TurtleBotsPacketScript : public ServerScript
+{
+public:
+    TurtleBotsPacketScript() : ServerScript("mod-turtlebots_packets", { SERVERHOOK_CAN_PACKET_SEND }) {}
+
+    bool CanPacketSend(WorldSession* session, WorldPacket const& packet) override
+    {
+        if (!session || !session->IsHeadless() || packet.GetOpcode() != SMSG_MESSAGECHAT || packet.size() < 17)
+            return true;
+        try
+        {
+            WorldPacket p(packet);
+            p.rpos(0);
+            uint8 type; uint32 lang;
+            p >> type >> lang;
+            if (type != CHAT_MSG_WHISPER || lang == uint32(LANG_ADDON))
+                return true;
+            ObjectGuid sender; uint32 len; std::string msg;
+            p >> sender >> len >> msg;
+            Player* bot = session->GetPlayer();
+            if (!bot || msg.empty())
+                return true;
+            std::lock_guard<std::mutex> guard(g_whisperInboxMx);
+            g_whisperInbox.push_back({ bot->GetGUIDLow(), sender.GetRawValue(), msg });
+        }
+        catch (...) {}
+        return true; // never swallow the packet
+    }
+};
+
+namespace
+{
+    // World thread: answer the whispers the packet hook collected. A service request
+    // from someone standing here is handled like a /say (the mage conjures, the
+    // warlock shapes a stone...); anything else gets an in-character whisper back.
+    void ProcessWhisperInbox()
+    {
+        std::vector<InWhisper> batch;
+        {
+            std::lock_guard<std::mutex> guard(g_whisperInboxMx);
+            batch.swap(g_whisperInbox);
+        }
+        for (InWhisper const& w : batch)
+        {
+            if (!g_turtleResidents.count(w.botLow))
+                continue;
+            Player* bot  = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, w.botLow));
+            Player* from = sObjectAccessor.FindPlayer(ObjectGuid(w.sender));
+            if (!bot || !bot->IsInWorld() || !from || !from->IsInWorld() || !from->GetSession() || from->GetSession()->IsHeadless())
+                continue;
+            std::string lower(w.msg);
+            for (char& c : lower)
+                if (c >= 'A' && c <= 'Z') c = char(c + 32);
+            bool const service = HasServiceKeyword(lower);
+            bool const near = from->GetMapId() == bot->GetMapId() && from->GetDistance(bot) <= 30.f;
+            sLog.outString("[mod-turtlebots] whisper %s -> %s: %s", from->GetName(), bot->GetName(), w.msg.c_str());
+            if (service && near && g_chatScript)
+            {
+                g_chatScript->OnChatSay(from, 30.f, w.msg.c_str());
+                continue;
+            }
+            std::string usr = ConvoContext(bot, from) + from->GetName() +
+                (near ? " whispers to you: " : " whispers to you from somewhere else in the world: ") + w.msg;
+            if (service && !near)
+                usr += " (They want a service from you but are not here beside you: tell them where to find you.)";
+            ConvoPush(bot->GetGUIDLow(), from->GetGUIDLow(), false, w.msg);
+            std::string fallback = RPick({ "Aye? What can I do for you?", "Hm, what is it, friend?",
+                                           "I hear you. What do you need?" });
+            QueueLlm(bot, ResidentSystemPrompt(bot), usr, fallback, LLM_WHISPER, from->GetGUIDLow(),
+                     WorldTimer::getMSTime() + urand(1500, 3000), "whisper", 2, 0);
+        }
+    }
+}
+
 void Addmod_turtlebotsScripts()
 {
     new TurtleBotsWorldScript();
-    new TurtleBotsChatScript();
+    g_chatScript = new TurtleBotsChatScript();
+    new TurtleBotsPacketScript();
 }
