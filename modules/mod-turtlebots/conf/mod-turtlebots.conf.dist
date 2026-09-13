@@ -11,3 +11,25 @@ mod-turtlebots.Enable = 1
 # (Phase 1 spawns this many at startup; later this becomes a live target,
 #  adjustable from the web panel.)
 mod-turtlebots.Count = 3
+
+# The first N of those bots are city residents (the rest are legacy adventurers).
+mod-turtlebots.Residents = 3
+
+###################################################################################################
+# Town mode (Kith model): residents are "shadows" (logged out) until a real player is in
+# their home city. Then they are woken (logged in) in staggered batches and put back to
+# sleep (logged out) after a grace period with no player in the city.
+# Off = residents are simply kept online all the time.
+###################################################################################################
+mod-turtlebots.Town.Enable = 0
+
+# How many residents may log in/out per WakeIntervalMs (avoids login storms).
+mod-turtlebots.Town.WakeBatch = 5
+mod-turtlebots.Town.WakeIntervalMs = 10000
+
+# Seconds without a real player before a city goes back to sleep.
+mod-turtlebots.Town.SleepGraceSec = 600
+
+# Comma-separated zone ids to keep awake even with nobody there (observation/streaming),
+# e.g. 1637 for Orgrimmar. Re-read on config reload.
+mod-turtlebots.Town.ForceAwake =

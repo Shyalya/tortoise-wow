@@ -44,6 +44,8 @@
 #include "Cell.h"
 #include "CellImpl.h"
 #include "ObservabilityEmitter.h" // TortoiseBots telemetry (residents feed the dashboard)
+#include <set>
+#include <sstream>
 
 #include <algorithm>
 #include <cmath>
@@ -1024,6 +1026,17 @@ namespace
             _target    = sConfig.GetIntDefault("mod-turtlebots.Count", 3);
             _residents = sConfig.GetIntDefault("mod-turtlebots.Residents", 1);
             _advLevel  = sConfig.GetIntDefault("mod-turtlebots.AdventurerLevel", 10);
+            // Town mode (Kith model): residents are shadows (logged out) until a real player is
+            // in their home city; then they are woken (logged in) in staggered batches and put
+            // back to sleep (logged out) after a grace period without players.
+            _townEnable         = sConfig.GetBoolDefault("mod-turtlebots.Town.Enable", false);
+            _townWakeBatch      = sConfig.GetIntDefault("mod-turtlebots.Town.WakeBatch", 5);
+            _townWakeIntervalMs = sConfig.GetIntDefault("mod-turtlebots.Town.WakeIntervalMs", 10000);
+            _townSleepGraceSec  = sConfig.GetIntDefault("mod-turtlebots.Town.SleepGraceSec", 600);
+            ReadTownForceAwake();
+            sLog.outString("[mod-turtlebots] town mode %s (wake %u per %u ms, sleep grace %u s, forced-awake zones: %u).",
+                           _townEnable ? "ON" : "off", _townWakeBatch, _townWakeIntervalMs, _townSleepGraceSec,
+                           uint32(_townForceAwake.size()));
             g_llmEnabled    = sConfig.GetBoolDefault("mod-turtlebots.LLM.Enabled", true);
             g_llmUrl        = sConfig.GetStringDefault("mod-turtlebots.LLM.Url", "http://100.69.207.60:11434/v1/chat/completions");
             g_llmModel      = sConfig.GetStringDefault("mod-turtlebots.LLM.Model", "qwen2.5:32b-instruct-q4_K_M");
@@ -2128,8 +2141,78 @@ namespace
             }
         }
 
+        // Ops lever: comma-separated zone ids kept awake even without players
+        // (observation/streaming, like the Kith "Messbett"). Re-read every reconcile
+        // so a config reload can flip it without a restart.
+        void ReadTownForceAwake()
+        {
+            _townForceAwake.clear();
+            std::string list = sConfig.GetStringDefault("mod-turtlebots.Town.ForceAwake", "");
+            std::stringstream ss(list);
+            std::string tok;
+            while (std::getline(ss, tok, ','))
+            {
+                uint32 z = uint32(atoi(tok.c_str()));
+                if (z) _townForceAwake.insert(z);
+            }
+        }
+
+        // Count real players (non-headless sessions with a player in the world) per zone.
+        // Real players are few, so a full session scan every 5 s is negligible and cannot
+        // drift the way incrementally maintained counters would.
+        void ScanRealPlayers()
+        {
+            _zonePlayers.clear();
+            for (auto const& kv : sWorld.GetAllSessions())
+            {
+                WorldSession* sess = kv.second;
+                if (!sess || sess->IsHeadless()) continue;
+                Player* p = sess->GetPlayer();
+                if (!p || !p->IsInWorld()) continue;
+                ++_zonePlayers[p->GetZoneId()];
+            }
+        }
+
+        // Wake a home city while a real player is in it (or it is forced awake); put it
+        // to sleep once no player has been there for the grace period.
+        void UpdateTownState(uint32 nowMs)
+        {
+            std::set<uint32> zones = _townForceAwake;
+            for (uint32 i = 0; i < _residents; ++i) zones.insert(HomeZoneOf(i));
+            for (uint32 z : zones)
+            {
+                uint32 const players = _zonePlayers.count(z) ? _zonePlayers[z] : 0;
+                bool const forced = _townForceAwake.count(z) != 0;
+                if (players || forced)
+                {
+                    _zoneLastSeenMs[z] = nowMs;
+                    if (!_zoneAwake[z])
+                    {
+                        _zoneAwake[z] = true;
+                        sLog.outString("[mod-turtlebots] town: zone %u awake (%u real player(s)%s) - waking residents.",
+                                       z, players, forced ? ", forced" : "");
+                    }
+                }
+                else if (_zoneAwake[z] && (nowMs - _zoneLastSeenMs[z]) >= _townSleepGraceSec * 1000u)
+                {
+                    _zoneAwake[z] = false;
+                    sLog.outString("[mod-turtlebots] town: zone %u asleep (no real player for %u s) - residents log out.",
+                                   z, _townSleepGraceSec);
+                }
+            }
+            // Refill the staggered wake/sleep budget.
+            _townRefillMs += RECONCILE_INTERVAL_MS;
+            if (_townRefillMs >= _townWakeIntervalMs) { _townRefillMs = 0; _townBudget = _townWakeBatch; }
+        }
+
         void Reconcile()
         {
+            if (_townEnable)
+            {
+                ReadTownForceAwake();
+                ScanRealPlayers();
+                UpdateTownState(WorldTimer::getMSTime());
+            }
             uint32 online = 0;
             for (uint32 i = 0; i < _target; ++i)
                 if (EnsureBotOnline(i))
@@ -2164,8 +2247,23 @@ namespace
 
             ObjectGuid charGuid(HIGHGUID_PLAYER, charLow);
             HeadlessSessionState state = sWorld.GetHeadlessSessionState(charGuid);
+            bool const resident  = (i < _residents);
+            bool const townGated = _townEnable && resident;
+            bool const cityAwake = !townGated || _zoneAwake[HomeZoneOf(i)];
             if (state == HeadlessSessionState::Active)
             {
+                if (townGated && !cityAwake)
+                {
+                    // City fell asleep: log the resident out (staggered); it becomes a shadow.
+                    if (_townBudget)
+                    {
+                        --_townBudget;
+                        sWorld.StopHeadlessSession(charGuid, true);
+                        sLog.outString("[mod-turtlebots] town: %s goes to sleep (zone %u).",
+                                       BotCharName(i).c_str(), HomeZoneOf(i));
+                    }
+                    return false;
+                }
                 if (std::find(_online.begin(), _online.end(), charLow) == _online.end())
                 {
                     _online.push_back(charLow);
@@ -2177,6 +2275,12 @@ namespace
             if (state != HeadlessSessionState::NotFound)
                 return false; // Pending/Loading — in progress
 
+            if (townGated)
+            {
+                if (!cityAwake)   return false; // stays a shadow until a player is in the city
+                if (!_townBudget) return false; // staggered wake: wait for the next budget refill
+                --_townBudget;
+            }
             HeadlessSessionStartResult r =
                 sWorld.StartHeadlessSession(accId, charGuid, LOCALE_enUS, "turtlebot");
             if (r != HeadlessSessionStartResult::Started)
@@ -2226,6 +2330,19 @@ namespace
         std::map<uint32, uint8> _role;         // guid low -> BotRole
         std::set<uint32> _placed;              // residents already moved into the city
         uint32 _residents = 1;                 // first N bots are residents
+        // --- Town mode state (see OnStartup) ---
+        bool     _townEnable = false;
+        uint32   _townWakeBatch = 5;
+        uint32   _townWakeIntervalMs = 10000;
+        uint32   _townSleepGraceSec = 600;
+        std::set<uint32>         _townForceAwake;  // zones kept awake without players (ops/observation)
+        std::map<uint32, uint32> _zonePlayers;     // zone -> real (non-headless) players, rescanned each reconcile
+        std::map<uint32, bool>   _zoneAwake;       // zone -> residents may be embodied
+        std::map<uint32, uint32> _zoneLastSeenMs;  // zone -> last ms a real player was seen (or forced)
+        uint32   _townBudget = 0;                  // wake/sleep logins allowed until the next refill
+        uint32   _townRefillMs = 0;                // ms accumulated toward the next refill
+        static constexpr uint32 kOrgZone = 1637;   // Orgrimmar: the only resident home city for now
+        uint32 HomeZoneOf(uint32 /*botIndex*/) const { return kOrgZone; } // per-city assignment comes with #151
         uint32 _advLevel  = 10;                // level given to adventurers
     };
 }
