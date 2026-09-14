@@ -353,6 +353,7 @@ namespace
     struct FishSpot { float x, y, z, o; };
     static std::map<uint32, std::vector<FishSpot>> g_fishSpotsByCity; // city index -> water spots inside it
     static bool g_fishSpotsLoaded = false;
+    static std::set<uint32> g_fishSpotsDiscovered;                     // cities whose water was searched in the map data
     enum { FISH_MOVE = 1, FISH_CAST = 2, FISH_WAIT = 3 };
     struct FishState { uint8 phase; float x, y, z, o; uint32 atMs; uint8 casts; uint32 endMs; float lx = 0, ly = 0; uint32 stallMs = 0, lastMs = 0; float tx = 0, ty = 0, tz = 0; };
     static std::map<uint32, FishState> g_fishing;      // botGuid -> active fishing activity
@@ -3725,10 +3726,104 @@ namespace
             g_fishSpotsLoaded = true;
             // The Valley of Honor pond by Lumak the fishing trainer -- inside Orgrimmar, so
             // residents never leave the city to fish (leaving town is the adventurers' job).
-            // Other cities have no known spots yet: their residents simply do not fish.
+            // The other cities get their spots from the map data (DiscoverFishSpots), and
+            // Orgrimmar a few more the same way.
             g_fishSpotsByCity[0].push_back({ 2000.6f, -4659.7f, 26.5f, 5.31f });
             g_fishSpotsByCity[0].push_back({ 2006.0f, -4666.0f, 26.0f, 5.31f });
             g_fishSpotsByCity[0].push_back({ 1995.0f, -4665.0f, 26.0f, 5.31f });
+        }
+
+        // Water inside a city, found in the map data instead of typed in: a grid around the
+        // hub is sampled for liquid in the city zone (Stormwind canals, the Forlorn Cavern,
+        // the lake of Darnassus, the sewers of Undercity); for each pool the shore is walked
+        // to from the water and must be reachable for the probe (the resident that asked),
+        // then a point ten yards out in the water becomes the spot - the walk ends at the
+        // shore, the cast faces the water, as with the typed-in Orgrimmar pond. At most
+        // eight per city, thirty yards apart, nearest the hub first. Once per city.
+        void DiscoverFishSpots(uint32 ci, Player* probe)
+        {
+            if (ci >= kCityCount || g_fishSpotsDiscovered.count(ci) || !probe || !probe->IsInWorld() || probe->GetMapId() != g_cities[ci].map)
+                return;
+            g_fishSpotsDiscovered.insert(ci);
+            TerrainInfo const* terrain = probe->GetMap()->GetTerrain();
+            if (!terrain)
+                return;
+            City const& c = g_cities[ci];
+            struct Sample { float x, y, level, d; };
+            std::vector<Sample> water;
+            float const R = 560.f, step = 14.f;
+            static float const kProbeZ[] = { 2.f, 20.f, 45.f, 300.f }; // rooms in the city model answer only at their height
+            for (float x = c.x - R; x <= c.x + R; x += step)
+                for (float y = c.y - R; y <= c.y + R; y += step)
+                {
+                    GridMapLiquidData liquid;
+                    bool wet = false;
+                    for (float dz : kProbeZ)
+                        if (terrain->getLiquidStatus(x, y, c.z + dz, MAP_ALL_LIQUIDS, &liquid) != LIQUID_MAP_NO_WATER) { wet = true; break; }
+                    if (!wet)
+                        continue;
+                    if (liquid.type_flags & MAP_LIQUID_TYPE_MAGMA)
+                        continue;
+                    if (sTerrainMgr.GetZoneId(c.map, x, y, liquid.level) != c.zone)
+                        continue;
+                    water.push_back({ x, y, liquid.level, (x - c.x) * (x - c.x) + (y - c.y) * (y - c.y) });
+                }
+            std::sort(water.begin(), water.end(), [](Sample const& a, Sample const& b) { return a.d < b.d; });
+            std::vector<FishSpot>& spots = g_fishSpotsByCity[ci];
+            std::vector<Sample> triedAt;
+            uint32 tried = 0, found = 0;
+            for (Sample const& w : water)
+            {
+                if (spots.size() >= 8 || tried >= 80)
+                    break;
+                bool near = false;
+                for (FishSpot const& s : spots)
+                    if ((s.x - w.x) * (s.x - w.x) + (s.y - w.y) * (s.y - w.y) < 900.f) { near = true; break; }
+                for (Sample const& t : triedAt)
+                    if (!near && (t.x - w.x) * (t.x - w.x) + (t.y - w.y) * (t.y - w.y) < 400.f) { near = true; break; }
+                if (near)
+                    continue;
+                ++tried;
+                triedAt.push_back(w);
+                for (int dir = 0; dir < 8; ++dir)
+                {
+                    float const a = float(dir) * float(M_PI) / 4.f;
+                    float const ux = std::cos(a), uy = std::sin(a);
+                    float lx = 0.f, ly = 0.f, lz = 0.f; bool shore = false;
+                    for (float r = 1.5f; r <= 30.f; r += 1.5f)
+                    {
+                        float const px = w.x + ux * r, py = w.y + uy * r;
+                        if (terrain->getLiquidStatus(px, py, w.level + 1.f, MAP_ALL_LIQUIDS, nullptr) != LIQUID_MAP_NO_WATER)
+                            continue;
+                        float const gx = w.x + ux * (r + 2.f), gy = w.y + uy * (r + 2.f);
+                        float gz = terrain->GetHeightStatic(gx, gy, w.level + 6.f, true);   // a bank or a room floor
+                        if (gz < -99999.f || gz < w.level - 1.f || gz > w.level + 20.f)
+                            gz = terrain->GetHeightStatic(gx, gy, w.level + 25.f, true);  // a quay above the water
+                        if (gz < -99999.f || gz < w.level - 1.f || gz > w.level + 20.f)
+                            break; // a cliff or nothing to stand on
+                        lx = gx; ly = gy; lz = gz; shore = true;
+                        break;
+                    }
+                    if (!shore)
+                        continue;
+                    // The water point ten yards out from the shore must still be water.
+                    float const sx = lx - ux * 10.f, sy = ly - uy * 10.f;
+                    if (terrain->getLiquidStatus(sx, sy, w.level + 1.f, MAP_ALL_LIQUIDS, nullptr) == LIQUID_MAP_NO_WATER)
+                        continue;
+                    PathInfo path(probe);
+                    path.calculate(lx, ly, lz);
+                    Vector3 const e = path.getActualEndPosition();
+                    if ((uint32(path.getPathType()) & PATHFIND_NOPATH) || (e.x - lx) * (e.x - lx) + (e.y - ly) * (e.y - ly) > 16.f)
+                        continue;
+                    spots.push_back({ sx, sy, w.level, std::atan2(sy - ly, sx - lx) });
+                    ++found;
+                    sLog.outString("[mod-turtlebots] city %s: fishing spot %u at %.0f/%.0f/%.0f (shore %.0f/%.0f/%.0f).",
+                                   c.name, found, sx, sy, w.level, lx, ly, lz);
+                    break;
+                }
+            }
+            sLog.outString("[mod-turtlebots] city %s: %u fishing spots found in the map data (%u water samples, %u pools tried).",
+                           c.name, found, uint32(water.size()), tried);
         }
 
         // Make sure a fishing pole is in the main hand (grant one if needed).
@@ -3773,6 +3868,8 @@ namespace
                         if ((uint32(path.getPathType()) & PATHFIND_NOPATH) || ex * ex + ey * ey > 625.f)
                         {
                             g_fishAvoidUntilMs[low] = now + 30u * 60000u; // the water is not reachable from here
+                            sLog.outString("[mod-turtlebots] fishing: %s cannot reach the water at %.0f/%.0f (%s) - no path.",
+                                           bot->GetName(), fs.x, fs.y, AreaName(bot->GetZoneId()).c_str());
                             g_fishing.erase(low);
                             return;
                         }
@@ -3797,6 +3894,8 @@ namespace
                             bot->GetMotionMaster()->MoveIdle();
                             bot->StopMoving(true);
                             g_fishAvoidUntilMs[low] = now + 30u * 60000u;
+                            sLog.outString("[mod-turtlebots] fishing: %s stalled on the way to the water at %.0f/%.0f (%s).",
+                                           bot->GetName(), fs.x, fs.y, AreaName(bot->GetZoneId()).c_str());
                             g_fishing.erase(low);
                             return;
                         }
@@ -3815,6 +3914,9 @@ namespace
                     bot->SetFacingTo(atan2(fs.y - bot->GetPositionY(), fs.x - bot->GetPositionX())); // face the water
                     EnsureFishingPole(bot);           // best-effort: pole + real cast are just for the visual
                     bot->CastSpell(bot, 7620, false); // if a pole got equipped this places a real bobber
+                    if (!fs.casts++)
+                        sLog.outString("[mod-turtlebots] fishing: %s casts from %.0f/%.0f at the water %.0f/%.0f (%s).",
+                                       bot->GetName(), bot->GetPositionX(), bot->GetPositionY(), fs.x, fs.y, AreaName(bot->GetZoneId()).c_str());
                     fs.phase = FISH_WAIT; fs.atMs = now;
                     return;
                 case FISH_WAIT:
@@ -3828,6 +3930,7 @@ namespace
                         bob->Use(bot);                       // SendLoot(LOOT_FISHING) + skill-up
                         bot->AutoStoreLoot(bob->loot, true); // bag the fish
                         bot->SendLootRelease(bob->GetObjectGuid());
+                        sLog.outString("[mod-turtlebots] fishing: %s landed a bite (%s).", bot->GetName(), AreaName(bot->GetZoneId()).c_str());
                         if (now >= fs.endMs) { g_fishing.erase(low); return; }
                         fs.phase = FISH_CAST; fs.atMs = now;
                         return;
@@ -3841,6 +3944,7 @@ namespace
                         bot->UpdateFishingSkill();
                         static uint32 const kFish[] = { 6291, 6289, 6303, 6317 };
                         bot->StoreNewItemInInventorySlot(kFish[urand(0, 3)], 1);
+                        sLog.outString("[mod-turtlebots] fishing: %s takes a fish without a bobber (%s).", bot->GetName(), AreaName(bot->GetZoneId()).c_str());
                         if (now >= fs.endMs) { g_fishing.erase(low); return; }
                         fs.phase = FISH_CAST; fs.atMs = now;
                     }
@@ -4216,6 +4320,7 @@ namespace
 
             // Sometimes go fish: residents with the skill wander to the water and fish for real.
             LoadFishSpots();
+            DiscoverFishSpots(CityIdxOfBot(low), bot);
             std::vector<FishSpot> const& spots = FishSpotsOf(low);
             auto fav = g_fishAvoidUntilMs.find(low);
             bool const fishAllowed = fav == g_fishAvoidUntilMs.end() || int32(now - fav->second) >= 0;
