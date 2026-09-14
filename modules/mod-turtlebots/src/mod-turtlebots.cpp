@@ -4171,10 +4171,10 @@ namespace
             // spot is 12 yd out along that facing, the angler stands on the bank and faces
             // it): the pond by the entrance bridge in the Valley of Heroes and three canal
             // banks - the map search only found the high quays, which look wrong for an angler.
-            g_fishSpotsByCity[3].push_back({ -8978.2f, 414.4f, 72.83f, 0.67f, -8987.57f, 406.94f, 72.83f });
+            // (the pond bank in the Valley of Heroes at -8988/407 and the canal dock at -8749/524 were
+            //  marked too, but no resident inside the city can path to them: incomplete 130 yd short / no path)
             g_fishSpotsByCity[3].push_back({ -8796.3f, 782.5f, 96.34f, 1.64f, -8795.48f, 770.55f, 96.34f });
             g_fishSpotsByCity[3].push_back({ -8843.0f, 751.6f, 101.64f, 0.53f, -8853.33f, 745.49f, 101.64f });
-            g_fishSpotsByCity[3].push_back({ -8739.1f, 517.8f, 96.34f, 5.70f, -8749.13f, 524.39f, 96.34f });
         }
 
         // Water inside a city, found in the map data instead of typed in: a grid around the
@@ -4673,15 +4673,34 @@ namespace
                         path.calculate(bank ? fs.bx : fs.x, bank ? fs.by : fs.y, bank ? fs.bz : fs.z);
                         Vector3 const e = path.getActualEndPosition();
                         float const ex = e.x - (bank ? fs.bx : fs.x), ey = e.y - (bank ? fs.by : fs.y);
-                        if ((uint32(path.getPathType()) & PATHFIND_NOPATH) || ex * ex + ey * ey > (bank ? 100.f : 625.f)) // a marked bank: within 10 yd (a slope, a dock edge)
+                        bool bad = (uint32(path.getPathType()) & PATHFIND_NOPATH) || ex * ex + ey * ey > (bank ? 100.f : 625.f); // a marked bank: within 10 yd (a slope, a dock edge)
+                        fs.tx = e.x; fs.ty = e.y; fs.tz = e.z;
+                        if (bad && bank)
+                        {
+                            // The marked bank is off the navmesh: the water point the old way,
+                            // standing wherever the honest path towards it ends (within 25 yd).
+                            PathInfo alt(bot);
+                            alt.calculate(fs.x, fs.y, fs.z);
+                            Vector3 const a = alt.getActualEndPosition();
+                            float const ax = a.x - fs.x, ay = a.y - fs.y;
+                            if (!(uint32(alt.getPathType()) & PATHFIND_NOPATH) && ax * ax + ay * ay <= 625.f)
+                            {
+                                sLog.outString("[mod-turtlebots] fishing: %s cannot step onto the bank at %.0f/%.0f (path type %u, ends %.0f yd off) - fishes from %.0f/%.0f instead (%s).",
+                                               bot->GetName(), fs.bx, fs.by, uint32(path.getPathType()), std::sqrt(ex * ex + ey * ey), a.x, a.y, AreaName(bot->GetZoneId()).c_str());
+                                fs.bx = 0.f; fs.by = 0.f; fs.bz = 0.f; // faces the water point from there
+                                fs.tx = a.x; fs.ty = a.y; fs.tz = a.z;
+                                bad = false;
+                            }
+                        }
+                        if (bad)
                         {
                             g_fishAvoidUntilMs[low] = now + 30u * 60000u; // the water is not reachable from here
-                            sLog.outString("[mod-turtlebots] fishing: %s cannot reach the water at %.0f/%.0f (%s) - no path.",
-                                           bot->GetName(), fs.x, fs.y, AreaName(bot->GetZoneId()).c_str());
+                            sLog.outString("[mod-turtlebots] fishing: %s cannot reach the water at %.0f/%.0f (%s) - no path (type %u, ends %.0f yd off, from %.0f/%.0f).",
+                                           bot->GetName(), fs.x, fs.y, AreaName(bot->GetZoneId()).c_str(), uint32(path.getPathType()), std::sqrt(ex * ex + ey * ey),
+                                           bot->GetPositionX(), bot->GetPositionY());
                             g_fishing.erase(low);
                             return;
                         }
-                        fs.tx = e.x; fs.ty = e.y; fs.tz = e.z;
                         fs.lx = bot->GetPositionX(); fs.ly = bot->GetPositionY(); fs.lastMs = now;
                     }
                     float const tdx = bot->GetPositionX() - fs.tx, tdy = bot->GetPositionY() - fs.ty;
