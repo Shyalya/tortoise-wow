@@ -189,6 +189,27 @@ mod-turtlebots.LLM.WorldTalkMinutes = 4
 mod-turtlebots.LLM.MarketReplyChance = 60
 
 ###################################################################################################
+# PLAYER MEMORY (#51) AND OWN EVENTS (#155)
+#
+#    A resident remembers each real player it dealt with (table mod_turtlebots_player_memory:
+#    first and last contact, how many encounters, the last six things - asked the way,
+#    whispered, sold loot, cast a buff, waved, grouped) and lets it show in its answers. A
+#    player it knows who turns up nearby after a while away is greeted by name (once per player
+#    per fifteen minutes city-wide). What happens to our bots - a death and its cause, a level,
+#    a notable kill, a PvP kill or death - is kept per character (mod_turtlebots_char_events)
+#    and a resident may bring it up, also from its time out in the world as an adventurer.
+#
+#    mod-turtlebots.Memory.Enabled
+#        Default: 1
+#
+#    mod-turtlebots.Memory.ReturnMinutes
+#        A player counts as back again after this many minutes without contact. Default: 120
+###################################################################################################
+
+mod-turtlebots.Memory.Enabled = 1
+mod-turtlebots.Memory.ReturnMinutes = 120
+
+###################################################################################################
 # GROUP, GUILD, EMOTES
 #
 #    A resident accepts a real player's group invitation (and stays half an hour, or until no

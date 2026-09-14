@@ -680,6 +680,27 @@ namespace
     static uint32 g_llmWorldTalkMinutes = 4;           // LLM.WorldTalkMinutes: residents open a World line now and then (0 = off)
     static uint32 g_nextWorldTalkMs = 0;
     static uint32 g_llmMarketReplyChance = 60;         // LLM.MarketReplyChance: another resident answers a Trade call (%)
+    // ---- Player memory (#51): what a resident remembers about a real player, persisted ----
+    struct PlayerMemory
+    {
+        uint32 bot = 0, player = 0;
+        std::string name;
+        time_t first = 0, last = 0;
+        uint32 encounters = 0;
+        std::deque<std::string> notes;   // newest last, at most six
+        bool loaded = false, dirty = false;
+        time_t greetedAt = 0;            // last welcome-back from this resident
+    };
+    static std::map<uint64, PlayerMemory> g_playerMemory;   // (bot<<32|player) -> memory
+    static std::map<uint32, time_t> g_returnGreetAt;        // playerGuid -> last welcome-back by any resident
+    static std::map<uint32, uint32> g_welcomeCheckMs;       // botGuid -> last look around for known players
+    static time_t g_memoryFlushAt = 0;
+    static bool   g_memoryEnabled = true;                   // Memory.Enabled
+    static uint32 g_memoryReturnMinutes = 120;              // Memory.ReturnMinutes: away this long counts as back again
+    // ---- Own events (#155): what happened to a character, out in the world or in town ----
+    struct CharEvent { time_t at; std::string text; };
+    static std::map<uint32, std::deque<CharEvent>> g_charEvents; // guid low -> newest last, at most twelve
+    static std::set<uint32> g_charEventsLoaded;
     struct PendingEmote { uint32 bot; uint32 anim; uint32 atMs; };
     static std::vector<PendingEmote> g_pendingEmotes;  // a gesture back, after a human beat (anim 0 = clear the state)
     static std::map<uint32, uint32> g_emoteReactAt;    // playerGuid -> ms before which no further emote reaction
@@ -699,6 +720,168 @@ namespace
     static std::mutex g_whisperInboxMx;
     static std::map<uint32, uint32> g_thankCheckMs;  // botGuid -> last aura scan
     static std::map<uint64, time_t> g_thanked;       // (bot<<32|caster) -> last thank-you
+
+    // ---- Player memory (#51) and own events (#155) ----
+    static std::string AgoText(time_t then, time_t now)
+    {
+        long const s = long(now - then);
+        if (s < 3600) return std::to_string(std::max(1L, s / 60)) + (s < 120 ? " minute ago" : " minutes ago");
+        if (s < 86400) return std::to_string(s / 3600) + (s < 7200 ? " hour ago" : " hours ago");
+        return std::to_string(s / 86400) + (s < 172800 ? " day ago" : " days ago");
+    }
+
+    static std::string NameOfLow(uint32 low)
+    {
+        std::string name;
+        if (Player* p = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low)))
+            return p->GetName();
+        sObjectMgr.GetPlayerNameByGUID(ObjectGuid(HIGHGUID_PLAYER, low), name);
+        return name;
+    }
+
+    // The memory of one resident about one player, loaded from the DB on first touch.
+    static PlayerMemory& MemoryOf(uint32 botLow, Player* player)
+    {
+        uint64 const key = (uint64(botLow) << 32) | player->GetGUIDLow();
+        PlayerMemory& m = g_playerMemory[key];
+        if (m.loaded)
+            return m;
+        m.loaded = true; m.bot = botLow; m.player = player->GetGUIDLow(); m.name = player->GetName();
+        if (QueryResult* r = CharacterDatabase.PQuery(
+                "SELECT first_seen, last_seen, encounters, notes FROM mod_turtlebots_player_memory WHERE bot_guid = %u AND player_guid = %u",
+                botLow, m.player))
+        {
+            Field* f = r->Fetch();
+            m.first = time_t(f[0].GetUInt32()); m.last = time_t(f[1].GetUInt32()); m.encounters = f[2].GetUInt32();
+            std::string const notes = f[3].GetCppString();
+            std::string::size_type p = 0;
+            while (p <= notes.size())
+            {
+                std::string::size_type const e = notes.find(" | ", p);
+                std::string const part = notes.substr(p, e == std::string::npos ? std::string::npos : e - p);
+                if (!part.empty()) m.notes.push_back(part);
+                if (e == std::string::npos) break;
+                p = e + 3;
+            }
+            delete r;
+        }
+        return m;
+    }
+
+    // Something happened between a resident and a real player: kept, written out later.
+    static void Remember(uint32 botLow, Player* player, std::string const& what)
+    {
+        if (!g_memoryEnabled || !player || !player->GetSession() || player->GetSession()->IsHeadless())
+            return;
+        PlayerMemory& m = MemoryOf(botLow, player);
+        time_t const now = time(nullptr);
+        if (!m.first) m.first = now;
+        if (!m.last || now - m.last > 600) ++m.encounters; // a new encounter after ten quiet minutes
+        m.last = now;
+        std::string note = what.substr(0, 70);
+        for (char& c : note) if (c == '|') c = '/';
+        if (m.notes.empty() || m.notes.back() != note)
+        {
+            m.notes.push_back(note);
+            while (m.notes.size() > 6) m.notes.pop_front();
+        }
+        m.dirty = true;
+        sLog.outString("[mod-turtlebots] memory: %s remembers %s: %s (encounter %u)", NameOfLow(botLow).c_str(), player->GetName(), note.c_str(), m.encounters);
+    }
+
+    // What the resident remembers about this player, for a prompt; empty when nothing.
+    static std::string MemoryClause(uint32 botLow, Player* player)
+    {
+        if (!g_memoryEnabled || !player)
+            return std::string();
+        PlayerMemory& m = MemoryOf(botLow, player);
+        if (!m.encounters && m.notes.empty())
+            return std::string();
+        time_t const now = time(nullptr);
+        std::string s = " You know " + std::string(player->GetName()) + ": met " + std::to_string(std::max(1u, m.encounters)) +
+                        (m.encounters <= 1 ? " time" : " times") + ", first " + AgoText(m.first, now) + ", last " + AgoText(m.last, now) + ".";
+        if (!m.notes.empty())
+        {
+            s += " You remember:";
+            for (std::string const& n : m.notes) s += " " + n + ";";
+            s.back() = '.';
+        }
+        return s + " If it fits, let it show that you know them - a word, not the whole list.";
+    }
+
+    static void FlushMemories()
+    {
+        time_t const now = time(nullptr);
+        if (now < g_memoryFlushAt)
+            return;
+        g_memoryFlushAt = now + 60;
+        for (auto& kv : g_playerMemory)
+        {
+            PlayerMemory& m = kv.second;
+            if (!m.dirty) continue;
+            m.dirty = false;
+            std::string notes;
+            for (std::string const& n : m.notes) { if (!notes.empty()) notes += " | "; notes += n; }
+            std::string name = m.name;
+            CharacterDatabase.escape_string(notes);
+            CharacterDatabase.escape_string(name);
+            CharacterDatabase.PExecute("REPLACE INTO mod_turtlebots_player_memory (bot_guid, player_guid, player_name, first_seen, last_seen, encounters, notes) "
+                                       "VALUES (%u, %u, '%s', %u, %u, %u, '%s')",
+                                       m.bot, m.player, name.c_str(), uint32(m.first), uint32(m.last), m.encounters, notes.c_str());
+        }
+    }
+
+    // An event of a character (a death, a level, a notable kill), kept and written out.
+    static void RecordEvent(Player* p, std::string const& text)
+    {
+        if (!g_memoryEnabled || !p)
+            return;
+        uint32 const low = p->GetGUIDLow();
+        time_t const now = time(nullptr);
+        auto& d = g_charEvents[low];
+        d.push_back({ now, text });
+        while (d.size() > 12) d.pop_front();
+        std::string t = text.substr(0, 150);
+        CharacterDatabase.escape_string(t);
+        CharacterDatabase.PExecute("INSERT INTO mod_turtlebots_char_events (guid, at, text) VALUES (%u, %u, '%s')", low, uint32(now), t.c_str());
+        sLog.outString("[mod-turtlebots] event: %s %s", p->GetName(), text.c_str());
+    }
+
+    static void LoadEvents(uint32 low)
+    {
+        if (g_charEventsLoaded.count(low))
+            return;
+        g_charEventsLoaded.insert(low);
+        if (QueryResult* r = CharacterDatabase.PQuery("SELECT at, text FROM mod_turtlebots_char_events WHERE guid = %u ORDER BY at DESC LIMIT 12", low))
+        {
+            std::deque<CharEvent> d;
+            do { Field* f = r->Fetch(); d.push_front({ time_t(f[0].GetUInt32()), f[1].GetCppString() }); } while (r->NextRow());
+            delete r;
+            auto& cur = g_charEvents[low];
+            d.insert(d.end(), cur.begin(), cur.end()); // what happened since login comes after the stored rows
+            while (d.size() > 12) d.pop_front();
+            cur.swap(d);
+        }
+    }
+
+    // The last few things that happened to this character, for its prompt: a resident
+    // recalls its time out in the world (deaths, levels, notable kills).
+    static std::string EventsClause(uint32 low)
+    {
+        if (!g_memoryEnabled)
+            return std::string();
+        LoadEvents(low);
+        auto it = g_charEvents.find(low);
+        if (it == g_charEvents.end() || it->second.empty())
+            return std::string();
+        time_t const now = time(nullptr);
+        std::string s = "Things that happened to you lately: ";
+        size_t n = 0;
+        for (auto r = it->second.rbegin(); r != it->second.rend() && n < 4; ++r, ++n)
+            s += (n ? "; " : "") + r->text + " (" + AgoText(r->at, now) + ")";
+        return s + ". You may bring one up when it fits. ";
+    }
+
 
     static void ParseLlmUrl()
     {
@@ -1166,6 +1349,8 @@ namespace
         g_llmShadowVoices   = sConfig.GetBoolDefault("mod-turtlebots.LLM.ShadowVoices", true);
         g_llmWorldTalkMinutes = sConfig.GetIntDefault("mod-turtlebots.LLM.WorldTalkMinutes", 4);
         g_llmMarketReplyChance = sConfig.GetIntDefault("mod-turtlebots.LLM.MarketReplyChance", 60);
+        g_memoryEnabled       = sConfig.GetBoolDefault("mod-turtlebots.Memory.Enabled", true);
+        g_memoryReturnMinutes = sConfig.GetIntDefault("mod-turtlebots.Memory.ReturnMinutes", 120);
         {
             // Debug.ChannelSelfTest: on the reload that switches it on, four channel lines are fed
             // through the handler in the name of the first real player in the world, 23 s apart.
@@ -1310,6 +1495,7 @@ namespace
         if (!profs.empty()) s += "By trade you are a " + profs + ". ";
         s += "Right now you are " + ActivityOf(bot) + (sub.empty() ? std::string() : " in " + sub) + ". ";
         s += NearbyOf(bot);
+        s += EventsClause(bot->GetGUIDLow());
         if (!places.empty() && !city.empty())
             s += "Parts of " + city + " you know: " + places + ". Never invent other buildings or places. ";
         s += "Speak as this character in plain English: one short line, under 20 words, varied phrasing, "
@@ -2171,7 +2357,7 @@ namespace
         return std::string("You are ") + s.name + ", a " + PersonalityDesc(pers) + " level " + std::to_string(s.level) + " " +
                RaceWord(s.race) + " " + ClassWord(s.cls) + " who lives in " + (s.city.empty() ? std::string("a capital") : s.city) +
                " in World of Warcraft (vanilla era, Turtle WoW server). Right now you are out in the world on your own business, "
-               "away from the city, following the " + channel + " channel. Speak as this character in plain English: one short line, "
+               "away from the city, following the " + channel + " channel. " + EventsClause(s.low) + "Speak as this character in plain English: one short line, "
                "under 20 words, varied phrasing, stay in the era. No emotes, no asterisks, no quotation marks, no name prefixes, "
                "never mention being an AI.";
     }
@@ -2306,6 +2492,8 @@ namespace
                 g_pendingEmotes.push_back({ res->GetGUIDLow(), 0, nowMs + 8000u }); // stop dancing again
         }
         char const* word = EmoteWord(textEmote);
+        if (word)
+            Remember(res->GetGUIDLow(), from, std::string(word) + " me");
         if (targeted && word)
             QueueLlm(res, ResidentSystemPrompt(res),
                      std::string(from->GetName()) + " " + word + " you. React in one short line, in character.",
@@ -2330,7 +2518,8 @@ namespace
         if (ta != g_groupTalkAt.end() && int32(ta->second - nowMs) > 0)
             return;
         g_groupTalkAt[g->GetId()] = nowMs + 15000u;
-        std::string usr = std::string(from->GetName()) + " says in your party: " + msg;
+        Remember(bot->GetGUIDLow(), from, "grouped with me and said: " + msg.substr(0, 40));
+        std::string usr = std::string(from->GetName()) + " says in your party: " + msg + MemoryClause(bot->GetGUIDLow(), from);
         std::string fact;
         if (BuildFact(from, lower, fact))
             usr += FactClause(fact);
@@ -2737,11 +2926,56 @@ namespace
             g_thanked[key] = tnow;
             SpellEntry const* se = h->GetSpellProto();
             std::string const spell = (se && !se->SpellName[0].empty()) ? se->SpellName[0] : std::string("a blessing");
+            Remember(low, caster, "cast " + spell + " on me");
             bot->SetFacingTo(bot->GetAngle(caster));
             QueueLlm(bot, ResidentSystemPrompt(bot),
                      std::string(caster->GetName()) + " just cast " + spell + " on you. Thank them in one short line.",
                      RPick({ "Thanks for the buff, friend!", "Much obliged - that helps.", "Kind of you, traveler. Thanks!" }),
                      LLM_SAY, caster->GetGUIDLow(), nowMs + urand(1000, 2500), "thanks", 2, 0);
+            return;
+        }
+    }
+
+    // A player this resident knows turns up nearby after a while away: a greeting by name
+    // (once per player per fifteen minutes city-wide, once per pair in six hours).
+    static void WelcomeBack(Player* bot, uint32 nowMs)
+    {
+        if (!g_memoryEnabled)
+            return;
+        uint32 const low = bot->GetGUIDLow();
+        uint32& last = g_welcomeCheckMs[low];
+        if (last && nowMs - last < 5000)
+            return;
+        last = nowMs;
+        if (g_fishing.count(low) || g_cooking.count(low) || bot->GetTradeData())
+            return;
+        time_t const tnow = time(nullptr);
+        std::list<Player*> players;
+        MaNGOS::AnyPlayerInObjectRangeCheck pchk(bot, 20.0f);
+        MaNGOS::PlayerListSearcher<MaNGOS::AnyPlayerInObjectRangeCheck> psrch(players, pchk);
+        Cell::VisitWorldObjects(bot, psrch, 20.0f);
+        for (Player* p : players)
+        {
+            if (p == bot || !p->GetSession() || p->GetSession()->IsHeadless())
+                continue;
+            auto ga = g_returnGreetAt.find(p->GetGUIDLow());
+            if (ga != g_returnGreetAt.end() && tnow - ga->second < 900)
+                continue;
+            PlayerMemory& m = MemoryOf(low, p);
+            if (!m.encounters || tnow - m.last < time_t(g_memoryReturnMinutes) * 60)
+                continue; // not someone this resident knows, or never away
+            if (m.greetedAt && tnow - m.greetedAt < 6 * 3600)
+                continue;
+            m.greetedAt = tnow;
+            g_returnGreetAt[p->GetGUIDLow()] = tnow;
+            std::string const away = AgoText(m.last, tnow);
+            bot->SetFacingTo(bot->GetAngle(p));
+            std::string const usr = std::string(p->GetName()) + ", whom you know, has just turned up near you; you last dealt with them " + away + "." +
+                                    MemoryClause(low, p) + " Greet them by name in one short line, as someone you have met before.";
+            QueueLlm(bot, ResidentSystemPrompt(bot), usr, std::string(p->GetName()) + "! Good to see you again.", LLM_SAY, p->GetGUIDLow(),
+                     nowMs + urand(1000, 2500), "welcome", 2, 0);
+            sLog.outString("[mod-turtlebots] memory: %s welcomes %s back (last met %s, %u encounters).", bot->GetName(), p->GetName(), away.c_str(), m.encounters);
+            Remember(low, p, "welcomed them back");
             return;
         }
     }
@@ -3050,6 +3284,13 @@ namespace
             ReadTownCities();
             ResolveCityZones();
             TransportRoutes();
+            CharacterDatabase.DirectExecute("CREATE TABLE IF NOT EXISTS mod_turtlebots_player_memory ("
+                "bot_guid INT UNSIGNED NOT NULL, player_guid INT UNSIGNED NOT NULL, player_name VARCHAR(12) NOT NULL DEFAULT '', "
+                "first_seen INT UNSIGNED NOT NULL DEFAULT 0, last_seen INT UNSIGNED NOT NULL DEFAULT 0, encounters INT UNSIGNED NOT NULL DEFAULT 0, "
+                "notes TEXT NOT NULL, PRIMARY KEY (bot_guid, player_guid)) ENGINE=InnoDB DEFAULT CHARSET=utf8");
+            CharacterDatabase.DirectExecute("CREATE TABLE IF NOT EXISTS mod_turtlebots_char_events ("
+                "id INT UNSIGNED NOT NULL AUTO_INCREMENT, guid INT UNSIGNED NOT NULL, at INT UNSIGNED NOT NULL, text VARCHAR(160) NOT NULL, "
+                "PRIMARY KEY (id), KEY guid_at (guid, at)) ENGINE=InnoDB DEFAULT CHARSET=utf8");
             {
                 std::string names;
                 for (uint32 ci : g_cityEnabled)
@@ -3321,6 +3562,13 @@ namespace
                                     for (size_t b = 0; b < bought.size(); ++b)
                                         bot->DestroyItemCount(bought[b].first, bought[b].second, true);
                                     g_botBuyPricedFor.erase(rlow); g_sellIntent.erase(plow);
+                                    {
+                                        std::string goods;
+                                        for (auto const& b : bought)
+                                            if (ItemPrototype const* bp = sObjectMgr.GetItemPrototype(b.first))
+                                                goods += (goods.empty() ? std::string() : std::string(", ")) + std::to_string(b.second) + "x " + bp->Name1;
+                                        Remember(rlow, trader, "sold me " + (goods.empty() ? std::string("some loot") : goods));
+                                    }
                                     ServiceSay(bot, "The deal is done; thank the traveler.",
                                                RPick({ "Pleasure doing business!",
                                                        "There's your coin - good trading!",
@@ -3469,6 +3717,7 @@ namespace
                                         g_chanTalkTokens + float(g_llmChannelPerMin) * float(diff) / 60000.f);
             if (!g_chanTestLines.empty())
                 ChannelSelfTestTick(WorldTimer::getMSTime());
+            FlushMemories();
 
             // Gestures back, after their human beat.
             if (!g_pendingEmotes.empty())
@@ -4273,6 +4522,7 @@ namespace
             if (nextAt == 0)
                 nextAt = now + urand(1000, 6000); // stagger the first decision
             ThankForBuffs(bot, now); // a real player's buff earns a thank-you, even between decisions
+            WelcomeBack(bot, now);   // a known player turning up after a while is greeted by name
             if (now < nextAt)
                 return; // standing calmly between actions
 
@@ -5162,8 +5412,37 @@ class TurtleBotsChatScript : public PlayerScript
 public:
     TurtleBotsChatScript()
         : PlayerScript("mod-turtlebots_chat", { PLAYERHOOK_ON_CHAT_SAY, PLAYERHOOK_ON_CHAT_YELL, PLAYERHOOK_ON_CHAT_CHANNEL,
-                                                PLAYERHOOK_ON_TEXT_EMOTE })
+                                                PLAYERHOOK_ON_TEXT_EMOTE, PLAYERHOOK_ON_PVP_KILL,
+                                                PLAYERHOOK_ON_CREATURE_KILL, PLAYERHOOK_ON_LEVEL_CHANGED })
     {
+    }
+
+    // Own events (#155): what happens to our bots - residents and adventurers alike, real
+    // players keep their privacy - is remembered and told later ("died twice to boars").
+    static bool IsBot(Player* p) { return p && p->GetSession() && p->GetSession()->IsHeadless(); }
+
+    void OnLevelChanged(Player* p, uint8 oldLevel) override
+    {
+        if (IsBot(p) && p->GetLevel() > oldLevel)
+            RecordEvent(p, "reached level " + std::to_string(p->GetLevel()) + " in " + AreaName(p->GetZoneId()));
+    }
+
+    void OnCreatureKill(Player* killer, Creature* killed) override
+    {
+        if (!IsBot(killer) || !killed) return;
+        CreatureInfo const* ci = killed->GetCreatureInfo();
+        if (!ci) return;
+        bool const notable = killed->IsElite() || killed->IsWorldBoss() || killed->GetLevel() >= killer->GetLevel() + 4;
+        if (notable)
+            RecordEvent(killer, std::string("killed ") + ci->name + " (level " + std::to_string(killed->GetLevel()) + ") in " + AreaName(killer->GetZoneId()));
+    }
+
+    void OnPVPKill(Player* killer, Player* killed) override
+    {
+        if (!killer || !killed || killer == killed) return;
+        if (IsBot(killer))
+            RecordEvent(killer, std::string("killed ") + killed->GetName() + " in " + AreaName(killer->GetZoneId()));
+        // the victim's death is recorded by the unit-death hook below, killer included
     }
 
     void OnTextEmote(Player* from, uint32 textEmote, uint32 /*emoteNum*/, ObjectGuid guid) override
@@ -5577,6 +5856,11 @@ public:
             ConvoPush(talker ? talker->GetGUIDLow() : shadow.low, playerLow, false, msg);
             sLog.outString("[mod-turtlebots] chat: %s in %s (%s%s, %u%%) -> %s%s", from->GetName(), channel, kind, followUp ? ", follow-up" : "", chance,
                            talker ? talker->GetName() : shadow.name.c_str(), talker ? "" : " (asleep)");
+            {
+                uint32 const memLow = talker ? talker->GetGUIDLow() : shadow.low;
+                usr += MemoryClause(memLow, from);
+                Remember(memLow, from, std::string(haveFact ? "asked me in " : "talked to me in ") + channel + ": " + PlainText(msg).substr(0, 50));
+            }
             char const* tag = chatter ? "chat" : "channel";
             if (talker)
                 QueueLlmChannel(talker, ResidentSystemPrompt(talker), ConvoContext(talker, from) + usr, std::string(), channel, std::string(),
@@ -5799,6 +6083,25 @@ private:
 
 static TurtleBotsChatScript* g_chatScript = nullptr;
 
+// The killing blow: the unit-death hook of the core names the killer, which the player
+// hook does not. Our bots' deaths are remembered with their cause (#155).
+class TurtleBotsUnitScript : public UnitScript
+{
+public:
+    TurtleBotsUnitScript() : UnitScript("mod-turtlebots_units", { UNITHOOK_ON_UNIT_DEATH }) {}
+
+    void OnUnitDeath(Unit* victim, Unit* killer) override
+    {
+        Player* p = victim ? victim->ToPlayer() : nullptr;
+        if (!TurtleBotsChatScript::IsBot(p))
+            return;
+        std::string by;
+        if (killer && killer != victim)
+            by = killer->GetName();
+        RecordEvent(p, "died" + (by.empty() ? std::string() : " to " + by) + " in " + AreaName(p->GetZoneId()));
+    }
+};
+
 // Whispers addressed to a resident arrive as SMSG_MESSAGECHAT on its headless session
 // (MasterPlayer::Whisper -> WorldSession::SendPacket -> this hook). The hook may run on
 // any thread, so it only parses and queues; the world thread answers (ProcessWhisperInbox).
@@ -5929,6 +6232,8 @@ namespace
             }
             std::string usr = ConvoContext(bot, from) + from->GetName() +
                 (near ? " whispers to you: " : " whispers to you from somewhere else in the world: ") + text;
+            usr += MemoryClause(bot->GetGUIDLow(), from);
+            Remember(bot->GetGUIDLow(), from, "whispered me: " + text.substr(0, 50));
             if (service && !near)
                 usr += " (They want a service from you but are not here beside you: tell them where to find you.)";
             std::string fact;
@@ -6035,4 +6340,5 @@ void Addmod_turtlebotsScripts()
     g_worldScript = new TurtleBotsWorldScript();
     g_chatScript = new TurtleBotsChatScript();
     new TurtleBotsPacketScript();
+    new TurtleBotsUnitScript();
 }
