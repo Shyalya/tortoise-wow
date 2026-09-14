@@ -2066,11 +2066,11 @@ namespace
         static char const* const kCheck[] = { "anyone alive", "anyone there", "anyone here", "anybody here", "is anyone", "dead server",
                                               "nobody here", "no one here", "empty server", "are you bots", "you all bots", "all bots", "hello?" };
         for (char const* c : kCheck)
-            if (s.find(c) != std::string::npos) { kind = "check"; return 80; }
+            if (s.find(c) != std::string::npos) { kind = "check"; return 100; }
         static char const* const kGreet[] = { "hi", "hello", "hey", "yo", "hallo", "moin", "servus", "hola", "sup", "greetings",
                                               "hiya", "howdy", "gm", "good morning", "good evening", "good day", "o/", "ahoy", "salutations" };
         for (char const* g : kGreet)
-            if (first == g || s == g || s.rfind(std::string(g) + " ", 0) == 0) { kind = "greeting"; return 85; }
+            if (first == g || s == g || s.rfind(std::string(g) + " ", 0) == 0) { kind = "greeting"; return 100; }
         static char const* const kJab[] = { "noob", "idiot", "stupid", "sucks", "trash", "scrub", "loser", "shut up", "a bot", "bots?",
                                             "npc?", "fake", "boring", "lame", "useless", "pathetic" };
         for (char const* j : kJab)
@@ -2083,7 +2083,7 @@ namespace
                                           "can ", "should ", "which ", "will ", "did ", "whats", "hows" };
         for (char const* w : kQ)
             if (!q && s.rfind(w, 0) == 0) q = true;
-        if (q) { kind = "question"; return 65; }
+        if (q) { kind = "question"; return 70; }
         kind = "remark";
         return 40;
     }
@@ -2391,6 +2391,14 @@ namespace
     // Models like to prefix the speaker or wrap the line in an emote; the client shows the name already.
     static std::string CleanLine(std::string line, char const* botName)
     {
+        // A line that slipped into another script or into commentary (the model now and then
+        // drifts into Chinese, or appends a note about its own answer) is not spoken.
+        for (unsigned char c : line)
+            if (c >= 0xE3 && c <= 0xE9)
+                return std::string();
+        for (char const* bad : { "(Note", "Note:", "Translation", "translation:", "In English" })
+            if (line.find(bad) != std::string::npos)
+                return std::string();
         std::string const pre = std::string(botName) + ":";
         if (line.compare(0, pre.size(), pre) == 0) line.erase(0, pre.size());
         while (!line.empty() && (line.front() == ' ' || line.front() == '"' || line.front() == '*')) line.erase(line.begin());
@@ -2540,6 +2548,8 @@ namespace
         if (!b || !b->IsInWorld())
             return;
         line = CleanLine(line, b->GetName());
+        if (line.empty() && !j.fallback.empty())
+            line = CleanLine(j.fallback, b->GetName()); // a discarded line: the canned words stand in
         if (line.empty())
             return; // a dialogue turn with nothing to say stays silent
         if (!j.suffix.empty())
@@ -5386,14 +5396,7 @@ public:
                     return;
                 if (strcmp(kind, "question") == 0 && BuildFact(from, lower, fact)) { haveFact = true; kind = "lore"; chance = 100; }
                 else if (followUp)
-                {
-                    kind = "followup"; chance = 95;
-                    if (urand(1, 100) > chance)
-                    {
-                        sLog.outString("[mod-turtlebots] chat: %s in %s (followup) - let it pass", from->GetName(), channel);
-                        return;
-                    }
-                }
+                    chance = 100; // a conversation in progress always goes on
                 else if (g_chanTalkTokens < 1.f)
                 {
                     sLog.outString("[mod-turtlebots] chat: %s in %s (%s, %u%%) - no budget this minute", from->GetName(), channel, kind, chance);
@@ -5427,7 +5430,7 @@ public:
                 return;
             }
             g_chanAnswerAt[playerLow] = nowMs + 20000u;
-            if (chatter && strcmp(kind, "followup") != 0)
+            if (chatter && !followUp)
                 g_chanTalkTokens -= 1.f;
             g_chanTalkers[playerLow] = ChanTalker{ talker ? talker->GetGUIDLow() : shadow.low, talker == nullptr,
                                                    talker ? std::string(talker->GetName()) : shadow.name,
@@ -5440,12 +5443,14 @@ public:
             }
             else if (named)
                 usr += " They are talking to you by name: answer them in one short line.";
-            else if (strcmp(kind, "followup") == 0)
-                usr += " They are continuing the conversation with you (maybe correcting you): reply in one short line; if they correct you, take it graciously.";
             else
+            {
                 usr += ChannelTalkClause(kind);
+                if (followUp)
+                    usr += " You are already in conversation with them: keep it natural, do not repeat what you told them before; if they correct you, take it graciously.";
+            }
             ConvoPush(talker ? talker->GetGUIDLow() : shadow.low, playerLow, false, msg);
-            sLog.outString("[mod-turtlebots] chat: %s in %s (%s, %u%%) -> %s%s", from->GetName(), channel, kind, chance,
+            sLog.outString("[mod-turtlebots] chat: %s in %s (%s%s, %u%%) -> %s%s", from->GetName(), channel, kind, followUp ? ", follow-up" : "", chance,
                            talker ? talker->GetName() : shadow.name.c_str(), talker ? "" : " (asleep)");
             char const* tag = chatter ? "chat" : "channel";
             if (talker)
