@@ -1879,7 +1879,7 @@ namespace
                 dest += (k ? (k + 1 == h.to.size() ? " and " : ", ") : "") + h.to[k];
             fact += (i ? "; " : "") + std::string("one ") + WhereIs(asker, h.at->map, h.at->x, h.at->y, h.at->z) + " - " + what + "s to " + dest;
         }
-        fact += ".";
+        fact += hubs.size() > 1 ? std::string(". Name every ") + (zeppelin ? "tower" : "dock") + ", each with where it goes." : std::string(".");
         return true;
     }
 
@@ -1906,8 +1906,13 @@ namespace
             t = nullptr; // only an exact name, not the first that merely contains it
         if (t)
         {
-            fact = CapWords(what) + " is " + WhereIs(asker, t->mapId, t->x, t->y, t->z) +
-                   (t->mapId != asker->GetMapId() ? ", on another continent" : "") + ".";
+            std::string const zone = AreaName(sTerrainMgr.GetZoneId(t->mapId, t->x, t->y, t->z));
+            std::string const inZone = zone.empty() || LowerStr(zone) == LowerStr(what) ? std::string() : ", in " + zone;
+            if (t->mapId == asker->GetMapId())
+                fact = CapWords(what) + " is about " + std::to_string(int(asker->GetDistance2d(t->x, t->y))) + " yards to the " +
+                       CompassXY(asker, t->x, t->y) + inZone + ".";
+            else
+                fact = CapWords(what) + " is on another continent" + inZone + ".";
             // A transport whose far station stands near that place, leaving from this map.
             bool hinted = false;
             for (TransportRoute const& rt : TransportRoutes())
@@ -1919,8 +1924,8 @@ namespace
                         continue;
                     if (std::fabs(there.x - t->x) + std::fabs(there.y - t->y) > 1500.f)
                         continue;
-                    fact += std::string(" The ") + (rt.zeppelin ? "zeppelin from the tower " : "ship from the dock ") +
-                            WhereIs(asker, here.map, here.x, here.y, here.z) + " goes there.";
+                    fact += std::string(" To get there, take the ") + (rt.zeppelin ? "zeppelin; its tower stands " : "ship; its dock is ") +
+                            WhereIs(asker, here.map, here.x, here.y, here.z) + ".";
                     hinted = true;
                 }
             return true;
@@ -2065,7 +2070,7 @@ namespace
         static char const* const kGreet[] = { "hi", "hello", "hey", "yo", "hallo", "moin", "servus", "hola", "sup", "greetings",
                                               "hiya", "howdy", "gm", "good morning", "good evening", "good day", "o/", "ahoy", "salutations" };
         for (char const* g : kGreet)
-            if (first == g || s == g || s.rfind(std::string(g) + " ", 0) == 0) { kind = "greeting"; return 70; }
+            if (first == g || s == g || s.rfind(std::string(g) + " ", 0) == 0) { kind = "greeting"; return 85; }
         static char const* const kJab[] = { "noob", "idiot", "stupid", "sucks", "trash", "scrub", "loser", "shut up", "a bot", "bots?",
                                             "npc?", "fake", "boring", "lame", "useless", "pathetic" };
         for (char const* j : kJab)
@@ -5380,9 +5385,25 @@ public:
                 if (!chance)
                     return;
                 if (strcmp(kind, "question") == 0 && BuildFact(from, lower, fact)) { haveFact = true; kind = "lore"; chance = 100; }
-                else if (followUp) { kind = "followup"; chance = 85; if (urand(1, 100) > chance) return; }
-                else if (g_chanTalkTokens < 1.f || urand(1, 100) > chance)
+                else if (followUp)
+                {
+                    kind = "followup"; chance = 95;
+                    if (urand(1, 100) > chance)
+                    {
+                        sLog.outString("[mod-turtlebots] chat: %s in %s (followup) - let it pass", from->GetName(), channel);
+                        return;
+                    }
+                }
+                else if (g_chanTalkTokens < 1.f)
+                {
+                    sLog.outString("[mod-turtlebots] chat: %s in %s (%s, %u%%) - no budget this minute", from->GetName(), channel, kind, chance);
                     return;
+                }
+                else if (urand(1, 100) > chance)
+                {
+                    sLog.outString("[mod-turtlebots] chat: %s in %s (%s, %u%%) - let it pass", from->GetName(), channel, kind, chance);
+                    return;
+                }
             }
             bool const chatter = !location && !named && !haveFact;
             // Who answers: a resident that is up (the same zone as the asker first, else any of
@@ -5401,7 +5422,10 @@ public:
             else
                 talker = res ? res : ResidentToTalk(from);
             if (!talker && !shadow.low && (!g_llmShadowVoices || !g_worldScript || !g_worldScript->PickShadow(from->GetTeam(), 0, shadow)))
-                return; // nobody to answer
+            {
+                sLog.outString("[mod-turtlebots] chat: %s in %s (%s) - nobody to answer", from->GetName(), channel, kind);
+                return;
+            }
             g_chanAnswerAt[playerLow] = nowMs + 20000u;
             if (chatter && strcmp(kind, "followup") != 0)
                 g_chanTalkTokens -= 1.f;

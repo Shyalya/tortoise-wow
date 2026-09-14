@@ -136,8 +136,8 @@ mod-turtlebots.LLM.MarketCallMinutes = 3
 # CHANNEL SMALL TALK
 #
 #    Ordinary lines in World, General and Trade (a greeting, a question, a remark, a jab) get an
-#    answer sometimes, the way a populated channel behaves: a greeting 70 %, a question 60 %, a
-#    remark 25 %, a jab or "anyone here?" 75-80 %, capped city-wide per minute. Place and lore
+#    answer sometimes, the way a populated channel behaves: a greeting 85 %, a question 65 %, a
+#    remark 40 %, a jab or "anyone here?" 75-80 %, capped city-wide per minute. Place and lore
 #    questions (places by name via the teleport table, crafts without the word "trainer", the
 #    nearest one anywhere on the map) and a resident called by name are always answered.
 #    A resident that is up answers (the asker's zone first); while the city sleeps a resident
@@ -174,7 +174,7 @@ mod-turtlebots.Debug.ChannelSelfTest = 0
 #    replies once more (40 %). A Trade call draws a second resident's interest or haggling, and
 #    the caller answers back (40 %). Sleeping residents take part in all of it, so the channels
 #    are populated whether a city is awake or not. A player who was answered in a channel is
-#    answered again by the same resident when they reply within 90 s (85 %, no pause) - a
+#    answered again by the same resident when they reply within 90 s (95 %, no pause) - a
 #    conversation, corrections included. Only while a real player is online.
 #
 #    mod-turtlebots.LLM.WorldTalkMinutes
