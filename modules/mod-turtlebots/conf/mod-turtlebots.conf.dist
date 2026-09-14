@@ -210,6 +210,34 @@ mod-turtlebots.Memory.Enabled = 1
 mod-turtlebots.Memory.ReturnMinutes = 120
 
 ###################################################################################################
+# TRAVEL BETWEEN CITIES (#23)
+#
+#    Residents travel between the capitals of their faction: by flight on the same continent
+#    (Orgrimmar - Thunder Bluff, Stormwind - Ironforge; the real taxi ride, node by node), by
+#    their own portal if they are a mage of the level. Another continent without a portal is
+#    not reachable yet (no zeppelin). A visitor lives in the other city for 8-15 minutes (its
+#    errands, channels and fishing spots are those of that city) and flies home. A service
+#    asked for in a channel (water, food, healthstone, portal, a buff) fetches a resident of
+#    the right class: one in the player's city walks over; else one from another city travels
+#    there; else one is woken in its home city and sent on its way. The player has to stand in
+#    a capital - residents do not leave the cities.
+#
+#    mod-turtlebots.Travel.Enabled
+#        Default: 1
+#
+#    mod-turtlebots.Travel.TripMinutes
+#        One ambient departure per N minutes city-wide (only while a real player is online).
+#        0 = no ambient trips. Default: 20
+#
+#    mod-turtlebots.Travel.Dispatch
+#        Channel requests fetch a resident as described. Default: 1
+###################################################################################################
+
+mod-turtlebots.Travel.Enabled = 1
+mod-turtlebots.Travel.TripMinutes = 20
+mod-turtlebots.Travel.Dispatch = 1
+
+###################################################################################################
 # GROUP, GUILD, EMOTES
 #
 #    A resident accepts a real player's group invitation (and stays half an hour, or until no

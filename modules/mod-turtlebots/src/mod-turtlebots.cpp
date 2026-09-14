@@ -113,11 +113,42 @@ namespace
     static uint32 const kCityCount = sizeof(g_cities) / sizeof(g_cities[0]);
     static std::vector<uint32> g_cityEnabled;   // indices into g_cities, from Town.Cities
     static std::map<uint32, uint32> g_homeCity; // botGuid -> city index (residents of both kinds)
+    // ---- Travel between cities (#23) ----
+    enum TravelPhase : uint8 { TRV_TO_NODE = 0, TRV_FLY = 1, TRV_PORTAL = 2, TRV_ARRIVE = 3 };
+    struct TravelState
+    {
+        uint8 phase = TRV_TO_NODE; uint32 toCi = 0, fromCi = 0; uint32 atMs = 0;
+        std::vector<uint32> nodes;          // the flight, node by node
+        float tx = 0.f, ty = 0.f, tz = 0.f; // the flight master
+        float lx = 0.f, ly = 0.f; uint32 lastMs = 0, stallMs = 0;
+        uint32 spell = 0;                   // the portal spell, when a mage takes its own portal
+        uint32 forPlayer = 0; std::string request; // on a call: who asked, and for what
+        std::string how;
+    };
+    static std::map<uint32, TravelState> g_travel;   // botGuid -> journey in progress
+    static std::map<uint32, uint32> g_visitCity;     // botGuid -> city index while away from home
+    static std::map<uint32, uint32> g_visitUntilMs;  // botGuid -> when to head home (0 = stay)
+    static uint32 g_nextTripMs = 0;                  // one ambient departure per Travel.TripMinutes
+    static bool   g_travelEnabled = true;            // Travel.Enabled
+    static uint32 g_travelTripMinutes = 20;          // Travel.TripMinutes (0 = no ambient trips)
+    static bool   g_travelDispatch = true;           // Travel.Dispatch: channel requests fetch a resident
+    struct ServiceCall { uint32 player; uint32 ci; std::string request; uint32 atMs; uint32 resident; };
+    static std::vector<ServiceCall> g_serviceCalls;  // requests waiting for a resident to be woken and sent
+    struct ServiceArrival { uint32 resident; uint32 player; std::string request; uint32 atMs; };
+    static std::vector<ServiceArrival> g_serviceArrivals; // residents sent to a player: walk up and serve
 
-    static uint32 CityIdxOfBot(uint32 low)
+    static uint32 HomeCityIdxOfBot(uint32 low)
     {
         auto it = g_homeCity.find(low);
         return (it != g_homeCity.end() && it->second < kCityCount) ? it->second : 0;
+    }
+    // The city a resident counts as being in: the one it is visiting, else home.
+    static uint32 CityIdxOfBot(uint32 low)
+    {
+        auto v = g_visitCity.find(low);
+        if (v != g_visitCity.end() && v->second < kCityCount)
+            return v->second;
+        return HomeCityIdxOfBot(low);
     }
     static char const* CityNameOfBot(Player* b) { return g_cities[CityIdxOfBot(b->GetGUIDLow())].name; }
     static bool CityEnabled(uint32 ci) { return std::find(g_cityEnabled.begin(), g_cityEnabled.end(), ci) != g_cityEnabled.end(); }
@@ -1350,6 +1381,9 @@ namespace
         g_llmWorldTalkMinutes = sConfig.GetIntDefault("mod-turtlebots.LLM.WorldTalkMinutes", 4);
         g_llmMarketReplyChance = sConfig.GetIntDefault("mod-turtlebots.LLM.MarketReplyChance", 60);
         g_memoryEnabled       = sConfig.GetBoolDefault("mod-turtlebots.Memory.Enabled", true);
+        g_travelEnabled       = sConfig.GetBoolDefault("mod-turtlebots.Travel.Enabled", true);
+        g_travelTripMinutes   = sConfig.GetIntDefault("mod-turtlebots.Travel.TripMinutes", 20);
+        g_travelDispatch      = sConfig.GetBoolDefault("mod-turtlebots.Travel.Dispatch", true);
         g_memoryReturnMinutes = sConfig.GetIntDefault("mod-turtlebots.Memory.ReturnMinutes", 120);
         {
             // Debug.ChannelSelfTest: on the reload that switches it on, four channel lines are fed
@@ -1361,7 +1395,8 @@ namespace
                 g_chanTestLines = { { "World", "hi", now + 3000 },
                                     { "World", "where can i find the next blacksmith?", now + 26000 },
                                     { "World", "where can i find ratchet?", now + 49000 },
-                                    { "World", "what do you think of the mage class?", now + 72000 } };
+                                    { "World", "what do you think of the mage class?", now + 72000 },
+                                    { "World", "anyone got some water? need a mage", now + 95000 } };
             }
             g_chanSelfTest = test;
         }
@@ -3145,6 +3180,7 @@ namespace
 
     void ReplayOffer(Player* seller, std::string const& channel, std::string const& msg); // defined after the chat script
     void ChannelSelfTestTick(uint32 nowMs);                                                // same
+    void ServiceArrivalTick(uint32 nowMs);                                                 // same
 
     static void HandOverItems(Player* caster, Player* plr, uint32 itemId, uint32 count)
     {
@@ -4096,6 +4132,327 @@ namespace
             return true;
         }
 
+        // ---- Travel between cities (#23) ----
+        static uint32 PortalSpellToCity(uint32 ci, uint32& reqLevel)
+        {
+            static uint32 const kSpell[] = { 11417, 11420, 11418, 10059, 11416, 11419 }; // Org, TB, UC, SW, IF, Darnassus
+            static uint32 const kLevel[] = { 40, 50, 40, 40, 40, 50 };
+            if (ci >= 6) return 0;
+            reqLevel = kLevel[ci];
+            return kSpell[ci];
+        }
+
+        // The flight route from one city to another on the same continent: a breadth-first
+        // walk over the taxi paths of the faction, node by node; empty when there is none.
+        static std::vector<uint32> TaxiRouteBetween(uint32 fromCi, uint32 toCi, Team team)
+        {
+            std::vector<uint32> none;
+            if (fromCi >= kCityCount || toCi >= kCityCount) return none;
+            City const& a = g_cities[fromCi]; City const& b = g_cities[toCi];
+            if (a.map != b.map) return none;
+            uint32 const src = sObjectMgr.GetNearestTaxiNode(a.x, a.y, a.z, a.map, team);
+            uint32 const dst = sObjectMgr.GetNearestTaxiNode(b.x, b.y, b.z, b.map, team);
+            if (!src || !dst || src == dst) return none;
+            uint32 const side = team == HORDE ? 0 : 1;
+            std::map<uint32, uint32> prev; std::deque<uint32> q;
+            q.push_back(src); prev[src] = src;
+            while (!q.empty())
+            {
+                uint32 const n = q.front(); q.pop_front();
+                if (n == dst) break;
+                auto it = sTaxiPathSetBySource.find(n);
+                if (it == sTaxiPathSetBySource.end()) continue;
+                for (auto const& e : it->second)
+                {
+                    uint32 const m = e.first;
+                    if (prev.count(m)) continue;
+                    TaxiNodesEntry const* te = sObjectMgr.GetTaxiNodeEntry(m);
+                    if (!te || te->map_id != a.map || !te->MountCreatureID[side]) continue;
+                    prev[m] = n; q.push_back(m);
+                }
+            }
+            if (!prev.count(dst)) return none;
+            std::vector<uint32> route;
+            for (uint32 n = dst; ; n = prev[n]) { route.push_back(n); if (n == src) break; }
+            std::reverse(route.begin(), route.end());
+            return route;
+        }
+
+        static bool CanTravelTo(Player* bot, uint32 ci)
+        {
+            uint32 req = 0; uint32 const sp = PortalSpellToCity(ci, req);
+            if (bot->GetClass() == CLASS_MAGE && sp && bot->GetLevel() >= req && bot->HasSpell(sp))
+                return true;
+            return !TaxiRouteBetween(CityIdxOfBot(bot->GetGUIDLow()), ci, bot->GetTeam()).empty();
+        }
+
+        // Set out for another city: a mage of the level takes its own portal, everyone else
+        // the flight from the flight master of the city it is in. False when there is no way
+        // (another continent without a portal: the zeppelin is not taken yet).
+        bool StartTravel(Player* bot, uint32 toCi, char const* why, uint32 forPlayer, std::string const& request)
+        {
+            uint32 const low = bot->GetGUIDLow();
+            if (!g_travelEnabled || g_travel.count(low) || toCi >= kCityCount || bot->IsInCombat())
+                return false;
+            uint32 const fromCi = CityIdxOfBot(low);
+            if (fromCi == toCi)
+                return false;
+            TravelState ts;
+            ts.toCi = toCi; ts.fromCi = fromCi; ts.atMs = WorldTimer::getMSTime(); ts.forPlayer = forPlayer; ts.request = request;
+            uint32 req = 0; uint32 const spell = PortalSpellToCity(toCi, req);
+            if (bot->GetClass() == CLASS_MAGE && spell && bot->GetLevel() >= req && bot->HasSpell(spell))
+            {
+                ts.phase = TRV_PORTAL; ts.spell = spell; ts.how = "portal";
+            }
+            else
+            {
+                ts.nodes = TaxiRouteBetween(fromCi, toCi, bot->GetTeam());
+                if (ts.nodes.empty())
+                    return false;
+                TaxiNodesEntry const* n = sObjectMgr.GetTaxiNodeEntry(ts.nodes.front());
+                if (!n) return false;
+                ts.tx = n->x; ts.ty = n->y; ts.tz = n->z; ts.phase = TRV_TO_NODE; ts.how = "flight";
+            }
+            if (g_fishing.count(low) || bot->IsNonMeleeSpellCasted(false))
+                bot->InterruptNonMeleeSpells(false); // the line comes out of the water
+            g_fishing.erase(low); g_cooking.erase(low); g_errand.erase(low); g_botFollow.erase(low);
+            g_travel[low] = ts;
+            sLog.outString("[mod-turtlebots] travel: %s leaves %s for %s by %s (%s).", bot->GetName(), g_cities[fromCi].name, g_cities[toCi].name, ts.how.c_str(), why);
+            if (forPlayer)
+            {
+                if (Player* p = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, forPlayer)))
+                    QueueLlmChannel(bot, ResidentSystemPrompt(bot),
+                                    std::string(p->GetName()) + " asked in the World channel for help (" + request + "). You are in " + g_cities[fromCi].name +
+                                    " and set out for " + g_cities[toCi].name + " by " + ts.how + ": tell them in one short line that you are on your way and that it takes a few minutes.",
+                                    std::string("On my way to ") + g_cities[toCi].name + ", give me a few minutes.", "World", std::string(),
+                                    ts.atMs + 2000u, "channel", forPlayer);
+            }
+            return true;
+        }
+
+        void EndTravel(Player* bot, char const* why)
+        {
+            uint32 const low = bot->GetGUIDLow();
+            auto it = g_travel.find(low);
+            if (it != g_travel.end())
+                sLog.outString("[mod-turtlebots] travel: %s gives up the journey to %s - %s.", bot->GetName(), g_cities[it->second.toCi].name, why);
+            g_travel.erase(low);
+            bot->GetMotionMaster()->MoveIdle();
+            bot->StopMoving(true);
+        }
+
+        void HandleTravel(Player* bot, TravelState& ts)
+        {
+            uint32 const low = bot->GetGUIDLow();
+            uint32 const now = WorldTimer::getMSTime();
+            switch (ts.phase)
+            {
+                case TRV_TO_NODE:
+                {
+                    float const dx = bot->GetPositionX() - ts.tx, dy = bot->GetPositionY() - ts.ty;
+                    float const d2 = dx * dx + dy * dy;
+                    if (d2 > 15.f * 15.f && now - ts.atMs <= 150000u)
+                    {
+                        if (!ts.lastMs || now - ts.lastMs >= 1000)
+                        {
+                            float const mx = bot->GetPositionX() - ts.lx, my = bot->GetPositionY() - ts.ly;
+                            if (ts.lastMs && mx * mx + my * my < 0.25f) ts.stallMs += now - ts.lastMs; else ts.stallMs = 0;
+                            ts.lx = bot->GetPositionX(); ts.ly = bot->GetPositionY(); ts.lastMs = now;
+                        }
+                        if (ts.stallMs >= 8000) { EndTravel(bot, "stalled on the way to the flight master"); return; }
+                        MountUp(bot);
+                        if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
+                            bot->GetMotionMaster()->MovePoint(0, ts.tx, ts.ty, ts.tz, MOVE_PATHFINDING);
+                        return;
+                    }
+                    if (d2 > 28.f * 28.f) { EndTravel(bot, "could not reach the flight master"); return; }
+                    bot->GetMotionMaster()->MoveIdle(); bot->StopMoving(true); bot->Unmount();
+                    SeedPurse(bot);
+                    if (!bot->ActivateTaxiPathTo(ts.nodes, nullptr, 0, true)) { EndTravel(bot, "the flight master would not take it"); return; }
+                    ts.phase = TRV_FLY; ts.atMs = now;
+                    sLog.outString("[mod-turtlebots] travel: %s takes off for %s (%u hops).", bot->GetName(), g_cities[ts.toCi].name, uint32(ts.nodes.size() - 1));
+                    return;
+                }
+                case TRV_FLY:
+                    if (bot->IsTaxiFlying())
+                    {
+                        if (now - ts.atMs > 15u * 60000u) EndTravel(bot, "the flight never ended");
+                        return;
+                    }
+                    if (now - ts.atMs < 3000u) return; // the taxi state takes a moment to set
+                    ts.phase = TRV_ARRIVE; ts.atMs = now;
+                    return;
+                case TRV_PORTAL:
+                {
+                    if (!ts.lastMs)
+                    {
+                        bot->GetMotionMaster()->MoveIdle(); bot->StopMoving(true); bot->Unmount();
+                        bot->CastSpell(bot, ts.spell, false);
+                        ts.lastMs = now;
+                        return;
+                    }
+                    if (bot->IsNonMeleeSpellCasted(false)) return; // the portal takes its time to open
+                    GameObject* go = bot->GetGameObject(ts.spell);
+                    if (!go)
+                    {
+                        if (now - ts.lastMs > 20000u) EndTravel(bot, "no portal came of the cast");
+                        return;
+                    }
+                    go->Use(bot); // step through
+                    ts.phase = TRV_ARRIVE; ts.atMs = now;
+                    return;
+                }
+                case TRV_ARRIVE:
+                {
+                    if (bot->IsBeingTeleported()) return;
+                    City const& c = g_cities[ts.toCi];
+                    if (bot->GetMapId() != c.map || bot->GetDistance2d(c.x, c.y) > 1500.f)
+                    {
+                        if (now - ts.atMs < 20000u) return; // a teleport may still be in flight
+                        EndTravel(bot, "did not end up in the city");
+                        return;
+                    }
+                    uint32 const toCi = ts.toCi, forPlayer = ts.forPlayer;
+                    std::string const request = ts.request, how = ts.how;
+                    g_travel.erase(low); // ts is dead from here on
+                    if (toCi == HomeCityIdxOfBot(low)) { g_visitCity.erase(low); g_visitUntilMs.erase(low); }
+                    else { g_visitCity[low] = toCi; g_visitUntilMs[low] = forPlayer ? 0u : now + urand(8u, 15u) * 60000u; }
+                    g_chanJoined.erase(low); // the channels of this city
+                    g_poiAvoid.erase(low);
+                    g_fishSpotsDiscovered.count(toCi); // (spots are found on the first fishing wish)
+                    sLog.outString("[mod-turtlebots] travel: %s arrived in %s by %s%s.", bot->GetName(), c.name, how.c_str(),
+                                   toCi == HomeCityIdxOfBot(low) ? " (home again)" : "");
+                    if (forPlayer)
+                        g_serviceArrivals.push_back({ low, forPlayer, request, now });
+                    bot->GetMotionMaster()->MovePoint(0, c.x, c.y, c.z, MOVE_PATHFINDING);
+                    return;
+                }
+            }
+        }
+
+        // The class that can serve a request said in a channel; 0xFF = any of the buffers.
+        static uint8 ServiceClassFor(std::string const& lower)
+        {
+            if (lower.find("healthstone") != std::string::npos || lower.find("health stone") != std::string::npos || lower.find("soulstone") != std::string::npos)
+                return CLASS_WARLOCK;
+            if (lower.find("portal") != std::string::npos || ContainsWord(lower, "port") || lower.find("water") != std::string::npos ||
+                lower.find("drink") != std::string::npos || lower.find("mana") != std::string::npos || lower.find("food") != std::string::npos ||
+                lower.find("bread") != std::string::npos || lower.find("hungry") != std::string::npos || ContainsWord(lower, "eat"))
+                return CLASS_MAGE;
+            if (lower.find("buff") != std::string::npos || lower.find("bless") != std::string::npos || lower.find("fortitude") != std::string::npos ||
+                lower.find("intellect") != std::string::npos || lower.find("mark of the wild") != std::string::npos)
+                return 0xFF;
+            return 0;
+        }
+
+        static bool ClassServes(uint8 cls, uint8 wanted)
+        {
+            if (wanted == 0xFF) return cls == CLASS_PRIEST || cls == CLASS_MAGE || cls == CLASS_DRUID || cls == CLASS_PALADIN;
+            return cls == wanted;
+        }
+
+    public:
+        // A service asked for in a channel: a resident of the right class in the player's city
+        // walks over; without one, a resident of another city travels there (flight, or its own
+        // portal); with none up anywhere, a fitting one is woken in its home city and sent on
+        // its way. Only for a player standing in a capital - residents do not leave the cities.
+        bool RequestService(Player* from, char const* msg, char const* channel)
+        {
+            if (!g_travelEnabled || !g_travelDispatch || !from || !msg)
+                return false;
+            std::string const lower = LowerStr(msg);
+            uint8 const cls = ServiceClassFor(lower);
+            if (!cls)
+                return false;
+            uint32 ci = kCityCount;
+            for (uint32 c : g_cityEnabled)
+                if (g_cities[c].zone == from->GetZoneId()) { ci = c; break; }
+            if (ci >= kCityCount || g_cities[ci].team != from->GetTeam())
+                return false;
+            uint32 const plow = from->GetGUIDLow();
+            for (ServiceCall const& sc : g_serviceCalls) if (sc.player == plow) return true;
+            for (ServiceArrival const& sa : g_serviceArrivals) if (sa.player == plow) return true;
+            uint32 const nowMs = WorldTimer::getMSTime();
+            auto fits = [&](Player* r) {
+                return r && r->IsInWorld() && !r->IsBeingTeleported() && r->GetTeam() == from->GetTeam() && ClassServes(r->GetClass(), cls) &&
+                       !g_travel.count(r->GetGUIDLow()) && !r->GetTradeData(); };
+            Player* local = nullptr; float bestD = 1.0e9f;
+            for (uint32 low : g_turtleResidents)
+            {
+                Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+                if (!fits(r) || CityIdxOfBot(low) != ci || r->GetMapId() != from->GetMapId()) continue;
+                float const d = from->GetDistance(r);
+                if (d < bestD) { bestD = d; local = r; }
+            }
+            if (local)
+            {
+                uint32 const rlow = local->GetGUIDLow();
+                g_fishing.erase(rlow); g_cooking.erase(rlow); g_errand.erase(rlow);
+                g_serviceArrivals.push_back({ rlow, plow, std::string(msg), nowMs });
+                QueueLlmChannel(local, ResidentSystemPrompt(local),
+                                std::string(from->GetName()) + " asked in the " + channel + " channel: " + msg +
+                                " You are in the same city and are walking over to them right now: say so in one short line.",
+                                "Coming over, hold on.", channel, std::string(), nowMs + 2000u, "channel", plow);
+                sLog.outString("[mod-turtlebots] service: %s (%s) asked in %s; %s is in %s and walks over (%.0f yd).", from->GetName(), g_cities[ci].name, channel,
+                               local->GetName(), g_cities[ci].name, bestD);
+                return true;
+            }
+            for (uint32 low : g_turtleResidents)
+            {
+                Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+                if (!fits(r) || CityIdxOfBot(low) == ci || g_visitCity.count(low)) continue;
+                if (!CanTravelTo(r, ci)) continue;
+                if (StartTravel(r, ci, "a call", plow, std::string(msg)))
+                {
+                    sLog.outString("[mod-turtlebots] service: %s (%s) asked in %s; %s comes from %s.", from->GetName(), g_cities[ci].name, channel,
+                                   r->GetName(), g_cities[CityIdxOfBot(low)].name);
+                    return true;
+                }
+            }
+            if (_tradeResponder)
+                return false; // one on watch at a time
+            _tradeWakeRequested = true; _tradeWantItem = 0; _tradeWantTeam = from->GetTeam(); _tradeWantClass = cls;
+            g_serviceCalls.push_back({ plow, ci, std::string(msg), nowMs, 0 });
+            sLog.outString("[mod-turtlebots] service: %s (%s) asked in %s; nobody of the class is up - waking one at home.", from->GetName(), g_cities[ci].name, channel);
+            return true;
+        }
+
+    private:
+        // Requests waiting for a woken resident: once it stands in its home city, it is sent
+        // on its way (or, if it lives here, straight to the player).
+        void ServiceCallTick(uint32 nowMs)
+        {
+            for (size_t k = 0; k < g_serviceCalls.size(); )
+            {
+                ServiceCall& sc = g_serviceCalls[k];
+                Player* p = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, sc.player));
+                bool done = !p || !p->IsInWorld() || nowMs - sc.atMs > 6u * 60000u;
+                if (!done && !sc.resident && _tradeResponder && _placed.count(_tradeResponder))
+                {
+                    Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, _tradeResponder));
+                    if (r && r->IsInWorld() && !r->IsBeingTeleported())
+                    {
+                        if (CityIdxOfBot(_tradeResponder) == sc.ci)
+                        {
+                            g_serviceArrivals.push_back({ _tradeResponder, sc.player, sc.request, nowMs });
+                            done = true;
+                        }
+                        else if (StartTravel(r, sc.ci, "a call", sc.player, sc.request))
+                            sc.resident = _tradeResponder;
+                        else
+                        {
+                            sLog.outString("[mod-turtlebots] service: %s cannot get to %s for %s - no way there.", r->GetName(), g_cities[sc.ci].name, p->GetName());
+                            done = true;
+                        }
+                    }
+                }
+                else if (!done && sc.resident && !g_travel.count(sc.resident))
+                    done = true; // arrived, or gave up: the arrival list takes over
+                if (done) { g_serviceCalls[k] = g_serviceCalls.back(); g_serviceCalls.pop_back(); }
+                else ++k;
+            }
+        }
+
         // Faithful fishing: walk to the water, cast Fishing, and on the bite use the bobber
         // through the real game-object path -> real catch from the zone loot table + skill-up.
         void HandleFishing(Player* bot, FishState& fs)
@@ -4366,9 +4723,35 @@ namespace
             if (!_placed.count(low))
             {
                 _placed.insert(low);
+                g_travel.erase(low); g_visitCity.erase(low); g_visitUntilMs.erase(low); // a fresh login starts at home
                 City const& home = g_cities[CityIdxOfBot(low)];
                 bot->TeleportTo(home.map, home.x, home.y, home.z, home.o);
                 return; // teleport finishes next tick via CompleteBotTeleport
+            }
+
+            // A journey in progress (#23) comes before everything else.
+            {
+                auto tv = g_travel.find(low);
+                if (tv != g_travel.end())
+                {
+                    HandleTravel(bot, tv->second);
+                    return;
+                }
+            }
+
+            // Home again after a visit (#23) - even in the middle of a fishing session, but not
+            // out of a trade, a group, a pending portal or a fight.
+            if (g_visitCity.count(low) && g_visitUntilMs[low] && int32(WorldTimer::getMSTime() - g_visitUntilMs[low]) >= 0 &&
+                !bot->GetTradeData() && !bot->GetGroup() && !bot->IsInCombat() && !bot->IsBeingTeleported())
+            {
+                bool portalPending = false;
+                for (auto const& pp : g_pendingPortals) if (pp.mage == low) { portalPending = true; break; }
+                if (!portalPending)
+                {
+                    if (StartTravel(bot, HomeCityIdxOfBot(low), "heading home", 0, std::string()))
+                        return;
+                    g_visitUntilMs[low] = WorldTimer::getMSTime() + 5u * 60000u; // no way home right now: try again later
+                }
             }
 
             // A real player's group invitation is accepted (the portal and trade flows accept
@@ -4599,6 +4982,32 @@ namespace
                     g_botFollow[low] = FollowState{ mate->GetGUIDLow(), now + urand(20000u, 45000u) };
                     nextAt = now + urand(25000, 50000);
                     return;
+                }
+            }
+
+            // Now and then a resident visits another city of its faction (#23): by flight on
+            // the same continent, by its own portal if it is a mage of the level; it lives there
+            // a while and comes back. One departure per Travel.TripMinutes city-wide, only while
+            // a real player is online (or a city is forced awake), an awake city preferred.
+            if (g_travelEnabled && g_travelTripMinutes && !g_visitCity.count(low) &&
+                (g_realPlayersOnline || !_townForceAwake.empty()) && int32(now - g_nextTripMs) >= 0 && urand(0, 99) < 5)
+            {
+                std::vector<uint32> targets, awake;
+                for (uint32 ci : g_cityEnabled)
+                    if (ci != CityIdxOfBot(low) && g_cities[ci].team == bot->GetTeam() && CanTravelTo(bot, ci))
+                    {
+                        targets.push_back(ci);
+                        if (_zoneAwake[g_cities[ci].zone]) awake.push_back(ci);
+                    }
+                if (!targets.empty())
+                {
+                    uint32 const to = awake.empty() ? targets[urand(0, uint32(targets.size()) - 1)] : awake[urand(0, uint32(awake.size()) - 1)];
+                    g_nextTripMs = now + g_travelTripMinutes * 60000u;
+                    if (StartTravel(bot, to, "a visit", 0, std::string()))
+                    {
+                        nextAt = now + 3000;
+                        return;
+                    }
                 }
             }
 
@@ -5011,7 +5420,7 @@ namespace
             for (auto it = _poolResidents.begin(); it != _poolResidents.end(); )
             {
                 uint32 const low = *it;
-                if (CityIdxOfBot(low) != ci) { ++it; continue; }
+                if (CityIdxOfBot(low) != ci || g_travel.count(low)) { ++it; continue; } // a traveler finishes its journey first
                 ObjectGuid guid(HIGHGUID_PLAYER, low);
                 HeadlessSessionState st = sWorld.GetHeadlessSessionState(guid);
                 if (st == HeadlessSessionState::NotFound)
@@ -5041,6 +5450,8 @@ namespace
         // to the normal sleep path.
         void TradeWakeTick(uint32 nowMs)
         {
+            ServiceCallTick(nowMs);
+            ServiceArrivalTick(nowMs);
             if (_tradeResponder)
             {
                 Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, _tradeResponder));
@@ -5048,6 +5459,9 @@ namespace
                 if (!busy)
                     for (auto const& kv : g_sellIntent)
                         if (kv.second.resident == _tradeResponder) { busy = true; break; }
+                if (!busy && g_travel.count(_tradeResponder)) busy = true; // on its way to a caller
+                if (!busy) for (auto const& sa : g_serviceArrivals) if (sa.resident == _tradeResponder) { busy = true; break; }
+                if (!busy) for (auto const& sc : g_serviceCalls) if (!sc.resident || sc.resident == _tradeResponder) { busy = true; break; }
                 if (busy)
                     _tradeUntilMs = nowMs + 300000u;
                 else if (int32(_tradeUntilMs - nowMs) <= 0)
@@ -5063,14 +5477,21 @@ namespace
                 return; // one is up already
             ItemPrototype const* proto = _tradeWantItem ? sObjectMgr.GetItemPrototype(_tradeWantItem) : nullptr;
             uint32 pick = _residents; // sentinel: nobody
+            uint8 const wantedClass = _tradeWantClass;
+            _tradeWantClass = 0;
             for (uint32 i = 0; i < _residents && pick == _residents; ++i)
-                if (_charByIndex.count(i) && TeamOfIndex(i) == _tradeWantTeam && (!proto || ClassFitsItem(ComboOfIndex(i).cls, proto)))
+                if (_charByIndex.count(i) && TeamOfIndex(i) == _tradeWantTeam && (!proto || ClassFitsItem(ComboOfIndex(i).cls, proto)) &&
+                    (!wantedClass || ClassServes(ComboOfIndex(i).cls, wantedClass)))
                     pick = i;
-            for (uint32 i = 0; i < _residents && pick == _residents; ++i)
+            for (uint32 i = 0; i < _residents && pick == _residents && !wantedClass; ++i)
                 if (_charByIndex.count(i) && TeamOfIndex(i) == _tradeWantTeam)
                     pick = i; // nobody fits: the first resident of that faction answers (and says so)
             if (pick == _residents)
+            {
+                if (wantedClass)
+                    sLog.outString("[mod-turtlebots] service: no resident of the wanted class to wake.");
                 return;
+            }
             _tradeResponder = _charByIndex[pick];
             _tradeUntilMs = nowMs + 600000u;
             sLog.outString("[mod-turtlebots] trade: city asleep - waking %s (%s) to answer a Trade-channel offer%s.",
@@ -5255,7 +5676,8 @@ namespace
             bool const resident  = (i < _residents);
             bool const townGated = _townEnable && resident;
             bool const cityAwake = !townGated || _zoneAwake[HomeZoneOf(i)] ||
-                                   charLow == _tradeResponder; // kept up for a Trade-channel deal
+                                   charLow == _tradeResponder || g_travel.count(charLow) ||
+                                   (g_visitCity.count(charLow) && _zoneAwake[g_cities[g_visitCity[charLow]].zone]); // a deal, a journey, a visit to an awake city
             if (state == HeadlessSessionState::Active)
             {
                 if (townGated && !cityAwake)
@@ -5330,6 +5752,7 @@ namespace
         uint32 _tradeResponder = 0;            // char low kept up to answer a Trade-channel offer
         uint32 _tradeUntilMs = 0;              // ... until then (extended while a deal is pending)
         uint32 _tradeWantItem = 0;             // the item offered (class fit for the pick)
+        uint8  _tradeWantClass = 0;            // a service call: the class wanted (0 = any)
         bool   _tradeWakeRequested = false;
         Team   _tradeWantTeam = HORDE;          // faction of the seller (a city trades with its own)
         uint32 _startDelayMs;
@@ -5760,6 +6183,16 @@ public:
         else
         {
             std::string const lower = LowerStr(msg);
+            // A service asked for in the channel (#23): someone of the right class comes over -
+            // from this city, from another, or woken at home and sent on its way.
+            if (g_worldScript && HasServiceKeyword(lower) &&
+                (lower.find('?') != std::string::npos || lower.find("need") != std::string::npos || lower.find("any") != std::string::npos ||
+                 lower.find("looking") != std::string::npos || lower.find("lf ") != std::string::npos || lower.find("some") != std::string::npos ||
+                 lower.find("can ") != std::string::npos || lower.find("please") != std::string::npos || lower.find("pls") != std::string::npos))
+            {
+                if (g_worldScript->RequestService(from, msg, channel))
+                    return;
+            }
             uint32 f = 0; std::string a, b, c; bool mb = false;
             bool const location = LocationQuery(lower, f, a, b, c, mb);
             Player* res = location ? BestResidentFor(from) : nullptr;
@@ -6307,6 +6740,47 @@ namespace
         g_llmJobs.back().partnerGuid = speakerLow;
         sLog.outString("[mod-turtlebots] %s reply: %s%s answers %s in %s.", market ? "market" : "world",
                        other ? other->GetName() : shadow.name.c_str(), other ? "" : " (asleep)", speakerName.c_str(), channel.c_str());
+    }
+
+    // A resident sent to a player (#23): walk up, then serve as if the request had been said
+    // out loud beside it (the usual /say service flow), and remember the errand.
+    void ServiceArrivalTick(uint32 nowMs)
+    {
+        for (size_t k = 0; k < g_serviceArrivals.size(); )
+        {
+            ServiceArrival& sa = g_serviceArrivals[k];
+            Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, sa.resident));
+            Player* p = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, sa.player));
+            bool done = false;
+            if (!r || !p || !r->IsInWorld() || !p->IsInWorld() || !p->GetSession() || nowMs - sa.atMs > 6u * 60000u)
+                done = true;
+            else if (g_travel.count(sa.resident))
+                ; // still on the way
+            else if (r->GetMapId() != p->GetMapId() || r->GetDistance(p) > 400.f)
+                done = nowMs - sa.atMs > 4u * 60000u; // not here: wait a while, then let it go
+            else if (r->GetDistance(p) > 8.f)
+            {
+                auto fo = g_botFollow.find(sa.resident);
+                if (fo == g_botFollow.end() || fo->second.target != sa.player)
+                    g_botFollow[sa.resident] = FollowState{ sa.player, nowMs + 120000u };
+            }
+            else
+            {
+                g_botFollow.erase(sa.resident);
+                r->GetMotionMaster()->MoveIdle();
+                r->StopMoving(true);
+                r->SetFacingTo(r->GetAngle(p));
+                if (g_chatScript)
+                    g_chatScript->OnChatSay(p, 30.f, sa.request.c_str());
+                Remember(sa.resident, p, "came over for: " + sa.request.substr(0, 40));
+                sLog.outString("[mod-turtlebots] service: %s reached %s and serves the request (%s).", r->GetName(), p->GetName(), sa.request.substr(0, 40).c_str());
+                if (g_visitCity.count(sa.resident))
+                    g_visitUntilMs[sa.resident] = nowMs + 10u * 60000u;
+                done = true;
+            }
+            if (done) { g_serviceArrivals[k] = g_serviceArrivals.back(); g_serviceArrivals.pop_back(); }
+            else ++k;
+        }
     }
 
     // Debug.ChannelSelfTest: the queued lines go through the channel handler in the name of
