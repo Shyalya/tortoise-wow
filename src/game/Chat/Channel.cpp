@@ -644,44 +644,62 @@ void Channel::Moderate(ObjectGuid guid)
     SendToAll(&data);
 }
 
+Channel::SayRefusal Channel::CheckSay(ObjectGuid guid, bool skipCheck)
+{
+    if (skipCheck)
+        return SAY_OK;
+
+    if (!IsOn(guid))
+        return SAY_NOT_MEMBER;
+
+    PlayerPointer pPlayer = GetPlayer(guid);
+    uint32 const sec = pPlayer ? pPlayer->GetSession()->GetSecurity() : 0;
+    uint8  const honor_rank = pPlayer ? pPlayer->ToPlayer()->GetHonorMgr().GetCurrentHonorRank() : 0;
+
+    if (m_players[guid].IsMuted() || ((GetChannelId() == CHANNEL_ID_WORLD_DEFENSE) && (honor_rank < 15)))
+        return SAY_MUTED;
+
+    if (m_moderate && !m_players[guid].IsModerator() && sec < SEC_OBSERVER)
+        return SAY_NOT_MODERATOR;
+
+    return SAY_OK;
+}
+
 void Channel::Say(ObjectGuid guid, const char *text, uint32 lang, bool skipCheck)
 {
     if (!text)
         return;
 
     PlayerPointer pPlayer = GetPlayer(guid);
-    uint32 const sec = pPlayer ? pPlayer->GetSession()->GetSecurity() : 0;
     uint8  const honor_rank = pPlayer ? pPlayer->ToPlayer()->GetHonorMgr().GetCurrentHonorRank() : 0;
 
-    if (!skipCheck)
+    switch (CheckSay(guid, skipCheck))
     {
-        if (!IsOn(guid))
+        case SAY_NOT_MEMBER:
         {
             WorldPacket data;
             MakeNotMember(&data);
             SendToOne(&data, guid);
             return;
         }
-
-        if (m_players[guid].IsMuted() || ((GetChannelId() == CHANNEL_ID_WORLD_DEFENSE) && (honor_rank < 15)))
+        case SAY_MUTED:
         {
             WorldPacket data;
             MakeMuted(&data);
             SendToOne(&data, guid);
             return;
         }
-
-
-        if (m_moderate && !m_players[guid].IsModerator() && sec < SEC_OBSERVER)
+        case SAY_NOT_MODERATOR:
         {
             WorldPacket data;
             MakeNotModerator(&data);
             SendToOne(&data, guid);
             return;
         }
+        case SAY_OK:
+            break;
     }
 
-    
     if (pPlayer && IsDefenseChannel(GetChannelId()))
         lang = sChrRacesStore.LookupEntry(pPlayer->GetRace())->baseLanguage;
     else if (sWorld.getConfig(CONFIG_BOOL_ALLOW_TWO_SIDE_INTERACTION_CHANNEL))
@@ -712,12 +730,15 @@ void Channel::AsyncSay(ObjectGuid guid, const char* what, uint32 lang /*= LANG_U
 
     // The PlayerScript hook belongs here too, on the caller's thread: the broadcaster
     // delivers on its own thread, and module handlers that touch world state must not
-    // run there. Same delivery guards as Say(): a sender who only gets the message
-    // echoed back to himself (fingerprint-banned, or muted from public channels below
-    // the vanish level) is not heard by modules either. AsyncSay is the single entry
-    // for client and re-injected (antispam-released, skipCheck) messages alike, so the
-    // hook still fires exactly for the messages that get delivered.
-    if (lang != LANG_ADDON)
+    // run there. Same validation and delivery guards as Say(): a sender who is not on
+    // the channel, muted there, or not allowed to speak while it is moderated is refused
+    // before any hook fires (Say() answers him with the notification on delivery), and a
+    // sender who only gets the message echoed back to himself (fingerprint-banned, or
+    // muted from public channels below the vanish level) is not heard by modules either.
+    // AsyncSay is the single entry for client and re-injected (antispam-released,
+    // skipCheck) messages alike, so the hook still fires exactly for the messages that
+    // get delivered.
+    if (lang != LANG_ADDON && CheckSay(guid, skipCheck) == SAY_OK)
     {
         if (Player* pPlayer = sObjectAccessor.FindPlayer(guid))
         {

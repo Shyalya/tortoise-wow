@@ -222,6 +222,13 @@ class Channel
         // Should be only called from ChannelBroadcaster
 		void Say(ObjectGuid guid, const char* what, uint32 lang = LANG_UNIVERSAL, bool skipCheck = false);
 
+        // Why Say() would refuse a message of this sender instead of delivering it: not on the
+        // channel, muted there, or no moderator while the channel is moderated. Shared by Say()
+        // (which answers with the notification) and AsyncSay() (which fires the module hook
+        // only for messages that pass).
+        enum SayRefusal { SAY_OK, SAY_NOT_MEMBER, SAY_MUTED, SAY_NOT_MODERATOR };
+        SayRefusal CheckSay(ObjectGuid guid, bool skipCheck);
+
         // initial packet data (notify type and channel name)
         void MakeNotifyPacket(WorldPacket *data, uint8 notify_type);
         // type specific packet data
