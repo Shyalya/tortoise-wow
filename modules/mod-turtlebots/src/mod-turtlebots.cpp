@@ -394,6 +394,8 @@ namespace
     static std::map<uint32, uint32> g_botBuffAt;       // botGuid -> next ms it may proactively buff
     struct FollowState { uint32 target; uint32 untilMs; };
     static std::map<uint32, FollowState> g_botFollow;  // botGuid -> who it walks with (player or resident)
+    struct LandSpot { float x, y, z; };
+    static std::map<uint32, LandSpot> g_lastLand;       // botGuid -> where it last stood on dry land
     enum { ERR_GO = 1, ERR_DWELL = 2 };
     struct Errand { uint8 idx; uint8 phase; uint32 atMs; uint32 dwellMs; float lx = 0, ly = 0; uint32 stallMs = 0, lastMs = 0; float tx = 0, ty = 0, tz = 0; };
     static std::map<uint32, std::set<uint8>> g_poiAvoid;   // botGuid -> points it could not reach lately
@@ -913,6 +915,33 @@ namespace
         return s + ". You may bring one up when it fits. ";
     }
 
+
+    // Walk somewhere without cheating: a swimmer first returns to the shore it came
+    // from (a path computed from the water is a straight line through anything), and
+    // a target the navmesh cannot reach honestly is not walked to at all - the caller
+    // notices the standstill (stall guards) and gives the errand up.
+    static bool SafeMovePoint(Player* bot, float x, float y, float z)
+    {
+        uint32 const low = bot->GetGUIDLow();
+        if (!bot->IsInWorld() || !bot->GetMap() || bot->IsBeingTeleported())
+            return false;
+        if (bot->IsInWater())
+        {
+            auto ll = g_lastLand.find(low);
+            if (ll != g_lastLand.end() && bot->GetDistance(ll->second.x, ll->second.y, ll->second.z) > 2.f)
+            {
+                bot->GetMotionMaster()->MovePoint(0, ll->second.x, ll->second.y, ll->second.z); // the short way back to the shore
+                return true;
+            }
+        }
+        PathInfo path(bot);
+        path.calculate(x, y, z);
+        uint32 const t = uint32(path.getPathType());
+        if (t & (PATHFIND_NOPATH | PATHFIND_SHORTCUT | PATHFIND_NOT_USING_PATH))
+            return false;
+        bot->GetMotionMaster()->MovePoint(0, x, y, z, MOVE_PATHFINDING); // the one real move; the sites above call SafeMovePoint
+        return true;
+    }
 
     static void ParseLlmUrl()
     {
@@ -4023,7 +4052,7 @@ namespace
                 if (path.Length() > straight * 1.6f)
                     continue;
 
-                bot->GetMotionMaster()->MovePoint(0, l.x, l.y, l.z, MOVE_PATHFINDING);
+                SafeMovePoint(bot, l.x, l.y, l.z);
                 return true;
             }
             return false;
@@ -4046,7 +4075,7 @@ namespace
             float const startZ = z;
             if (map->GetWalkRandomPosition(nullptr, x, y, z, frand(6.0f, 18.0f)) &&
                 std::fabs(z - startZ) < 6.0f)
-                bot->GetMotionMaster()->MovePoint(0, x, y, z, MOVE_PATHFINDING);
+                SafeMovePoint(bot, x, y, z);
         }
 
         void LoadFishSpots()
@@ -4060,6 +4089,13 @@ namespace
             g_fishSpotsByCity[0].push_back({ 2000.6f, -4659.7f, 26.5f, 5.31f });
             g_fishSpotsByCity[0].push_back({ 2006.0f, -4666.0f, 26.0f, 5.31f });
             g_fishSpotsByCity[0].push_back({ 1995.0f, -4665.0f, 26.0f, 5.31f });
+            // Stormwind, walked and marked in-game (.gps at the bank, facing the water): the
+            // pond by the entrance bridge in the Valley of Heroes and three canal banks -
+            // the map search only found the high quays, which look wrong for an angler.
+            g_fishSpotsByCity[3].push_back({ -8987.57f, 406.94f, 72.83f, 0.67f });
+            g_fishSpotsByCity[3].push_back({ -8795.48f, 770.55f, 96.34f, 1.64f });
+            g_fishSpotsByCity[3].push_back({ -8853.33f, 745.49f, 101.64f, 0.53f });
+            g_fishSpotsByCity[3].push_back({ -8749.13f, 524.39f, 96.34f, 5.70f });
         }
 
         // Water inside a city, found in the map data instead of typed in: a grid around the
@@ -4074,6 +4110,8 @@ namespace
             if (ci >= kCityCount || g_fishSpotsDiscovered.count(ci) || !probe || !probe->IsInWorld() || probe->GetMapId() != g_cities[ci].map)
                 return;
             g_fishSpotsDiscovered.insert(ci);
+            if (!g_fishSpotsByCity[ci].empty())
+                return; // spots typed in by hand win over the map search
             TerrainInfo const* terrain = probe->GetMap()->GetTerrain();
             if (!terrain)
                 return;
@@ -4320,7 +4358,7 @@ namespace
                         if (ts.stallMs >= 8000) { EndTravel(bot, "stalled on the way to the flight master"); return; }
                         MountUp(bot);
                         if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
-                            bot->GetMotionMaster()->MovePoint(0, ts.tx, ts.ty, ts.tz, MOVE_PATHFINDING);
+                            SafeMovePoint(bot, ts.tx, ts.ty, ts.tz);
                         return;
                     }
                     if (d2 > 28.f * 28.f) { EndTravel(bot, "could not reach the flight master"); return; }
@@ -4388,7 +4426,7 @@ namespace
                                    toCi == HomeCityIdxOfBot(low) ? " (home again)" : "");
                     if (forPlayer)
                         g_serviceArrivals.push_back({ low, forPlayer, request, now });
-                    bot->GetMotionMaster()->MovePoint(0, c.x, c.y, c.z, MOVE_PATHFINDING);
+                    SafeMovePoint(bot, c.x, c.y, c.z);
                     return;
                 }
             }
@@ -4571,7 +4609,7 @@ namespace
                         }
                         MountUp(bot); // ride there if they have a mount
                         if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
-                            bot->GetMotionMaster()->MovePoint(0, fs.tx, fs.ty, fs.tz, MOVE_PATHFINDING);
+                            SafeMovePoint(bot, fs.tx, fs.ty, fs.tz);
                         return; // heading to the water (up to 90s)
                     }
                     fs.phase = FISH_CAST; fs.atMs = now; // within ~20yd, or done walking -> fish from here
@@ -4704,7 +4742,7 @@ namespace
                         return;
                     }
                     if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
-                        bot->GetMotionMaster()->MovePoint(0, er.tx, er.ty, er.tz, MOVE_PATHFINDING);
+                        SafeMovePoint(bot, er.tx, er.ty, er.tz);
                     return; // walking to the POI (human pace, up to 60s)
                 }
                 bot->GetMotionMaster()->MoveIdle();
@@ -4779,6 +4817,8 @@ namespace
             if (g_stuckProbe)
                 StuckProbe(bot);
             g_turtleResidents.insert(low);
+            if (bot->IsInWorld() && bot->GetMap() && !bot->IsBeingTeleported() && !bot->IsTaxiFlying() && !bot->IsInWater())
+                g_lastLand[low] = LandSpot{ bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ() };
             PersonalityFor(low); // assign & persist a personality on first sight
             AssignProfessions(bot); // give real, level-scaled professions on first sight
             AssignMount(bot); // give a race-appropriate mount at level 40+
@@ -6836,7 +6876,7 @@ namespace
             }
             else
             {
-                g_botFollow.erase(sa.resident);
+                g_botFollow[sa.resident] = FollowState{ sa.player, nowMs + 60000u }; // stays a minute: the goods change hands
                 r->GetMotionMaster()->MoveIdle();
                 r->StopMoving(true);
                 r->SetFacingTo(r->GetAngle(p));
