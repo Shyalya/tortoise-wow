@@ -2505,6 +2505,23 @@ namespace
         return s;
     }
 
+    // Bare colour codes stripped ("|c1049e6ffhi|r" is how a GM whisper arrives); item links
+    // keep theirs, they are parsed elsewhere.
+    static std::string StripColours(std::string s)
+    {
+        for (std::string::size_type c = 0; (c = s.find("|c", c)) != std::string::npos; )
+        {
+            if (s.size() - c >= 12 && s.compare(c + 10, 2, "|H") == 0) { c += 2; continue; } // a link
+            s.erase(c, std::min<std::string::size_type>(10, s.size() - c));
+        }
+        for (std::string::size_type r = 0; (r = s.find("|r", r)) != std::string::npos; )
+        {
+            if (r >= 2 && s.compare(r - 2, 2, "|h") == 0) { r += 2; continue; } // a link end
+            s.erase(r, 2);
+        }
+        return s;
+    }
+
     // What a delivered channel line may set off: a Trade call draws interest, a World line
     // an answer, an answer one more turn.
     static void ChannelReplyAfter(LlmJob const& j, std::string const& name, uint32 team, std::string const& line)
@@ -5342,6 +5359,9 @@ public:
     {
         if (!from || !msg || !*msg || !channel) return;
         if (!from->GetSession() || from->GetSession()->IsHeadless()) return;
+        std::string const plainMsg = StripColours(msg);
+        msg = plainMsg.c_str();
+        if (!*msg) return;
         std::string const ch = LowerStr(channel);
         bool const trade = ch.find("trade") != std::string::npos;
         if (!trade && ch.find("world") == std::string::npos && ch.find("general") == std::string::npos)
@@ -5790,19 +5810,20 @@ namespace
                 continue; // other bots do not get answers (except in the self-test)
             if (w.kind == 1) { HandleGroupLine(bot, from, w.msg); continue; }
             if (w.kind == 2) { HandleGuildLine(bot, from, w.msg); continue; }
-            std::string lower(w.msg);
+            std::string const text = StripColours(w.msg);
+            std::string lower(text);
             for (char& c : lower)
                 if (c >= 'A' && c <= 'Z') c = char(c + 32);
             bool const service = HasServiceKeyword(lower);
             bool const near = from->GetMapId() == bot->GetMapId() && from->GetDistance(bot) <= 30.f;
-            sLog.outString("[mod-turtlebots] whisper %s -> %s: %s", from->GetName(), bot->GetName(), w.msg.c_str());
+            sLog.outString("[mod-turtlebots] whisper %s -> %s: %s", from->GetName(), bot->GetName(), text.c_str());
             if (service && near && g_chatScript)
             {
-                g_chatScript->OnChatSay(from, 30.f, w.msg.c_str());
+                g_chatScript->OnChatSay(from, 30.f, text.c_str());
                 continue;
             }
             std::string usr = ConvoContext(bot, from) + from->GetName() +
-                (near ? " whispers to you: " : " whispers to you from somewhere else in the world: ") + w.msg;
+                (near ? " whispers to you: " : " whispers to you from somewhere else in the world: ") + text;
             if (service && !near)
                 usr += " (They want a service from you but are not here beside you: tell them where to find you.)";
             std::string fact;
@@ -5811,7 +5832,7 @@ namespace
                 usr += FactClause(fact);
                 sLog.outString("[mod-turtlebots] fact for %s: %s", from->GetName(), fact.c_str());
             }
-            ConvoPush(bot->GetGUIDLow(), from->GetGUIDLow(), false, w.msg);
+            ConvoPush(bot->GetGUIDLow(), from->GetGUIDLow(), false, text);
             std::string fallback = RPick({ "Aye? What can I do for you?", "Hm, what is it, friend?",
                                            "I hear you. What do you need?" });
             QueueLlm(bot, ResidentSystemPrompt(bot), usr, fallback, LLM_WHISPER, from->GetGUIDLow(),
