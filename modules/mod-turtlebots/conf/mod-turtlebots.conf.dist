@@ -232,11 +232,18 @@ mod-turtlebots.Memory.ReturnMinutes = 120
 #
 #    mod-turtlebots.Travel.Dispatch
 #        Channel requests fetch a resident as described. Default: 1
+#
+#    mod-turtlebots.Travel.Transports
+#        With no flight between two cities, a zeppelin or ship whose stations lie by both
+#        (Orgrimmar - Undercity) is taken: the resident walks to the tower, waits for the
+#        transport to dock, steps on board, rides along (the core carries passengers across
+#        the sea and the map change) and steps off at the other tower. Default: 1
 ###################################################################################################
 
 mod-turtlebots.Travel.Enabled = 1
 mod-turtlebots.Travel.TripMinutes = 20
 mod-turtlebots.Travel.Dispatch = 1
+mod-turtlebots.Travel.Transports = 1
 
 ###################################################################################################
 # GROUP, GUILD, EMOTES

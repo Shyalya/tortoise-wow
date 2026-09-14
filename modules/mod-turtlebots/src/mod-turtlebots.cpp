@@ -23,6 +23,9 @@
 #include "Config/Config.h"
 #include "ObjectGuid.h"
 #include "ObjectAccessor.h"
+#include "Transports/Transport.h"
+#include "Transports/TransportMgr.h"
+#include <mutex>
 #include "Player.h"
 #include "WorldSession.h"
 #include "Group.h"
@@ -114,24 +117,34 @@ namespace
     static std::vector<uint32> g_cityEnabled;   // indices into g_cities, from Town.Cities
     static std::map<uint32, uint32> g_homeCity; // botGuid -> city index (residents of both kinds)
     // ---- Travel between cities (#23) ----
-    enum TravelPhase : uint8 { TRV_TO_NODE = 0, TRV_FLY = 1, TRV_PORTAL = 2, TRV_ARRIVE = 3 };
+    struct LandSpot { float x, y, z; }; // a spot on dry land (last stood on; a landing by a tower)
+    enum TravelPhase : uint8 { TRV_TO_NODE = 0, TRV_FLY = 1, TRV_PORTAL = 2, TRV_ARRIVE = 3, TRV_WAIT = 4, TRV_BOARD = 5, TRV_RIDE = 6 };
     struct TravelState
     {
         uint8 phase = TRV_TO_NODE; uint32 toCi = 0, fromCi = 0; uint32 atMs = 0;
         std::vector<uint32> nodes;          // the flight, node by node
         float tx = 0.f, ty = 0.f, tz = 0.f; // the flight master
         float lx = 0.f, ly = 0.f; uint32 lastMs = 0, stallMs = 0;
-        uint32 spell = 0;                   // the portal spell, when a mage takes its own portal
+        uint32 spell = 0;                   // the teleport spell, when a mage takes its own
+        uint32 transport = 0;               // the zeppelin or ship (transport entry), when one is taken
+        uint32 depMap = 0, arrMap = 0; float depX = 0.f, depY = 0.f, depZ = 0.f, arrX = 0.f, arrY = 0.f, arrZ = 0.f; // its two stations
+        std::vector<LandSpot> landings; size_t landing = 0; // ground by the arrival station, tried in turn
+        LandSpot climb = { 0.f, 0.f, 0.f }; bool climbs = false; // the floor by the departure station (a hop when the walk ends short of it)
         uint32 forPlayer = 0; std::string request; // on a call: who asked, and for what
         std::string how;
     };
     static std::map<uint32, TravelState> g_travel;   // botGuid -> journey in progress
+    // Where each zeppelin and ship is right now, reported by the transport hook.
+    struct LiveTransport { Transport* t = nullptr; uint32 map = 0; float x = 0.f, y = 0.f, z = 0.f; uint32 atMs = 0; };
+    static std::map<uint32, LiveTransport> g_liveTransports; // transport entry -> position
+    static std::mutex g_liveTransportsLock;
     static std::map<uint32, uint32> g_visitCity;     // botGuid -> city index while away from home
     static std::map<uint32, uint32> g_visitUntilMs;  // botGuid -> when to head home (0 = stay)
     static uint32 g_nextTripMs = 0;                  // one ambient departure per Travel.TripMinutes
     static bool   g_travelEnabled = true;            // Travel.Enabled
     static uint32 g_travelTripMinutes = 20;          // Travel.TripMinutes (0 = no ambient trips)
     static bool   g_travelDispatch = true;           // Travel.Dispatch: channel requests fetch a resident
+    static bool   g_travelTransports = true;         // Travel.Transports: zeppelins and ships between cities
     struct ServiceCall { uint32 player; uint32 ci; std::string request; uint32 atMs; uint32 resident; };
     static std::vector<ServiceCall> g_serviceCalls;  // requests waiting for a resident to be woken and sent
     struct ServiceArrival { uint32 resident; uint32 player; std::string request; uint32 atMs; };
@@ -219,7 +232,11 @@ namespace
             bot->GetSession()->HandleMoveTeleportAckOpcode(data);
         }
         if (bot->IsBeingTeleportedFar())
+        {
+            if (g_travel.count(bot->GetGUIDLow()))
+                sLog.outString("[mod-turtlebots] travel: %s - worldport ack sent (transport %u).", bot->GetName(), bot->GetTransport() ? bot->GetTransport()->GetEntry() : 0u);
             bot->GetSession()->HandleMoveWorldportAckOpcode();
+        }
     }
 
     // Residents never stay ghosts. A character can log in dead (it died on its last
@@ -394,7 +411,6 @@ namespace
     static std::map<uint32, uint32> g_botBuffAt;       // botGuid -> next ms it may proactively buff
     struct FollowState { uint32 target; uint32 untilMs; };
     static std::map<uint32, FollowState> g_botFollow;  // botGuid -> who it walks with (player or resident)
-    struct LandSpot { float x, y, z; };
     static std::map<uint32, LandSpot> g_lastLand;       // botGuid -> where it last stood on dry land
     enum { ERR_GO = 1, ERR_DWELL = 2 };
     struct Errand { uint8 idx; uint8 phase; uint32 atMs; uint32 dwellMs; float lx = 0, ly = 0; uint32 stallMs = 0, lastMs = 0; float tx = 0, ty = 0, tz = 0; bool sell = false; };
@@ -1535,6 +1551,7 @@ namespace
         g_travelEnabled       = sConfig.GetBoolDefault("mod-turtlebots.Travel.Enabled", true);
         g_travelTripMinutes   = sConfig.GetIntDefault("mod-turtlebots.Travel.TripMinutes", 20);
         g_travelDispatch      = sConfig.GetBoolDefault("mod-turtlebots.Travel.Dispatch", true);
+        g_travelTransports    = sConfig.GetBoolDefault("mod-turtlebots.Travel.Transports", true);
         g_memoryReturnMinutes = sConfig.GetIntDefault("mod-turtlebots.Memory.ReturnMinutes", 120);
         {
             // Debug.ChannelSelfTest: on the reload that switches it on, four channel lines are fed
@@ -2102,7 +2119,7 @@ namespace
     // ---- Transports: zeppelins and ships with their stations, from the transports table and
     // the taxi paths the core flies them on (a node with a delay is a stop). Loaded once.
     struct TransportStation { uint32 map = 0; float x = 0.f, y = 0.f, z = 0.f; std::string label; };
-    struct TransportRoute { std::string name; bool zeppelin = false; TransportStation a, b; };
+    struct TransportRoute { std::string name; bool zeppelin = false; TransportStation a, b; uint32 entry = 0; };
 
     static std::vector<TransportRoute> const& TransportRoutes()
     {
@@ -2111,7 +2128,7 @@ namespace
         if (loaded)
             return routes;
         loaded = true;
-        QueryResult* r = WorldDatabase.Query("SELECT t.name, gt.name, gt.data0 FROM transports t JOIN gameobject_template gt ON gt.entry = t.entry");
+        QueryResult* r = WorldDatabase.Query("SELECT t.name, gt.name, gt.data0, t.entry FROM transports t JOIN gameobject_template gt ON gt.entry = t.entry");
         if (!r)
             return routes;
         do
@@ -2121,6 +2138,7 @@ namespace
             rt.name = f[0].GetCppString();
             std::string const goName = f[1].GetCppString();
             uint32 const path = f[2].GetUInt32();
+            rt.entry = f[3].GetUInt32();
             rt.zeppelin = LowerStr(goName).find("zeppelin") != std::string::npos;
             if (path >= sTaxiPathNodesByPath.size())
                 continue;
@@ -4025,12 +4043,40 @@ namespace
                 uint32 low = _online[_cursor];
                 ObjectGuid guid(HIGHGUID_PLAYER, low);
                 Player* bot = sObjectAccessor.FindPlayer(guid);
+                if (!bot)
+                {
+                    // Out of the world for a far teleport (another continent: a zeppelin ride, a
+                    // placement): the accessor hides such a player; only we can send its
+                    // worldport ack, so it is looked up the other way and finished here.
+                    if (Player* p = sObjectAccessor.FindPlayerNotInWorld(guid))
+                        if (p->IsBeingTeleportedFar() || p->IsBeingTeleportedNear())
+                        {
+                            if (g_travel.count(low))
+                                sLog.outString("[mod-turtlebots] travel: %s is between maps (to map %u) - teleport finished for it.", p->GetName(), p->GetTeleportDest().mapId);
+                            CompleteBotTeleport(p);
+                        }
+                }
 
                 // Lifecycle: drop bots whose headless session is gone. Reconcile
                 // re-adds them if they come back Active.
+                if (bot && !bot->IsInWorld() && g_travel.count(low))
+                {
+                    static std::map<uint32, uint32> lastLimbo;
+                    uint32 const nowL = WorldTimer::getMSTime();
+                    if (!lastLimbo.count(low) || nowL - lastLimbo[low] >= 30000u)
+                    {
+                        lastLimbo[low] = nowL;
+                        sLog.outString("[mod-turtlebots] travel: %s is out of the world - map %u, teleporting %s%s, transport %u, session %s.",
+                                       bot->GetName(), bot->GetMapId(), bot->IsBeingTeleportedFar() ? "far" : "", bot->IsBeingTeleportedNear() ? "near" : "",
+                                       bot->GetTransport() ? bot->GetTransport()->GetEntry() : 0u,
+                                       sWorld.GetHeadlessSessionState(guid) == HeadlessSessionState::Active ? "active" : "not active");
+                    }
+                }
                 if ((!bot || !bot->IsInWorld()) &&
                     sWorld.GetHeadlessSessionState(guid) != HeadlessSessionState::Active)
                 {
+                    if (bot && g_travel.count(low))
+                        sLog.outString("[mod-turtlebots] travel: %s dropped from the roster while traveling (session not active).", bot->GetName());
                     _online[_cursor] = _online.back();
                     _online.pop_back();
                     _nextAt.erase(low);
@@ -4373,12 +4419,105 @@ namespace
             return route;
         }
 
+        // A zeppelin or ship whose two stations lie by the two cities (within 1200 yd of
+        // their hubs, on their maps). Returns the route and which station is the departure.
+        static TransportRoute const* TransportBetween(uint32 fromCi, uint32 toCi, bool& fromIsA)
+        {
+            if (fromCi >= kCityCount || toCi >= kCityCount) return nullptr;
+            auto near = [](TransportStation const& s, City const& c) {
+                return s.map == c.map && (s.x - c.x) * (s.x - c.x) + (s.y - c.y) * (s.y - c.y) < 1200.f * 1200.f; };
+            for (TransportRoute const& rt : TransportRoutes())
+            {
+                if (!rt.entry) continue;
+                if (near(rt.a, g_cities[fromCi]) && near(rt.b, g_cities[toCi])) { fromIsA = true; return &rt; }
+                if (near(rt.b, g_cities[fromCi]) && near(rt.a, g_cities[toCi])) { fromIsA = false; return &rt; }
+            }
+            return nullptr;
+        }
+
+        // Is the transport docked at this station right now (its path progress inside a stop
+        // frame whose node lies by the station)? Returns the time it still stays, in ms.
+        static bool TransportDockedAt(uint32 entry, uint32 map, float x, float y, uint32& staysMs, Transport*& t)
+        {
+            LiveTransport lt;
+            {
+                std::lock_guard<std::mutex> guard(g_liveTransportsLock);
+                auto it = g_liveTransports.find(entry);
+                if (it == g_liveTransports.end()) return false;
+                lt = it->second;
+            }
+            t = lt.t;
+            if (!t || lt.map != map || (lt.x - x) * (lt.x - x) + (lt.y - y) * (lt.y - y) > 60.f * 60.f)
+                return false;
+            uint32 const p = t->GetPathProgress();
+            for (KeyFrame const& f : t->GetKeyFrames())
+            {
+                if (!f.IsStopFrame() || f.Node->mapid != map) continue;
+                if ((f.Node->x - x) * (f.Node->x - x) + (f.Node->y - y) * (f.Node->y - y) > 60.f * 60.f) continue;
+                if (p >= f.ArriveTime && p < f.DepartureTime) { staysMs = f.DepartureTime - p; return true; }
+            }
+            return false;
+        }
+
+        // Spots to stand on by a station - the tower top, its ramp, the ground at its foot,
+        // the pier - found on the ground navmesh around the station coordinate (the
+        // transport hangs beside it), nearest the deck level first. Several, because the
+        // navmesh around a tower has islands the city cannot path to.
+        static std::vector<LandSpot> GroundByStation(Player* bot, float sx, float sy, float sz)
+        {
+            // Floors around the station coordinate, from the deck level down to the ground:
+            // the tower top, its ramp and the foot of the tower all answer to a height probe
+            // (the walk-random helper hands back a made-up point when the mesh has none,
+            // which fooled the first cut). Whether a floor can be walked to is for the
+            // caller to test with a real path.
+            std::vector<LandSpot> out;
+            Map* map = bot->GetMap();
+            if (!map) return out;
+            static float const kDz[] = { 0.f, -8.f, -16.f, -24.f, -32.f, -40.f, -50.f, -60.f };
+            static float const kDx[] = { 0.f, 10.f, -10.f, 0.f, 0.f, 20.f, -20.f, 0.f, 0.f, 14.f, -14.f, 14.f, -14.f, 28.f, -28.f, 0.f, 0.f };
+            static float const kDy[] = { 0.f, 0.f, 0.f, 10.f, -10.f, 0.f, 0.f, 20.f, -20.f, 14.f, 14.f, -14.f, -14.f, 0.f, 0.f, 28.f, -28.f };
+            for (float dz : kDz)
+                for (size_t i = 0; i < 17 && out.size() < 24; ++i)
+                {
+                    float const x = sx + kDx[i], y = sy + kDy[i], z0 = sz + dz;
+                    if (!MaNGOS::IsValidMapCoord(x, y, z0)) continue;
+                    float const h = map->GetTerrain()->GetHeightStatic(x, y, z0 + 2.f, true, 12.f);
+                    if (h <= INVALID_HEIGHT || h > z0 + 3.f || h < z0 - 12.f) continue;
+                    bool dup = false;
+                    for (LandSpot const& l : out)
+                        if ((l.x - x) * (l.x - x) + (l.y - y) * (l.y - y) < 25.f && std::fabs(l.z - h) < 3.f) { dup = true; break; }
+                    if (!dup) out.push_back(LandSpot{ x, y, h });
+                }
+            return out;
+        }
+
+        // A spot on the deck: the transport model has its own navmesh.
+        static bool DeckSpot(Player* bot, Transport* t, float& dx, float& dy, float& dz)
+        {
+            Map* map = bot->GetMap();
+            if (!map || !t) return false;
+            static float const kDz[] = { 0.f, 2.f, -2.f, 4.f, -4.f, 6.f, -6.f };
+            for (float z0 : kDz)
+            {
+                float x = t->GetPositionX(), y = t->GetPositionY(), z = t->GetPositionZ() + z0;
+                if (map->GetWalkRandomPosition(t, x, y, z, 3.f))
+                {
+                    dx = x; dy = y; dz = z;
+                    return true;
+                }
+            }
+            return false;
+        }
+
         static bool CanTravelTo(Player* bot, uint32 ci)
         {
             uint32 req = 0; uint32 const sp = TeleportSpellToCity(ci, req);
             if (bot->GetClass() == CLASS_MAGE && sp && bot->GetLevel() >= req)
                 return true; // the spell is learned on the way out if need be, as OpenPortal does
-            return !TaxiRouteBetween(CityIdxOfBot(bot->GetGUIDLow()), ci, bot->GetTeam()).empty();
+            if (!TaxiRouteBetween(CityIdxOfBot(bot->GetGUIDLow()), ci, bot->GetTeam()).empty())
+                return true;
+            bool fromIsA = false;
+            return g_travelTransports && TransportBetween(CityIdxOfBot(bot->GetGUIDLow()), ci, fromIsA) != nullptr;
         }
 
         // Set out for another city: a mage of the level takes its own portal, everyone else
@@ -4402,11 +4541,60 @@ namespace
             else
             {
                 ts.nodes = TaxiRouteBetween(fromCi, toCi, bot->GetTeam());
-                if (ts.nodes.empty())
-                    return false;
-                TaxiNodesEntry const* n = sObjectMgr.GetTaxiNodeEntry(ts.nodes.front());
-                if (!n || !NodeApproach(bot, n, ts)) return false; // no honest way to the flight master from here
-                ts.phase = TRV_TO_NODE; ts.how = "flight";
+                TaxiNodesEntry const* n = ts.nodes.empty() ? nullptr : sObjectMgr.GetTaxiNodeEntry(ts.nodes.front());
+                if (n && NodeApproach(bot, n, ts))
+                {
+                    ts.phase = TRV_TO_NODE; ts.how = "flight";
+                }
+                else
+                {
+                    // No flight: the zeppelin or ship, if one runs between the two cities.
+                    bool fromIsA = false;
+                    TransportRoute const* rt = g_travelTransports ? TransportBetween(fromCi, toCi, fromIsA) : nullptr;
+                    if (!rt) return false;
+                    TransportStation const& dep = fromIsA ? rt->a : rt->b;
+                    TransportStation const& arr = fromIsA ? rt->b : rt->a;
+                    if (dep.map != bot->GetMapId()) return false;
+                    std::vector<LandSpot> const grounds = GroundByStation(bot, dep.x, dep.y, dep.z);
+                    if (grounds.empty())
+                    {
+                        sLog.outString("[mod-turtlebots] travel: %s finds no ground by the %s station at %.0f/%.0f/%.0f.", bot->GetName(), dep.label.c_str(), dep.x, dep.y, dep.z);
+                        return false;
+                    }
+                    // The floor the honest path gets nearest to. A long way through a city comes
+                    // back as an incomplete path (the pathfinder has a polygon budget), so the
+                    // walk aims at the floor itself and re-paths stretch by stretch; a last
+                    // stretch the navmesh does not know (the tower ramp) is climbed at the end.
+                    bool found = false; float bestShort = 1.0e9f; LandSpot best = { 0.f, 0.f, 0.f }; Vector3 bestEnd; uint32 bestType = 0;
+                    for (LandSpot const& g : grounds)
+                    {
+                        PathInfo path(bot);
+                        path.calculate(g.x, g.y, g.z);
+                        uint32 const t = uint32(path.getPathType());
+                        if (t & PATHFIND_NOPATH) continue;
+                        Vector3 const e = path.getActualEndPosition();
+                        float const shortBy = std::sqrt((e.x - g.x) * (e.x - g.x) + (e.y - g.y) * (e.y - g.y));
+                        if (shortBy < bestShort) { bestShort = shortBy; best = g; bestEnd = e; bestType = t; }
+                        if (shortBy <= 12.f) break;
+                    }
+                    if (bestShort < 1.0e8f)
+                    {
+                        ts.tx = best.x; ts.ty = best.y; ts.tz = best.z; ts.climb = best; ts.climbs = true; found = true;
+                        sLog.outString("[mod-turtlebots] travel: %s heads for the %s station: floor %.0f/%.0f/%.0f (station %.0f/%.0f/%.0f, %u candidates; first path type %u ends %.0f yd short at %.0f/%.0f).",
+                                       bot->GetName(), dep.label.c_str(), best.x, best.y, best.z, dep.x, dep.y, dep.z, uint32(grounds.size()), bestType, bestShort, bestEnd.x, bestEnd.y);
+                    }
+                    if (!found)
+                    {
+                        sLog.outString("[mod-turtlebots] travel: %s has no way to the %s station at %.0f/%.0f/%.0f - %u candidates, none with a path, from %.0f/%.0f/%.0f.",
+                                       bot->GetName(), dep.label.c_str(), dep.x, dep.y, dep.z, uint32(grounds.size()), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ());
+                        return false;
+                    }
+                    ts.transport = rt->entry;
+                    ts.depMap = dep.map; ts.depX = dep.x; ts.depY = dep.y; ts.depZ = dep.z;
+                    ts.arrMap = arr.map; ts.arrX = arr.x; ts.arrY = arr.y; ts.arrZ = arr.z;
+                    ts.nodes.clear();
+                    ts.phase = TRV_TO_NODE; ts.how = rt->zeppelin ? "zeppelin" : "ship";
+                }
             }
             if (g_fishing.count(low) || bot->IsNonMeleeSpellCasted(false))
                 bot->InterruptNonMeleeSpells(false); // the line comes out of the water
@@ -4432,8 +4620,15 @@ namespace
             if (it != g_travel.end())
                 sLog.outString("[mod-turtlebots] travel: %s gives up the journey to %s - %s.", bot->GetName(), g_cities[it->second.toCi].name, why);
             g_travel.erase(low);
+            if (bot->GetTransport()) { bot->GetTransport()->RemovePassenger(bot); bot->m_movementInfo.ClearTransportData(); }
             bot->GetMotionMaster()->MoveIdle();
             bot->StopMoving(true);
+            City const& home = g_cities[CityIdxOfBot(low)];
+            if (!bot->IsBeingTeleported() && (bot->GetMapId() != home.map || bot->GetDistance2d(home.x, home.y) > 1500.f))
+            {
+                sLog.outString("[mod-turtlebots] travel: %s is stranded far from %s (map %u %.0f/%.0f) - sent back.", bot->GetName(), home.name, bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY());
+                bot->TeleportTo(home.map, home.x, home.y, home.z, home.o);
+            }
         }
 
         void HandleTravel(Player* bot, TravelState& ts)
@@ -4454,18 +4649,134 @@ namespace
                             if (ts.lastMs && mx * mx + my * my < 0.25f) ts.stallMs += now - ts.lastMs; else ts.stallMs = 0;
                             ts.lx = bot->GetPositionX(); ts.ly = bot->GetPositionY(); ts.lastMs = now;
                         }
-                        if (ts.stallMs >= 8000) { EndTravel(bot, "stalled on the way to the flight master"); return; }
+                        if (ts.stallMs >= 8000 || now - ts.atMs > 140000u)
+                        {
+                            if (ts.climbs && d2 <= 260.f * 260.f)
+                            {
+                                sLog.outString("[mod-turtlebots] travel: %s climbs the last %.0f yd onto the floor by the station.", bot->GetName(), std::sqrt(d2));
+                                bot->GetMotionMaster()->MoveIdle(); bot->StopMoving(true); bot->Unmount();
+                                bot->NearTeleportTo(ts.climb.x, ts.climb.y, ts.climb.z, bot->GetOrientation());
+                                ts.climbs = false; ts.phase = TRV_WAIT; ts.atMs = now; ts.lastMs = 0;
+                                sLog.outString("[mod-turtlebots] travel: %s waits at the station for the %s to %s.", bot->GetName(), ts.how.c_str(), g_cities[ts.toCi].name);
+                                return;
+                            }
+                            EndTravel(bot, ts.transport ? "stalled on the way to the station" : "stalled on the way to the flight master"); return;
+                        }
                         MountUp(bot);
                         if (bot->GetMotionMaster()->GetCurrentMovementGeneratorType() != POINT_MOTION_TYPE)
                             SafeMovePoint(bot, ts.tx, ts.ty, ts.tz);
                         return;
                     }
-                    if (d2 > 28.f * 28.f) { EndTravel(bot, "could not reach the flight master"); return; }
+                    if (d2 > 28.f * 28.f && !(ts.climbs && d2 <= 260.f * 260.f)) { EndTravel(bot, ts.transport ? "could not reach the station" : "could not reach the flight master"); return; }
+                    if (ts.transport && ts.climbs && d2 > 3.f * 3.f)
+                    {
+                        sLog.outString("[mod-turtlebots] travel: %s climbs the last %.0f yd onto the floor by the station.", bot->GetName(), std::sqrt(d2));
+                        bot->NearTeleportTo(ts.climb.x, ts.climb.y, ts.climb.z, bot->GetOrientation());
+                    }
+                    ts.climbs = false;
                     bot->GetMotionMaster()->MoveIdle(); bot->StopMoving(true); bot->Unmount();
+                    if (ts.transport)
+                    {
+                        ts.phase = TRV_WAIT; ts.atMs = now; ts.lastMs = 0;
+                        sLog.outString("[mod-turtlebots] travel: %s waits at the station for the %s to %s.", bot->GetName(), ts.how.c_str(), g_cities[ts.toCi].name);
+                        return;
+                    }
                     SeedPurse(bot);
                     if (!bot->ActivateTaxiPathTo(ts.nodes, nullptr, 0, true)) { EndTravel(bot, "the flight master would not take it"); return; }
                     ts.phase = TRV_FLY; ts.atMs = now;
                     sLog.outString("[mod-turtlebots] travel: %s takes off for %s (%u hops).", bot->GetName(), g_cities[ts.toCi].name, uint32(ts.nodes.size() - 1));
+                    return;
+                }
+                case TRV_WAIT:
+                {
+                    if (now - ts.atMs > 8u * 60000u) { EndTravel(bot, "the transport never came"); return; }
+                    uint32 stays = 0; Transport* t = nullptr;
+                    bool const docked = TransportDockedAt(ts.transport, ts.depMap, ts.depX, ts.depY, stays, t);
+                    if (!ts.lastMs || now - ts.lastMs >= 30000u)
+                    {
+                        ts.lastMs = now;
+                        LiveTransport lt;
+                        { std::lock_guard<std::mutex> guard(g_liveTransportsLock); auto it = g_liveTransports.find(ts.transport); if (it != g_liveTransports.end()) lt = it->second; }
+                        if (!lt.t)
+                            sLog.outString("[mod-turtlebots] travel: %s waits - no word from transport %u yet.", bot->GetName(), ts.transport);
+                        else
+                        {
+                            uint32 stops = 0, near = 0;
+                            for (KeyFrame const& f : lt.t->GetKeyFrames())
+                                if (f.IsStopFrame()) { ++stops; if (f.Node->mapid == ts.depMap && (f.Node->x - ts.depX) * (f.Node->x - ts.depX) + (f.Node->y - ts.depY) * (f.Node->y - ts.depY) < 3600.f) ++near; }
+                            sLog.outString("[mod-turtlebots] travel: %s waits - transport %u on map %u at %.0f/%.0f/%.0f (%.0f yd from the station), progress %u of %u ms, %u stop frames (%u by this station)%s.",
+                                           bot->GetName(), ts.transport, lt.map, lt.x, lt.y, lt.z, std::sqrt((lt.x - ts.depX) * (lt.x - ts.depX) + (lt.y - ts.depY) * (lt.y - ts.depY)),
+                                           lt.t->GetPathProgress(), lt.t->GetPeriod(), stops, near, docked ? " - docked" : "");
+                        }
+                    }
+                    if (!docked || stays < 4000)
+                        return;
+                    float dx, dy, dz;
+                    if (!DeckSpot(bot, t, dx, dy, dz))
+                    {
+                        if (!ts.lastMs) sLog.outString("[mod-turtlebots] travel: %s finds no deck on the %s (entry %u).", bot->GetName(), ts.how.c_str(), ts.transport);
+                        ts.lastMs = now;
+                        if (now - ts.atMs > 3u * 60000u) EndTravel(bot, "no deck to step on");
+                        return;
+                    }
+                    bot->m_movementInfo.ClearTransportData();
+                    bot->NearTeleportTo(dx, dy, dz, bot->GetOrientation());
+                    ts.phase = TRV_BOARD; ts.atMs = now;
+                    return;
+                }
+                case TRV_BOARD:
+                {
+                    if (bot->IsBeingTeleported()) return;
+                    if (now - ts.atMs > 20000u) { EndTravel(bot, "could not get on board"); return; }
+                    uint32 stays = 0; Transport* t = nullptr;
+                    if (!TransportDockedAt(ts.transport, ts.depMap, ts.depX, ts.depY, stays, t))
+                    {
+                        // it left while we stepped on: back to the ground, wait for the next one
+                        std::vector<LandSpot> const g = GroundByStation(bot, ts.depX, ts.depY, ts.depZ);
+                        if (!g.empty()) bot->NearTeleportTo(g.front().x, g.front().y, g.front().z, bot->GetOrientation());
+                        ts.phase = TRV_WAIT; ts.atMs = now; ts.lastMs = 0;
+                        return;
+                    }
+                    if (bot->GetDistance(t) > 60.f) { EndTravel(bot, "ended up away from the transport"); return; }
+                    bot->GetMotionMaster()->MoveIdle(); bot->StopMoving(true);
+                    t->AddPassenger(bot);
+                    ts.phase = TRV_RIDE; ts.atMs = now;
+                    sLog.outString("[mod-turtlebots] travel: %s boards the %s to %s.", bot->GetName(), ts.how.c_str(), g_cities[ts.toCi].name);
+                    return;
+                }
+                case TRV_RIDE:
+                {
+                    if (!ts.lastMs || now - ts.lastMs >= 30000u)
+                    {
+                        ts.lastMs = now;
+                        LiveTransport lt;
+                        { std::lock_guard<std::mutex> guard(g_liveTransportsLock); auto it = g_liveTransports.find(ts.transport); if (it != g_liveTransports.end()) lt = it->second; }
+                        sLog.outString("[mod-turtlebots] travel: %s rides - map %u at %.0f/%.0f/%.0f, on transport %u, teleporting %s%s, in world %u; the %s is on map %u at %.0f/%.0f/%.0f, %.0f yd from the arrival station.",
+                                       bot->GetName(), bot->GetMapId(), bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(),
+                                       bot->GetTransport() ? bot->GetTransport()->GetEntry() : 0u, bot->IsBeingTeleportedFar() ? "far" : "", bot->IsBeingTeleportedNear() ? "near" : "",
+                                       bot->IsInWorld() ? 1u : 0u, ts.how.c_str(), lt.map, lt.x, lt.y, lt.z, std::sqrt((lt.x - ts.arrX) * (lt.x - ts.arrX) + (lt.y - ts.arrY) * (lt.y - ts.arrY)));
+                    }
+                    if (bot->IsBeingTeleported()) return;
+                    if (!bot->GetTransport())
+                    {
+                        if (now - ts.atMs < 5000u) return; // the far teleport puts it back on board
+                        EndTravel(bot, "fell off the transport"); return;
+                    }
+                    if (now - ts.atMs > 15u * 60000u) { bot->GetTransport()->RemovePassenger(bot); EndTravel(bot, "the ride never ended"); return; }
+                    if (bot->GetMapId() != ts.arrMap) return;
+                    uint32 stays = 0; Transport* t = nullptr;
+                    if (!TransportDockedAt(ts.transport, ts.arrMap, ts.arrX, ts.arrY, stays, t)) return;
+                    ts.landings = GroundByStation(bot, ts.arrX, ts.arrY, ts.arrZ); ts.landing = 0;
+                    bot->GetTransport()->RemovePassenger(bot);
+                    bot->m_movementInfo.ClearTransportData();
+                    if (!ts.landings.empty())
+                    {
+                        bot->NearTeleportTo(ts.landings[0].x, ts.landings[0].y, ts.landings[0].z, bot->GetOrientation());
+                        sLog.outString("[mod-turtlebots] travel: %s steps off the %s at %.0f/%.0f/%.0f (%u landings).", bot->GetName(), ts.how.c_str(),
+                                       ts.landings[0].x, ts.landings[0].y, ts.landings[0].z, uint32(ts.landings.size()));
+                    }
+                    else sLog.outString("[mod-turtlebots] travel: %s finds no ground by the arrival station at %.0f/%.0f/%.0f.", bot->GetName(), ts.arrX, ts.arrY, ts.arrZ);
+                    ts.phase = TRV_ARRIVE; ts.atMs = now;
                     return;
                 }
                 case TRV_FLY:
@@ -4506,6 +4817,28 @@ namespace
                 {
                     if (bot->IsBeingTeleported()) return;
                     City const& c = g_cities[ts.toCi];
+                    if (!ts.landings.empty() && bot->GetMapId() == c.map)
+                    {
+                        // Off the transport: is there a way from this landing into the city?
+                        // If not, the next spot by the tower is tried.
+                        PathInfo path(bot);
+                        path.calculate(c.x, c.y, c.z);
+                        Vector3 const e = path.getActualEndPosition();
+                        // A long way into a city comes back incomplete (the pathfinder walks it in
+                        // stretches); only no path at all disqualifies a landing.
+                        bool const bad = (uint32(path.getPathType()) & PATHFIND_NOPATH) != 0;
+                        (void)e;
+                        if (bad && ts.landing + 1 < ts.landings.size())
+                        {
+                            ++ts.landing;
+                            LandSpot const& l = ts.landings[ts.landing];
+                            sLog.outString("[mod-turtlebots] travel: %s finds no way into %s from %.0f/%.0f/%.0f (path type %u) - tries %.0f/%.0f/%.0f.", bot->GetName(), c.name,
+                                           bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ(), uint32(path.getPathType()), l.x, l.y, l.z);
+                            bot->NearTeleportTo(l.x, l.y, l.z, bot->GetOrientation());
+                            return;
+                        }
+                        ts.landings.clear();
+                    }
                     if (bot->GetMapId() != c.map || bot->GetDistance2d(c.x, c.y) > 1500.f)
                     {
                         if (now - ts.atMs < 20000u) return; // a teleport may still be in flight
@@ -4946,7 +5279,7 @@ namespace
             if (g_stuckProbe)
                 StuckProbe(bot);
             g_turtleResidents.insert(low);
-            if (bot->IsInWorld() && bot->GetMap() && !bot->IsBeingTeleported() && !bot->IsTaxiFlying() && !bot->IsInWater())
+            if (bot->IsInWorld() && bot->GetMap() && !bot->IsBeingTeleported() && !bot->IsTaxiFlying() && !bot->GetTransport() && !bot->IsInWater())
                 g_lastLand[low] = LandSpot{ bot->GetPositionX(), bot->GetPositionY(), bot->GetPositionZ() };
             PersonalityFor(low); // assign & persist a personality on first sight
             AssignProfessions(bot); // give real, level-scaled professions on first sight
@@ -6774,6 +7107,28 @@ private:
 
 static TurtleBotsChatScript* g_chatScript = nullptr;
 
+// Zeppelins and ships report where they are; a resident waiting at a tower reads it.
+class TurtleBotsTransportScript : public TransportScript
+{
+public:
+    TurtleBotsTransportScript() : TransportScript("mod-turtlebots_transports") {}
+    bool IsDatabaseBound() const override { return false; } // fires for every transport, no DB assignment needed
+
+    void OnRelocate(Transport* t, uint32 /*waypointId*/, uint32 mapId, float x, float y, float z) override
+    {
+        if (!t) return;
+        bool first = false;
+        {
+            std::lock_guard<std::mutex> guard(g_liveTransportsLock);
+            first = !g_liveTransports.count(t->GetEntry());
+            LiveTransport& lt = g_liveTransports[t->GetEntry()];
+            lt.t = t; lt.map = mapId; lt.x = x; lt.y = y; lt.z = z; lt.atMs = WorldTimer::getMSTime();
+        }
+        if (first)
+            sLog.outString("[mod-turtlebots] transports: %s (entry %u) reports its position from now on (map %u %.0f/%.0f/%.0f).", t->GetName(), t->GetEntry(), mapId, x, y, z);
+    }
+};
+
 // The killing blow: the unit-death hook of the core names the killer, which the player
 // hook does not. Our bots' deaths are remembered with their cause (#155).
 class TurtleBotsUnitScript : public UnitScript
@@ -7079,4 +7434,5 @@ void Addmod_turtlebotsScripts()
     g_chatScript = new TurtleBotsChatScript();
     new TurtleBotsPacketScript();
     new TurtleBotsUnitScript();
+    new TurtleBotsTransportScript();
 }
