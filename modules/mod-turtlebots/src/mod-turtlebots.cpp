@@ -381,12 +381,12 @@ namespace
     static std::map<uint32, uint64> g_botBuyPricedFor; // botGuid -> signature of the goods we priced
     static std::map<uint32, uint32> g_botPurseCap;     // botGuid -> coin purse cap (seeded on first deal)
     static std::map<uint32, uint32> g_botEscort;       // botGuid -> buyer it is walking over to trade with
-    struct FishSpot { float x, y, z, o; };
+    struct FishSpot { float x, y, z, o; float bx = 0, by = 0, bz = 0; }; // the water point faced; the bank to stand on, when known
     static std::map<uint32, std::vector<FishSpot>> g_fishSpotsByCity; // city index -> water spots inside it
     static bool g_fishSpotsLoaded = false;
     static std::set<uint32> g_fishSpotsDiscovered;                     // cities whose water was searched in the map data
     enum { FISH_MOVE = 1, FISH_CAST = 2, FISH_WAIT = 3 };
-    struct FishState { uint8 phase; float x, y, z, o; uint32 atMs; uint8 casts; uint32 endMs; float lx = 0, ly = 0; uint32 stallMs = 0, lastMs = 0; float tx = 0, ty = 0, tz = 0; };
+    struct FishState { uint8 phase; float x, y, z, o; uint32 atMs; uint8 casts; uint32 endMs; float lx = 0, ly = 0; uint32 stallMs = 0, lastMs = 0; float tx = 0, ty = 0, tz = 0; float bx = 0, by = 0, bz = 0; };
     static std::map<uint32, FishState> g_fishing;      // botGuid -> active fishing activity
     enum { COOK_FIRE = 1, COOK_WAIT = 2 };
     struct CookState { uint8 phase; uint32 atMs; };
@@ -435,37 +435,40 @@ namespace
         static Want const k[] = { { 0x1000, "the auction house" }, { 0x100, "the bank" }, { 0x80, "the inn" },
                                   { 0x8, "the flight master" }, { 0x800, "the battlemaster" }, { 0x10, "a trainer" },
                                   { 0x4, "a vendor" } };
+        // Five candidates of each kind, nearest first; the first one the navmesh can reach
+        // from the spot of the resident that asked is kept (an innkeeper inside a closed
+        // house, a flight master up on a roost are not; the next vendor or inn is).
+        std::vector<std::vector<Poi>> cands;
         for (Want const& w : k)
         {
+            cands.emplace_back();
             if (QueryResult* r = WorldDatabase.PQuery(
                     "SELECT c.position_x, c.position_y, c.position_z FROM creature c JOIN creature_template ct ON ct.entry = c.id "
                     "WHERE c.map = %u AND c.position_x BETWEEN %f AND %f AND c.position_y BETWEEN %f AND %f AND (ct.npc_flags & %u) "
-                    "ORDER BY POW(c.position_x - %f, 2) + POW(c.position_y - %f, 2) LIMIT 1",
+                    "ORDER BY POW(c.position_x - %f, 2) + POW(c.position_y - %f, 2) LIMIT 5",
                     c.map, c.x - 700.f, c.x + 700.f, c.y - 700.f, c.y + 700.f, w.flag, c.x, c.y))
             {
-                Field* f = r->Fetch();
-                out.push_back({ f[0].GetFloat(), f[1].GetFloat(), f[2].GetFloat(), w.kind });
+                do { Field* f = r->Fetch(); cands.back().push_back({ f[0].GetFloat(), f[1].GetFloat(), f[2].GetFloat(), w.kind }); } while (r->NextRow());
                 delete r;
             }
         }
+        cands.emplace_back();
         if (QueryResult* r = WorldDatabase.PQuery(
                 "SELECT g.position_x, g.position_y, g.position_z FROM gameobject g JOIN gameobject_template gt ON gt.entry = g.id "
                 "WHERE gt.type = 19 AND g.map = %u AND g.position_x BETWEEN %f AND %f AND g.position_y BETWEEN %f AND %f "
-                "ORDER BY POW(g.position_x - %f, 2) + POW(g.position_y - %f, 2) LIMIT 1",
+                "ORDER BY POW(g.position_x - %f, 2) + POW(g.position_y - %f, 2) LIMIT 5",
                 c.map, c.x - 700.f, c.x + 700.f, c.y - 700.f, c.y + 700.f, c.x, c.y))
         {
-            Field* f = r->Fetch();
-            out.push_back({ f[0].GetFloat(), f[1].GetFloat(), f[2].GetFloat(), "the mailbox" });
+            do { Field* f = r->Fetch(); cands.back().push_back({ f[0].GetFloat(), f[1].GetFloat(), f[2].GetFloat(), "the mailbox" }); } while (r->NextRow());
             delete r;
         }
-        // A point the navmesh cannot reach from inside the city (no path, or a path that
-        // ends well short of it) would only produce residents standing at a dead end for
-        // a minute at a time: drop it now, from the spot of the resident that asked.
-        if (probe && probe->IsInWorld() && probe->GetMapId() == c.map)
+        bool const canProbe = probe && probe->IsInWorld() && probe->GetMapId() == c.map;
+        for (std::vector<Poi> const& list : cands)
         {
-            for (size_t i = 0; i < out.size(); )
+            bool kept = false;
+            for (Poi const& p : list)
             {
-                Poi const& p = out[i];
+                if (!canProbe) { out.push_back(p); kept = true; break; }
                 PathInfo path(probe);
                 path.calculate(p.x, p.y, p.z);
                 uint32 const t = uint32(path.getPathType());
@@ -475,22 +478,25 @@ namespace
                 bool const noPath = (t & PATHFIND_NOPATH) != 0;
                 bool const fallsShort = (t & PATHFIND_INCOMPLETE) && shortBy > 15.f;
                 if (noPath || (fallsShort && shortBy > 30.f))
-                {
-                    sLog.outString("[mod-turtlebots] city %s: %s at %.0f/%.0f dropped - unreachable from %s (path type %u, ends %.0f yd short).",
-                                   c.name, p.kind, p.x, p.y, probe->GetName(), t, shortBy);
-                    out[i] = out.back(); out.pop_back();
-                    continue;
-                }
+                    continue; // the next candidate of the kind
+                Poi q = p;
                 if (fallsShort)
                 {
                     // Reachable up to a few yards away (a counter, a cellar entrance): the
                     // errand ends at the reachable spot instead of on a dead end.
                     sLog.outString("[mod-turtlebots] city %s: %s at %.0f/%.0f moved %.0f yd to the reachable spot %.0f/%.0f.",
                                    c.name, p.kind, p.x, p.y, shortBy, e.x, e.y);
-                    out[i].x = e.x; out[i].y = e.y; out[i].z = e.z;
+                    q.x = e.x; q.y = e.y; q.z = e.z;
                 }
-                ++i;
+                if (&p != &list.front())
+                    sLog.outString("[mod-turtlebots] city %s: %s - the nearest is unreachable from %s, taking the one at %.0f/%.0f.",
+                                   c.name, p.kind, probe->GetName(), p.x, p.y);
+                out.push_back(q); kept = true;
+                break;
             }
+            if (!kept && !list.empty())
+                sLog.outString("[mod-turtlebots] city %s: %s dropped - none of %u candidates reachable from %s.",
+                               c.name, list.front().kind, uint32(list.size()), canProbe ? probe->GetName() : "?");
         }
         sLog.outString("[mod-turtlebots] city %s: %u points of interest discovered around the hub.", c.name, uint32(out.size()));
         return out;
@@ -4165,10 +4171,10 @@ namespace
             // spot is 12 yd out along that facing, the angler stands on the bank and faces
             // it): the pond by the entrance bridge in the Valley of Heroes and three canal
             // banks - the map search only found the high quays, which look wrong for an angler.
-            g_fishSpotsByCity[3].push_back({ -8978.2f, 414.4f, 72.83f, 0.67f }); // bank -8988/407
-            g_fishSpotsByCity[3].push_back({ -8796.3f, 782.5f, 96.34f, 1.64f }); // bank -8795/771
-            g_fishSpotsByCity[3].push_back({ -8843.0f, 751.6f, 101.64f, 0.53f }); // bank -8853/745
-            g_fishSpotsByCity[3].push_back({ -8739.1f, 517.8f, 96.34f, 5.70f }); // bank -8749/524
+            g_fishSpotsByCity[3].push_back({ -8978.2f, 414.4f, 72.83f, 0.67f, -8987.57f, 406.94f, 72.83f });
+            g_fishSpotsByCity[3].push_back({ -8796.3f, 782.5f, 96.34f, 1.64f, -8795.48f, 770.55f, 96.34f });
+            g_fishSpotsByCity[3].push_back({ -8843.0f, 751.6f, 101.64f, 0.53f, -8853.33f, 745.49f, 101.64f });
+            g_fishSpotsByCity[3].push_back({ -8739.1f, 517.8f, 96.34f, 5.70f, -8749.13f, 524.39f, 96.34f });
         }
 
         // Water inside a city, found in the map data instead of typed in: a grid around the
@@ -4303,14 +4309,29 @@ namespace
             return kSpell[ci];
         }
 
+        // Where to walk for the flight master: the node itself when the navmesh reaches it,
+        // else the end of the honest path if that is within hailing distance of the roost.
+        static bool NodeApproach(Player* bot, TaxiNodesEntry const* n, TravelState& ts)
+        {
+            PathInfo path(bot);
+            path.calculate(n->x, n->y, n->z);
+            uint32 const t = uint32(path.getPathType());
+            Vector3 const e = path.getActualEndPosition();
+            float const dx = e.x - n->x, dy = e.y - n->y;
+            if ((t & PATHFIND_NOPATH) || dx * dx + dy * dy > 28.f * 28.f)
+                return false;
+            ts.tx = e.x; ts.ty = e.y; ts.tz = e.z;
+            return true;
+        }
+
         // The flight instead, when a teleport did not come off; false with no flight from here.
         static bool FallBackToFlight(Player* bot, TravelState& ts, uint32 now)
         {
             if (ts.how == "flight") return false;
             ts.nodes = TaxiRouteBetween(ts.fromCi, ts.toCi, bot->GetTeam());
             TaxiNodesEntry const* n = ts.nodes.empty() ? nullptr : sObjectMgr.GetTaxiNodeEntry(ts.nodes.front());
-            if (!n) return false;
-            ts.tx = n->x; ts.ty = n->y; ts.tz = n->z; ts.phase = TRV_TO_NODE; ts.how = "flight";
+            if (!n || !NodeApproach(bot, n, ts)) return false;
+            ts.phase = TRV_TO_NODE; ts.how = "flight";
             ts.atMs = now; ts.lastMs = 0; ts.stallMs = 0;
             sLog.outString("[mod-turtlebots] travel: %s got no teleport and takes the flight to %s instead.", bot->GetName(), g_cities[ts.toCi].name);
             return true;
@@ -4384,8 +4405,8 @@ namespace
                 if (ts.nodes.empty())
                     return false;
                 TaxiNodesEntry const* n = sObjectMgr.GetTaxiNodeEntry(ts.nodes.front());
-                if (!n) return false;
-                ts.tx = n->x; ts.ty = n->y; ts.tz = n->z; ts.phase = TRV_TO_NODE; ts.how = "flight";
+                if (!n || !NodeApproach(bot, n, ts)) return false; // no honest way to the flight master from here
+                ts.phase = TRV_TO_NODE; ts.how = "flight";
             }
             if (g_fishing.count(low) || bot->IsNonMeleeSpellCasted(false))
                 bot->InterruptNonMeleeSpells(false); // the line comes out of the water
@@ -4425,7 +4446,7 @@ namespace
                 {
                     float const dx = bot->GetPositionX() - ts.tx, dy = bot->GetPositionY() - ts.ty;
                     float const d2 = dx * dx + dy * dy;
-                    if (d2 > 15.f * 15.f && now - ts.atMs <= 150000u)
+                    if (d2 > 5.f * 5.f && now - ts.atMs <= 150000u) // up to the end of the honest path
                     {
                         if (!ts.lastMs || now - ts.lastMs >= 1000)
                         {
@@ -4645,13 +4666,14 @@ namespace
             {
                 case FISH_MOVE:
                 {
+                    bool const bank = fs.bx != 0.f || fs.by != 0.f; // a marked bank: walk right onto it
                     if (!fs.lastMs)
                     {
                         PathInfo path(bot);
-                        path.calculate(fs.x, fs.y, fs.z);
+                        path.calculate(bank ? fs.bx : fs.x, bank ? fs.by : fs.y, bank ? fs.bz : fs.z);
                         Vector3 const e = path.getActualEndPosition();
-                        float const ex = e.x - fs.x, ey = e.y - fs.y;
-                        if ((uint32(path.getPathType()) & PATHFIND_NOPATH) || ex * ex + ey * ey > 625.f)
+                        float const ex = e.x - (bank ? fs.bx : fs.x), ey = e.y - (bank ? fs.by : fs.y);
+                        if ((uint32(path.getPathType()) & PATHFIND_NOPATH) || ex * ex + ey * ey > (bank ? 100.f : 625.f)) // a marked bank: within 10 yd (a slope, a dock edge)
                         {
                             g_fishAvoidUntilMs[low] = now + 30u * 60000u; // the water is not reachable from here
                             sLog.outString("[mod-turtlebots] fishing: %s cannot reach the water at %.0f/%.0f (%s) - no path.",
@@ -4663,7 +4685,7 @@ namespace
                         fs.lx = bot->GetPositionX(); fs.ly = bot->GetPositionY(); fs.lastMs = now;
                     }
                     float const tdx = bot->GetPositionX() - fs.tx, tdy = bot->GetPositionY() - fs.ty;
-                    if (dist2 > 400.0f && tdx * tdx + tdy * tdy > 9.0f && now - fs.atMs <= 90000)
+                    if ((bank || dist2 > 400.0f) && tdx * tdx + tdy * tdy > 9.0f && now - fs.atMs <= 90000)
                     {
                         if (!fs.lastMs || now - fs.lastMs >= 1000)
                         {
@@ -4697,7 +4719,10 @@ namespace
                     bot->GetMotionMaster()->MoveIdle();
                     bot->StopMoving(true);
                     bot->Unmount(); // can't fish from the saddle
-                    bot->SetFacingTo(atan2(fs.y - bot->GetPositionY(), fs.x - bot->GetPositionX())); // face the water
+                    if (fs.bx != 0.f || fs.by != 0.f)
+                        bot->SetFacingTo(fs.o); // the marked facing from the bank
+                    else
+                        bot->SetFacingTo(atan2(fs.y - bot->GetPositionY(), fs.x - bot->GetPositionX())); // face the water
                     EnsureFishingPole(bot);           // best-effort: pole + real cast are just for the visual
                     bot->CastSpell(bot, 7620, false); // if a pole got equipped this places a real bobber
                     if (!fs.casts++)
@@ -5150,6 +5175,7 @@ namespace
             {
                 FishSpot const& sp = spots[urand(0, uint32(spots.size()) - 1)];
                 g_fishing[low] = FishState{ uint8(FISH_MOVE), sp.x, sp.y, sp.z, sp.o, now, 0, now + urand(600u, 3600u) * 1000u };
+                g_fishing[low].bx = sp.bx; g_fishing[low].by = sp.by; g_fishing[low].bz = sp.bz;
                 nextAt = now + urand(30000, 60000);
                 return;
             }
