@@ -213,9 +213,10 @@ mod-turtlebots.Memory.ReturnMinutes = 120
 # TRAVEL BETWEEN CITIES (#23)
 #
 #    Residents travel between the capitals of their faction: by flight on the same continent
-#    (Orgrimmar - Thunder Bluff, Stormwind - Ironforge; the real taxi ride, node by node), by
-#    their own portal if they are a mage of the level. Another continent without a portal is
-#    not reachable yet (no zeppelin). A visitor lives in the other city for 8-15 minutes (its
+#    (Orgrimmar - Thunder Bluff, Stormwind - Ironforge; the real taxi ride, node by node), or
+#    by their own teleport spell if they are a mage of level 20 (Rune of Teleportation; the
+#    flight when the teleport does not come off). Another continent is out of reach for the
+#    others yet (no zeppelin). A visitor lives in the other city for 8-15 minutes (its
 #    errands, channels and fishing spots are those of that city) and flies home. A service
 #    asked for in a channel (water, food, healthstone, portal, a buff) fetches a resident of
 #    the right class: one in the player's city walks over; else one from another city travels

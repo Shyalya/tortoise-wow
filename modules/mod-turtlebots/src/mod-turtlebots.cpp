@@ -1197,13 +1197,57 @@ namespace
     // cast plays), the portal spawns at the mage for the group to step through.
     static void ClearConjured(Player* bot); // fwd decl (defined near HandOverItems)
 
+    // A free slot in the backpack for a reagent: the cheapest stack goes - never the
+    // hearthstone, the last fishing pole, a quest item or anything worn; spare poles first.
+    // (An angler's bag fills with fish and poles, and a full bag fails the cast for
+    // want of the reagent.)
+    static bool FreeOneBagSlot(Player* bot)
+    {
+        uint32 poles = 0;
+        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+            if (Item* it = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+                if (it->GetEntry() == 6256) ++poles;
+        Item* victim = nullptr; uint32 victimValue = 0xFFFFFFFFu;
+        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        {
+            Item* it = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+            if (!it) return true; // a slot is free after all
+            ItemPrototype const* proto = it->GetProto();
+            if (!proto || proto->Class == ITEM_CLASS_QUEST || it->GetEntry() == 6948) continue;
+            if (it->GetEntry() == 6256 && poles <= 1) continue;
+            uint32 const value = it->GetEntry() == 6256 ? 0u : proto->SellPrice * it->GetCount() + 1u;
+            if (value < victimValue) { victimValue = value; victim = it; }
+        }
+        if (!victim) return false;
+        if (victim->GetEntry() == 6256) --poles;
+        bot->DestroyItem(INVENTORY_SLOT_BAG_0, victim->GetSlot(), true);
+        return true;
+    }
+
+    static uint32 UsedBackpackSlots(Player* bot)
+    {
+        uint32 n = 0;
+        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+            if (bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)) ++n;
+        return n;
+    }
+
+    // The reagent into the bag, room made if need be; false when it still does not fit.
+    static bool SupplyReagent(Player* bot, uint32 itemId)
+    {
+        if (bot->HasItemCount(itemId, 1)) return true;
+        if (!bot->StoreNewItemInInventorySlot(itemId, 1) && FreeOneBagSlot(bot))
+            bot->StoreNewItemInInventorySlot(itemId, 1);
+        return bot->HasItemCount(itemId, 1);
+    }
+
     static void OpenPortal(Player* mage, uint32 spell, std::string const& city)
     {
         ServiceSay(mage, std::string("A traveler wants a portal to ") + city + "; you begin opening it.",
                    std::string("One moment - opening a portal to ") + city + "...");
         if (!mage->HasSpell(spell)) mage->LearnSpell(spell, false);
         ClearConjured(mage); // free the bag so the Rune of Portals reagent fits
-        mage->StoreNewItemInInventorySlot(17032, 1); // Rune of Portals reagent
+        SupplyReagent(mage, 17032); // Rune of Portals reagent
         mage->StopMoving(true); // stand still so the long portal cast isn't cancelled
         CastByChainBase(mage, spell, mage);
     }
@@ -4133,13 +4177,27 @@ namespace
         }
 
         // ---- Travel between cities (#23) ----
-        static uint32 PortalSpellToCity(uint32 ci, uint32& reqLevel)
+        // A mage traveling alone teleports (Teleport: <city>, level 20, a Rune of
+        // Teleportation); a portal is only for taking others along.
+        static uint32 TeleportSpellToCity(uint32 ci, uint32& reqLevel)
         {
-            static uint32 const kSpell[] = { 11417, 11420, 11418, 10059, 11416, 11419 }; // Org, TB, UC, SW, IF, Darnassus
-            static uint32 const kLevel[] = { 40, 50, 40, 40, 40, 50 };
+            static uint32 const kSpell[] = { 3567, 3566, 3563, 3561, 3562, 3565 }; // Org, TB, UC, SW, IF, Darnassus
             if (ci >= 6) return 0;
-            reqLevel = kLevel[ci];
+            reqLevel = 20;
             return kSpell[ci];
+        }
+
+        // The flight instead, when a teleport did not come off; false with no flight from here.
+        static bool FallBackToFlight(Player* bot, TravelState& ts, uint32 now)
+        {
+            if (ts.how == "flight") return false;
+            ts.nodes = TaxiRouteBetween(ts.fromCi, ts.toCi, bot->GetTeam());
+            TaxiNodesEntry const* n = ts.nodes.empty() ? nullptr : sObjectMgr.GetTaxiNodeEntry(ts.nodes.front());
+            if (!n) return false;
+            ts.tx = n->x; ts.ty = n->y; ts.tz = n->z; ts.phase = TRV_TO_NODE; ts.how = "flight";
+            ts.atMs = now; ts.lastMs = 0; ts.stallMs = 0;
+            sLog.outString("[mod-turtlebots] travel: %s got no teleport and takes the flight to %s instead.", bot->GetName(), g_cities[ts.toCi].name);
+            return true;
         }
 
         // The flight route from one city to another on the same continent: a breadth-first
@@ -4180,9 +4238,9 @@ namespace
 
         static bool CanTravelTo(Player* bot, uint32 ci)
         {
-            uint32 req = 0; uint32 const sp = PortalSpellToCity(ci, req);
-            if (bot->GetClass() == CLASS_MAGE && sp && bot->GetLevel() >= req && bot->HasSpell(sp))
-                return true;
+            uint32 req = 0; uint32 const sp = TeleportSpellToCity(ci, req);
+            if (bot->GetClass() == CLASS_MAGE && sp && bot->GetLevel() >= req)
+                return true; // the spell is learned on the way out if need be, as OpenPortal does
             return !TaxiRouteBetween(CityIdxOfBot(bot->GetGUIDLow()), ci, bot->GetTeam()).empty();
         }
 
@@ -4199,10 +4257,10 @@ namespace
                 return false;
             TravelState ts;
             ts.toCi = toCi; ts.fromCi = fromCi; ts.atMs = WorldTimer::getMSTime(); ts.forPlayer = forPlayer; ts.request = request;
-            uint32 req = 0; uint32 const spell = PortalSpellToCity(toCi, req);
-            if (bot->GetClass() == CLASS_MAGE && spell && bot->GetLevel() >= req && bot->HasSpell(spell))
+            uint32 req = 0; uint32 const spell = TeleportSpellToCity(toCi, req);
+            if (bot->GetClass() == CLASS_MAGE && spell && bot->GetLevel() >= req)
             {
-                ts.phase = TRV_PORTAL; ts.spell = spell; ts.how = "portal";
+                ts.phase = TRV_PORTAL; ts.spell = spell; ts.how = "teleport";
             }
             else
             {
@@ -4282,24 +4340,29 @@ namespace
                     if (now - ts.atMs < 3000u) return; // the taxi state takes a moment to set
                     ts.phase = TRV_ARRIVE; ts.atMs = now;
                     return;
-                case TRV_PORTAL:
+                case TRV_PORTAL: // the teleport of the mage itself
                 {
                     if (!ts.lastMs)
                     {
+                        // The same way OpenPortal() does it for a traveler: the spell known, the
+                        // reagent supplied, standing still for the long cast.
                         bot->GetMotionMaster()->MoveIdle(); bot->StopMoving(true); bot->Unmount();
-                        bot->CastSpell(bot, ts.spell, false);
+                        if (!bot->HasSpell(ts.spell)) bot->LearnSpell(ts.spell, false);
+                        ClearConjured(bot); // free the bag so the Rune of Teleportation fits
+                        bool const ok = SupplyReagent(bot, 17031) && CastByChainBase(bot, ts.spell, bot) && bot->IsNonMeleeSpellCasted(false);
                         ts.lastMs = now;
+                        if (!ok)
+                        {
+                            sLog.outString("[mod-turtlebots] travel: %s could not start the teleport (spell %s, rune %s, bag %u/16).", bot->GetName(),
+                                           bot->HasSpell(ts.spell) ? "known" : "unknown", bot->HasItemCount(17031, 1) ? "in bag" : "missing",
+                                           UsedBackpackSlots(bot));
+                            if (!FallBackToFlight(bot, ts, now))
+                                EndTravel(bot, "no teleport, and no flight goes there");
+                        }
                         return;
                     }
-                    if (bot->IsNonMeleeSpellCasted(false)) return; // the portal takes its time to open
-                    GameObject* go = bot->GetGameObject(ts.spell);
-                    if (!go)
-                    {
-                        if (now - ts.lastMs > 20000u) EndTravel(bot, "no portal came of the cast");
-                        return;
-                    }
-                    go->Use(bot); // step through
-                    ts.phase = TRV_ARRIVE; ts.atMs = now;
+                    if (bot->IsNonMeleeSpellCasted(false)) return; // the teleport takes its time
+                    ts.phase = TRV_ARRIVE; ts.atMs = now; // the cast ends in the teleport; arrival checks it
                     return;
                 }
                 case TRV_ARRIVE:
@@ -4309,7 +4372,8 @@ namespace
                     if (bot->GetMapId() != c.map || bot->GetDistance2d(c.x, c.y) > 1500.f)
                     {
                         if (now - ts.atMs < 20000u) return; // a teleport may still be in flight
-                        EndTravel(bot, "did not end up in the city");
+                        if (!FallBackToFlight(bot, ts, now))
+                            EndTravel(bot, "did not end up in the city");
                         return;
                     }
                     uint32 const toCi = ts.toCi, forPlayer = ts.forPlayer;
@@ -6756,13 +6820,19 @@ namespace
                 done = true;
             else if (g_travel.count(sa.resident))
                 ; // still on the way
-            else if (r->GetMapId() != p->GetMapId() || r->GetDistance(p) > 400.f)
-                done = nowMs - sa.atMs > 4u * 60000u; // not here: wait a while, then let it go
+            else if (r->GetMapId() != p->GetMapId())
+                done = nowMs - sa.atMs > 4u * 60000u; // not on this map: wait a while, then let it go
             else if (r->GetDistance(p) > 8.f)
             {
+                // Anywhere in the city: the follow generator finds the way across it.
                 auto fo = g_botFollow.find(sa.resident);
                 if (fo == g_botFollow.end() || fo->second.target != sa.player)
+                {
+                    g_fishing.erase(sa.resident); g_cooking.erase(sa.resident); g_errand.erase(sa.resident); // the errand comes first
+                    r->InterruptNonMeleeSpells(false);
                     g_botFollow[sa.resident] = FollowState{ sa.player, nowMs + 120000u };
+                    sLog.outString("[mod-turtlebots] service: %s sets out across the city to %s (%.0f yd).", r->GetName(), p->GetName(), r->GetDistance(p));
+                }
             }
             else
             {
