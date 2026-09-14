@@ -397,7 +397,7 @@ namespace
     struct LandSpot { float x, y, z; };
     static std::map<uint32, LandSpot> g_lastLand;       // botGuid -> where it last stood on dry land
     enum { ERR_GO = 1, ERR_DWELL = 2 };
-    struct Errand { uint8 idx; uint8 phase; uint32 atMs; uint32 dwellMs; float lx = 0, ly = 0; uint32 stallMs = 0, lastMs = 0; float tx = 0, ty = 0, tz = 0; };
+    struct Errand { uint8 idx; uint8 phase; uint32 atMs; uint32 dwellMs; float lx = 0, ly = 0; uint32 stallMs = 0, lastMs = 0; float tx = 0, ty = 0, tz = 0; bool sell = false; };
     static std::map<uint32, std::set<uint8>> g_poiAvoid;   // botGuid -> points it could not reach lately
     static std::map<uint32, uint32> g_poiAvoidUntilMs;     // botGuid -> when that list is forgotten
     static std::map<uint32, uint32> g_fishAvoidUntilMs;    // botGuid -> no fishing walk before then (the last one stalled)
@@ -433,7 +433,8 @@ namespace
         City const& c = g_cities[ci];
         struct Want { uint32 flag; char const* kind; };
         static Want const k[] = { { 0x1000, "the auction house" }, { 0x100, "the bank" }, { 0x80, "the inn" },
-                                  { 0x8, "the flight master" }, { 0x800, "the battlemaster" }, { 0x10, "a trainer" } };
+                                  { 0x8, "the flight master" }, { 0x800, "the battlemaster" }, { 0x10, "a trainer" },
+                                  { 0x4, "a vendor" } };
         for (Want const& w : k)
         {
             if (QueryResult* r = WorldDatabase.PQuery(
@@ -1259,6 +1260,77 @@ namespace
         for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
             if (bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot)) ++n;
         return n;
+    }
+
+    static uint32 FreeBackpackSlots(Player* bot)
+    {
+        return uint32(INVENTORY_SLOT_ITEM_END - INVENTORY_SLOT_ITEM_START) - UsedBackpackSlots(bot);
+    }
+
+    // What an angler carries that a vendor takes: raw fish beyond two stacks kept for the
+    // cooking fire, everything it cooked, grey junk from the water, spare fishing poles.
+    // Never the hearthstone, the last pole, quest items, reagents or anything worn.
+    static bool IsRawFish(ItemPrototype const* p)
+    {
+        if (p->Class == ITEM_CLASS_TRADE_GOODS && p->SubClass == ITEM_SUBCLASS_MEAT) return true;
+        static uint32 const kRaw[] = { 6291, 6303, 6289, 6317, 6308, 6361, 6362, 21071, 6358, 6359, 13754, 13756, 4603, 13758, 13759, 13760, 13888, 13889, 13893 };
+        for (uint32 e : kRaw) if (p->ItemId == e) return true;
+        return false;
+    }
+    static bool IsCookedFish(ItemPrototype const* p)
+    {
+        static uint32 const kDone[] = { 6290, 787, 4592, 6316, 6316, 5095, 6369, 4594, 13927, 13928, 13929, 13930, 13931, 13932, 13933, 13934, 13935, 21072, 4593, 4592 };
+        for (uint32 e : kDone) if (p->ItemId == e) return true;
+        return false;
+    }
+
+    // Sells the catch (destroyed, the vendor price paid into the purse). Returns the
+    // number of stacks sold; the money is added to the reference.
+    static uint32 SellCatch(Player* bot, uint32& money, bool dryRun = false)
+    {
+        uint32 poles = 0, rawStacks = 0;
+        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+            if (Item* it = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            {
+                if (it->GetEntry() == 6256) ++poles;
+                else if (IsRawFish(it->GetProto())) ++rawStacks;
+            }
+        Item* mh = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, EQUIPMENT_SLOT_MAINHAND);
+        bool const poleWorn = mh && mh->GetEntry() == 6256;
+        std::vector<uint8> sold;
+        uint32 keepRaw = 2;
+        for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END; ++slot)
+        {
+            Item* it = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot);
+            if (!it) continue;
+            ItemPrototype const* p = it->GetProto();
+            if (!p || p->Class == ITEM_CLASS_QUEST || it->GetEntry() == 6948 || it->GetEntry() == 17031 || it->GetEntry() == 17032) continue;
+            bool take = false;
+            if (it->GetEntry() == 6256) { take = poleWorn || poles > 1; if (take) --poles; }
+            else if (IsRawFish(p)) { if (keepRaw) --keepRaw; else take = true; }
+            else if (IsCookedFish(p)) take = true;
+            else if (p->Quality == ITEM_QUALITY_POOR) take = true;
+            if (!take) continue;
+            money += p->SellPrice * it->GetCount();
+            sold.push_back(slot);
+        }
+        if (dryRun)
+            return uint32(sold.size());
+        for (uint8 slot : sold)
+            bot->DestroyItem(INVENTORY_SLOT_BAG_0, slot, true);
+        if (money)
+            bot->ModifyMoney(int32(money));
+        return uint32(sold.size());
+    }
+    static std::map<uint32, uint32> g_bagTripMs; // botGuid -> no vendor trip before then
+
+    static std::string MoneyText(uint32 c)
+    {
+        std::ostringstream o;
+        if (c / 10000) o << c / 10000 << "g ";
+        if ((c / 100) % 100 || c / 10000) o << (c / 100) % 100 << "s ";
+        o << c % 100 << "c";
+        return o.str();
     }
 
     // The reagent into the bag, room made if need be; false when it still does not fit.
@@ -4089,13 +4161,14 @@ namespace
             g_fishSpotsByCity[0].push_back({ 2000.6f, -4659.7f, 26.5f, 5.31f });
             g_fishSpotsByCity[0].push_back({ 2006.0f, -4666.0f, 26.0f, 5.31f });
             g_fishSpotsByCity[0].push_back({ 1995.0f, -4665.0f, 26.0f, 5.31f });
-            // Stormwind, walked and marked in-game (.gps at the bank, facing the water): the
-            // pond by the entrance bridge in the Valley of Heroes and three canal banks -
-            // the map search only found the high quays, which look wrong for an angler.
-            g_fishSpotsByCity[3].push_back({ -8987.57f, 406.94f, 72.83f, 0.67f });
-            g_fishSpotsByCity[3].push_back({ -8795.48f, 770.55f, 96.34f, 1.64f });
-            g_fishSpotsByCity[3].push_back({ -8853.33f, 745.49f, 101.64f, 0.53f });
-            g_fishSpotsByCity[3].push_back({ -8749.13f, 524.39f, 96.34f, 5.70f });
+            // Stormwind, walked and marked in-game (.gps at the bank, facing the water; the
+            // spot is 12 yd out along that facing, the angler stands on the bank and faces
+            // it): the pond by the entrance bridge in the Valley of Heroes and three canal
+            // banks - the map search only found the high quays, which look wrong for an angler.
+            g_fishSpotsByCity[3].push_back({ -8978.2f, 414.4f, 72.83f, 0.67f }); // bank -8988/407
+            g_fishSpotsByCity[3].push_back({ -8796.3f, 782.5f, 96.34f, 1.64f }); // bank -8795/771
+            g_fishSpotsByCity[3].push_back({ -8843.0f, 751.6f, 101.64f, 0.53f }); // bank -8853/745
+            g_fishSpotsByCity[3].push_back({ -8739.1f, 517.8f, 96.34f, 5.70f }); // bank -8749/524
         }
 
         // Water inside a city, found in the map data instead of typed in: a grid around the
@@ -4200,7 +4273,12 @@ namespace
             if (mh && mh->GetProto()->Class == ITEM_CLASS_WEAPON &&
                 mh->GetProto()->SubClass == ITEM_SUBCLASS_WEAPON_FISHING_POLE)
                 return true;
-            Item* pole = bot->StoreNewItemInInventorySlot(6256, 1); // pole into a bag first
+            Item* pole = nullptr;
+            for (uint8 slot = INVENTORY_SLOT_ITEM_START; slot < INVENTORY_SLOT_ITEM_END && !pole; ++slot)
+                if (Item* it = bot->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+                    if (it->GetEntry() == 6256) pole = it; // the one from last time
+            if (!pole)
+                pole = bot->StoreNewItemInInventorySlot(6256, 1); // pole into a bag first
             if (!pole)
                 return false;
             uint16 dest = 0;
@@ -4750,6 +4828,13 @@ namespace
                 StandUp(bot);
                 bot->HandleEmoteCommand(EMOTE_ONESHOT_TALK); // browse / read on arrival
                 er.phase = ERR_DWELL; er.atMs = now; er.dwellMs = urand(10000, 30000);
+                if (er.sell)
+                {
+                    uint32 money = 0;
+                    uint32 const stacks = SellCatch(bot, money);
+                    sLog.outString("[mod-turtlebots] bag: %s sells %u stacks for %s at the vendor - %u slots free.", bot->GetName(), stacks,
+                                   MoneyText(money).c_str(), FreeBackpackSlots(bot));
+                }
                 if (urand(0, 99) < 40)
                     AmbientSay(bot); // a word about the place on arrival (context says "standing at ...")
                 return;
@@ -5113,6 +5198,30 @@ namespace
                         return;
                     }
                 }
+            }
+
+            // A full backpack (an angler's fills with fish) goes to the vendor first: the
+            // catch is sold there, so a reagent - water, a portal, the teleport - fits again.
+            uint32 dummy = 0;
+            if (FreeBackpackSlots(bot) <= 3 && int32(now - (g_bagTripMs.count(low) ? g_bagTripMs[low] : 0u)) >= 0 && SellCatch(bot, dummy, true))
+            {
+                g_bagTripMs[low] = now + 10u * 60000u;
+                std::vector<Poi> const& pois = CityPoisOf(CityIdxOfBot(low), bot);
+                uint8 vendor = 255;
+                for (size_t i = 0; i < pois.size(); ++i)
+                    if (!strcmp(pois[i].kind, "a vendor")) { vendor = uint8(i); break; }
+                if (vendor != 255 && !(g_poiAvoid.count(low) && g_poiAvoid[low].count(vendor)))
+                {
+                    g_errand[low] = Errand{ vendor, uint8(ERR_GO), now, 0 };
+                    g_errand[low].sell = true;
+                    nextAt = now + urand(2000, 5000);
+                    return;
+                }
+                uint32 money = 0; // no vendor to be reached from here: the catch goes on the spot
+                uint32 const stacks = SellCatch(bot, money);
+                if (stacks)
+                    sLog.outString("[mod-turtlebots] bag: %s sells %u stacks for %s (no vendor to be reached) - %u slots free.", bot->GetName(), stacks,
+                                   MoneyText(money).c_str(), FreeBackpackSlots(bot));
             }
 
             // Talk happens alongside whatever comes next (people chat while they walk):
