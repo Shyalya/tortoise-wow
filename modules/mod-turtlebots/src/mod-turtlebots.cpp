@@ -643,6 +643,8 @@ namespace
         std::string fallback;
         std::string channel;  // LLM_CHANNEL: the channel spoken in
         std::string suffix;   // appended verbatim after the model line (item link + price)
+        std::string shadowName; // set when the speaker is a sleeping resident (no Player): the line goes out by guid
+        uint32 shadowTeam;      // its faction (which channel manager carries the line)
         std::shared_ptr<LlmResult> res;
         time_t deadline;
     };
@@ -664,7 +666,19 @@ namespace
     static std::map<uint32, uint32> g_chanAnswerAt;    // playerGuid -> ms before which it gets no second channel answer
     static std::map<uint32, uint32> g_lastMarketCallMs;// botGuid -> its last WTB call
     static uint32 g_nextMarketCallMs = 0;              // city-wide cadence of WTB calls
-    static uint32 g_llmMarketMinutes = 5;              // LLM.MarketCallMinutes (0 = no calls)
+    static uint32 g_llmMarketMinutes = 3;              // LLM.MarketCallMinutes (0 = no calls)
+    static bool   g_llmChannelTalk = true;             // LLM.ChannelTalk: ordinary channel chatter gets answers sometimes
+    static uint32 g_llmChannelPerMin = 6;              // LLM.ChannelPerMinute: city-wide cap on such answers
+    static bool   g_llmShadowVoices = true;            // LLM.ShadowVoices: sleeping residents may answer in channels
+    static float  g_chanTalkTokens = 2.f;              // budget for channel small talk (refilled ChannelPerMinute per minute)
+    static bool   g_chanSelfTest = false;              // Debug.ChannelSelfTest (edge-triggered on config reload)
+    struct ChanTestLine { std::string channel, msg; uint32 atMs; };
+    static std::vector<ChanTestLine> g_chanTestLines;  // self-test lines still to feed through the channel handler
+    struct ChanTalker { uint32 low; bool shadow; std::string name; uint32 team; uint32 atMs; };
+    static std::map<uint32, ChanTalker> g_chanTalkers;  // playerGuid -> the resident that last answered it in a channel
+    static uint32 g_llmWorldTalkMinutes = 4;           // LLM.WorldTalkMinutes: residents open a World line now and then (0 = off)
+    static uint32 g_nextWorldTalkMs = 0;
+    static uint32 g_llmMarketReplyChance = 60;         // LLM.MarketReplyChance: another resident answers a Trade call (%)
     struct PendingEmote { uint32 bot; uint32 anim; uint32 atMs; };
     static std::vector<PendingEmote> g_pendingEmotes;  // a gesture back, after a human beat (anim 0 = clear the state)
     static std::map<uint32, uint32> g_emoteReactAt;    // playerGuid -> ms before which no further emote reaction
@@ -859,12 +873,12 @@ namespace
     // Ask the LLM for an in-character line on a worker thread; the line (or the
     // fallback if the LLM is off, at capacity, errors, or misses the deadline) is
     // delivered on the world thread by the OnUpdate loop, as /say or as a whisper.
-    static void QueueLlm(Player* bot, std::string const& system, std::string const& user,
-                         std::string const& fallback, uint8 mode, uint32 targetGuid,
-                         uint32 notBeforeMs, char const* tag, uint8 depth, uint32 partnerGuid)
+    static void QueueLlmRaw(uint32 botLow, std::string const& system, std::string const& user,
+                            std::string const& fallback, uint8 mode, uint32 targetGuid,
+                            uint32 notBeforeMs, char const* tag, uint8 depth, uint32 partnerGuid)
     {
         LlmJob j;
-        j.botGuid = bot->GetGUIDLow(); j.targetGuid = targetGuid; j.mode = mode; j.depth = depth;
+        j.botGuid = botLow; j.targetGuid = targetGuid; j.mode = mode; j.depth = depth; j.shadowTeam = 0;
         j.partnerGuid = partnerGuid; j.notBeforeMs = notBeforeMs; j.tag = tag; j.fallback = fallback;
         j.res = std::make_shared<LlmResult>();
         j.deadline = time(nullptr) + time_t((g_llmDeadlineMs + 999) / 1000);
@@ -887,6 +901,13 @@ namespace
             }).detach();
         }
         g_llmJobs.push_back(j);
+    }
+
+    static void QueueLlm(Player* bot, std::string const& system, std::string const& user,
+                         std::string const& fallback, uint8 mode, uint32 targetGuid,
+                         uint32 notBeforeMs, char const* tag, uint8 depth, uint32 partnerGuid)
+    {
+        QueueLlmRaw(bot->GetGUIDLow(), system, user, fallback, mode, targetGuid, notBeforeMs, tag, depth, partnerGuid);
     }
 
     // Service lines: spoken out loud, no dialogue chain behind them.
@@ -1138,7 +1159,26 @@ namespace
         g_llmLog            = sConfig.GetBoolDefault("mod-turtlebots.LLM.Log", true);
         g_factSelfTest      = sConfig.GetBoolDefault("mod-turtlebots.Debug.FactSelfTest", false);
         g_stuckProbe        = sConfig.GetBoolDefault("mod-turtlebots.Debug.StuckProbe", false);
-        g_llmMarketMinutes  = sConfig.GetIntDefault("mod-turtlebots.LLM.MarketCallMinutes", 5);
+        g_llmMarketMinutes  = sConfig.GetIntDefault("mod-turtlebots.LLM.MarketCallMinutes", 3);
+        g_llmChannelTalk    = sConfig.GetBoolDefault("mod-turtlebots.LLM.ChannelTalk", true);
+        g_llmChannelPerMin  = sConfig.GetIntDefault("mod-turtlebots.LLM.ChannelPerMinute", 6);
+        g_llmShadowVoices   = sConfig.GetBoolDefault("mod-turtlebots.LLM.ShadowVoices", true);
+        g_llmWorldTalkMinutes = sConfig.GetIntDefault("mod-turtlebots.LLM.WorldTalkMinutes", 4);
+        g_llmMarketReplyChance = sConfig.GetIntDefault("mod-turtlebots.LLM.MarketReplyChance", 60);
+        {
+            // Debug.ChannelSelfTest: on the reload that switches it on, four channel lines are fed
+            // through the handler in the name of the first real player in the world, 23 s apart.
+            bool const test = sConfig.GetBoolDefault("mod-turtlebots.Debug.ChannelSelfTest", false);
+            if (test && !g_chanSelfTest)
+            {
+                uint32 const now = WorldTimer::getMSTime();
+                g_chanTestLines = { { "World", "hi", now + 3000 },
+                                    { "World", "where can i find the next blacksmith?", now + 26000 },
+                                    { "World", "where can i find ratchet?", now + 49000 },
+                                    { "World", "what do you think of the mage class?", now + 72000 } };
+            }
+            g_chanSelfTest = test;
+        }
         g_socialSelfTest    = sConfig.GetBoolDefault("mod-turtlebots.Debug.SocialSelfTest", false);
         ParseLlmUrl();
     }
@@ -1284,9 +1324,12 @@ namespace
         while (d.size() > 6) d.pop_front();
     }
 
-    static std::string ConvoContext(Player* bot, Player* player)
+    static std::string ConvoContextLow(uint32 botLow, Player* player);
+    static std::string ConvoContext(Player* bot, Player* player) { return ConvoContextLow(bot->GetGUIDLow(), player); }
+
+    static std::string ConvoContextLow(uint32 botLow, Player* player)
     {
-        auto it = g_convo.find((uint64(bot->GetGUIDLow()) << 32) | player->GetGUIDLow());
+        auto it = g_convo.find((uint64(botLow) << 32) | player->GetGUIDLow());
         if (it == g_convo.end()) return std::string();
         time_t const now = time(nullptr);
         std::string s;
@@ -1333,7 +1376,8 @@ namespace
                 return false;
             if (!sub.empty() && LowerStr(ci->subname).find(sub) == std::string::npos)
                 return false;
-            if (!name.empty() && LowerStr(ci->name).find(name) == std::string::npos)
+            if (!name.empty() && LowerStr(ci->name).find(name) == std::string::npos &&
+                LowerStr(ci->subname).find(name) == std::string::npos)
                 return false;
             return true;
         }
@@ -1341,8 +1385,16 @@ namespace
 
     struct MailboxCheck
     {
-        WorldObject const* obj; float range;
-        bool operator()(GameObject* go) { return go->GetGoType() == GAMEOBJECT_TYPE_MAILBOX && obj->IsWithinDistInMap(go, range); }
+        WorldObject const* obj; float range; std::string sub; // sub empty: a mailbox; else a game object whose name contains it
+        bool operator()(GameObject* go)
+        {
+            if (!obj->IsWithinDistInMap(go, range))
+                return false;
+            if (sub.empty())
+                return go->GetGoType() == GAMEOBJECT_TYPE_MAILBOX;
+            GameObjectInfo const* gi = go->GetGOInfo();
+            return gi && LowerStr(gi->name).find(sub) != std::string::npos;
+        }
     };
 
     // Compass direction of a point from an object (+x is north, +y is west).
@@ -1564,7 +1616,9 @@ namespace
                               std::string& thing, bool& mailbox)
     {
         static char const* const kAsk[] = { "where is", "where's", "wheres", "where can i", "where do i", "where are",
-                                            "how do i get to", "looking for the", "wo ist", "wo finde ich", "wo sind" };
+                                            "how do i get to", "looking for the", "wo ist", "wo finde ich", "wo sind",
+                                            "how do i find", "anyone know where", "know where", "which way to", "directions to",
+                                            "nearest", "closest", "is there a", "is there an", "where to find", "where would i" };
         bool ask = false;
         for (char const* a : kAsk)
             if (lower.find(a) != std::string::npos) { ask = true; break; }
@@ -1587,6 +1641,46 @@ namespace
             if (has("warsong")) sub = "warsong"; else if (has("arathi")) sub = "arathi"; else if (has("alterac")) sub = "alterac";
             return true;
         }
+        if (has("zeppelin") || has("zepp") || ContainsWord(lower, "zep") || has("airship") || has("blimp"))
+        {
+            name = "@zeppelin"; thing = "zeppelin"; return true; // the transport routes answer (see BuildFact)
+        }
+        if (ContainsWord(lower, "boat") || ContainsWord(lower, "boats") || ContainsWord(lower, "ship") || ContainsWord(lower, "ships") || ContainsWord(lower, "ferry"))
+        {
+            name = "@ship"; thing = "ship"; return true;
+        }
+        if (has("forge") || has("anvil") || has("campfire") || has("cooking fire"))
+        {
+            mailbox = true; // a game object by name (see MailboxCheck)
+            sub = has("anvil") ? "anvil" : has("forge") ? "forge" : "fire";
+            thing = sub == "fire" ? "cooking fire" : sub;
+            return true;
+        }
+        // A craft or class named on its own means its trainer ("the next blacksmith").
+        {
+            struct Craft { char const* word; char const* sub; char const* thing; };
+            static Craft const kCraft[] = {
+                { "blacksmith", "blacksmith", "blacksmithing trainer" }, { "armorsmith", "blacksmith", "blacksmithing trainer" },
+                { "weaponsmith", "blacksmith", "blacksmithing trainer" }, { "smith", "blacksmith", "blacksmithing trainer" },
+                { "tailor", "tailor", "tailoring trainer" }, { "leatherwork", "leatherwork", "leatherworking trainer" },
+                { "alchemist", "alchem", "alchemy trainer" }, { "alchemy", "alchem", "alchemy trainer" },
+                { "enchanter", "enchant", "enchanting trainer" }, { "enchanting", "enchant", "enchanting trainer" },
+                { "engineer", "engineer", "engineering trainer" }, { "herbalis", "herbal", "herbalism trainer" },
+                { "skinner", "skinn", "skinning trainer" }, { "skinning", "skinn", "skinning trainer" },
+                { "miner", "mining", "mining trainer" }, { "mining", "mining", "mining trainer" },
+                { "cook", "cook", "cooking trainer" }, { "fisherman", "fish", "fishing trainer" }, { "fishing trainer", "fish", "fishing trainer" },
+                { "first aid", "first aid", "first aid trainer" }, { "riding", "riding", "riding trainer" },
+                { "weapon master", "weapon", "weapon master" }, { "weaponmaster", "weapon", "weapon master" },
+                { "warrior", "warrior", "warrior trainer" }, { "paladin", "paladin", "paladin trainer" }, { "hunter", "hunter", "hunter trainer" },
+                { "rogue", "rogue", "rogue trainer" }, { "priest", "priest", "priest trainer" }, { "shaman", "shaman", "shaman trainer" },
+                { "mage", "mage", "mage trainer" }, { "warlock", "warlock", "warlock trainer" }, { "druid", "druid", "druid trainer" } };
+            for (Craft const& k : kCraft)
+                if (strchr(k.word, ' ') ? has(k.word) : ContainsWord(lower, k.word) || has((std::string(k.word) + "s").c_str()) || has((std::string(k.word) + "ing").c_str()))
+                {
+                    flags = UNIT_NPC_FLAG_TRAINER; sub = k.sub; thing = k.thing;
+                    return true;
+                }
+        }
         if (has("trainer") || has("teach") || has("learn"))
         {
             static char const* const kSkill[] = { "warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid",
@@ -1608,8 +1702,10 @@ namespace
                 return false; // "who sells X" / "where can I buy X": a named item, the lore lookup answers
             return true;
         }
-        // "where is <name>": a person by name.
-        static char const* const kLead[] = { "where is ", "where's ", "wheres ", "wo ist " };
+        // "where is <name>": a person or a place by name.
+        static char const* const kLead[] = { "where is ", "where's ", "wheres ", "wo ist ", "where can i find ", "where do i find ",
+                                             "where to find ", "how do i find ", "how do i get to ", "which way to ", "directions to ",
+                                             "know where ", "where are " };
         for (char const* l : kLead)
         {
             std::string::size_type p = lower.find(l);
@@ -1618,8 +1714,226 @@ namespace
             std::string::size_type e = rest.find_first_of("?.!,");
             if (e != std::string::npos) rest.resize(e);
             while (!rest.empty() && rest.back() == ' ') rest.pop_back();
-            if (rest.rfind("the ", 0) == 0) rest.erase(0, 4);
+            static char const* const kStrip[] = { "the ", "next ", "nearest ", "closest ", "a ", "an ", "is " };
+            for (bool again = true; again; )
+            {
+                again = false;
+                for (char const* st : kStrip)
+                    if (rest.rfind(st, 0) == 0) { rest.erase(0, strlen(st)); again = true; }
+            }
             if (rest.size() >= 3 && rest.size() <= 24) { name = rest; thing = rest; return true; }
+        }
+        return false;
+    }
+
+    // ---- Transports: zeppelins and ships with their stations, from the transports table and
+    // the taxi paths the core flies them on (a node with a delay is a stop). Loaded once.
+    struct TransportStation { uint32 map = 0; float x = 0.f, y = 0.f, z = 0.f; std::string label; };
+    struct TransportRoute { std::string name; bool zeppelin = false; TransportStation a, b; };
+
+    static std::vector<TransportRoute> const& TransportRoutes()
+    {
+        static std::vector<TransportRoute> routes;
+        static bool loaded = false;
+        if (loaded)
+            return routes;
+        loaded = true;
+        QueryResult* r = WorldDatabase.Query("SELECT t.name, gt.name, gt.data0 FROM transports t JOIN gameobject_template gt ON gt.entry = t.entry");
+        if (!r)
+            return routes;
+        do
+        {
+            Field* f = r->Fetch();
+            TransportRoute rt;
+            rt.name = f[0].GetCppString();
+            std::string const goName = f[1].GetCppString();
+            uint32 const path = f[2].GetUInt32();
+            rt.zeppelin = LowerStr(goName).find("zeppelin") != std::string::npos;
+            if (path >= sTaxiPathNodesByPath.size())
+                continue;
+            TaxiPathNodeList const& nodes = sTaxiPathNodesByPath[path];
+            if (nodes.size() < 2)
+                continue;
+            std::vector<TransportStation> stops;
+            for (size_t i = 0; i < nodes.size(); ++i)
+            {
+                if (!nodes[i].delay)
+                    continue;
+                TransportStation s; s.map = nodes[i].mapid; s.x = nodes[i].x; s.y = nodes[i].y; s.z = nodes[i].z;
+                bool dup = false;
+                for (TransportStation const& o : stops)
+                    if (o.map == s.map && std::fabs(o.x - s.x) + std::fabs(o.y - s.y) < 80.f) { dup = true; break; }
+                if (!dup)
+                    stops.push_back(s);
+            }
+            if (stops.size() < 2)
+            {
+                // No stop markers on this path: the first node, and the node farthest from it
+                // (a loop path ends where it began, so the last node is no station).
+                stops.clear();
+                TransportStation s; s.map = nodes[0].mapid; s.x = nodes[0].x; s.y = nodes[0].y; s.z = nodes[0].z; stops.push_back(s);
+                size_t far = 0; float farD = -1.f;
+                for (size_t i = 1; i < nodes.size(); ++i)
+                {
+                    float const d = nodes[i].mapid != s.map ? 1.0e12f : (nodes[i].x - s.x) * (nodes[i].x - s.x) + (nodes[i].y - s.y) * (nodes[i].y - s.y);
+                    if (d > farD) { farD = d; far = i; }
+                }
+                TransportStation e; e.map = nodes[far].mapid; e.x = nodes[far].x; e.y = nodes[far].y; e.z = nodes[far].z; stops.push_back(e);
+            }
+            rt.a = stops[0]; rt.b = stops[1];
+            // The two names of the route ("Orgrimmar and Undercity"): each goes to the station
+            // nearer the teleport-table entry of that name; without one, in the given order.
+            std::string const lowerName = LowerStr(rt.name);
+            std::string::size_type const sep = lowerName.find(" and ");
+            std::string const p1 = sep == std::string::npos ? rt.name : rt.name.substr(0, sep);
+            std::string const p2 = sep == std::string::npos ? std::string() : rt.name.substr(sep + 5);
+            auto near = [](std::string const& place, TransportStation const& s) -> float
+            {
+                std::string key = LowerStr(place);
+                key.erase(std::remove_if(key.begin(), key.end(), [](char c) { return c == ' ' || c == '\''; }), key.end());
+                GameTele const* t = sObjectMgr.GetGameTele(key);
+                if (!t || LowerStr(t->name) != key || t->mapId != s.map)
+                    return 1.0e9f;
+                return std::sqrt((t->x - s.x) * (t->x - s.x) + (t->y - s.y) * (t->y - s.y));
+            };
+            bool swap = false;
+            if (!p2.empty())
+                swap = near(p1, rt.b) + near(p2, rt.a) < near(p1, rt.a) + near(p2, rt.b);
+            rt.a.label = swap ? p2 : p1;
+            rt.b.label = swap ? p1 : p2;
+            if (rt.b.label.empty())
+                rt.b.label = rt.name;
+            routes.push_back(rt);
+            sLog.outString("[mod-turtlebots] transports: %s: %s at map %u %d/%d <-> %s at map %u %d/%d (%s, %u stops)",
+                           rt.name.c_str(), rt.a.label.c_str(), rt.a.map, int(rt.a.x), int(rt.a.y), rt.b.label.c_str(), rt.b.map, int(rt.b.x), int(rt.b.y),
+                           rt.zeppelin ? "zeppelin" : "ship", uint32(stops.size()));
+        } while (r->NextRow());
+        delete r;
+        sLog.outString("[mod-turtlebots] transports: %u routes with their stations loaded.", uint32(routes.size()));
+        return routes;
+    }
+
+    // Where the zeppelins (or ships) leave from, seen from the asker: the nearest stations on
+    // this map, grouped into hubs, each with where its routes go. A destination named in the
+    // question ("the zeppelin to undercity") narrows it down.
+    static bool TransportFact(Player* asker, std::string const& lower, bool zeppelin, std::string& fact)
+    {
+        std::vector<TransportRoute> const& routes = TransportRoutes();
+        std::vector<std::string> wanted;
+        for (TransportRoute const& rt : routes)
+            for (std::string const& lab : { rt.a.label, rt.b.label })
+            {
+                std::string const l = LowerStr(lab);
+                std::string const first = l.substr(0, l.find(' '));
+                if (first.size() >= 4 && lower.find(first) != std::string::npos && std::find(wanted.begin(), wanted.end(), lab) == wanted.end())
+                    wanted.push_back(lab);
+            }
+        struct Leg { TransportStation const* here; std::string to; float d; };
+        std::vector<Leg> legs;
+        for (TransportRoute const& rt : routes)
+        {
+            if (rt.zeppelin != zeppelin)
+                continue;
+            for (int side = 0; side < 2; ++side)
+            {
+                TransportStation const& here = side ? rt.b : rt.a;
+                TransportStation const& there = side ? rt.a : rt.b;
+                if (here.map != asker->GetMapId())
+                    continue;
+                if (!wanted.empty() && std::find(wanted.begin(), wanted.end(), there.label) == wanted.end())
+                    continue;
+                legs.push_back({ &here, there.label, asker->GetDistance2d(here.x, here.y) });
+            }
+        }
+        std::string const what = zeppelin ? "zeppelin" : "ship";
+        if (legs.empty())
+        {
+            fact = "There is no " + what + (wanted.empty() ? std::string() : " to " + wanted.front()) +
+                   " leaving from this continent. (Say only that; do not name another place or person instead.)";
+            return true;
+        }
+        std::sort(legs.begin(), legs.end(), [](Leg const& l, Leg const& r) { return l.d < r.d; });
+        struct Hub { TransportStation const* at; std::vector<std::string> to; };
+        std::vector<Hub> hubs;
+        for (Leg const& l : legs)
+        {
+            Hub* h = nullptr;
+            for (Hub& o : hubs)
+                if (std::fabs(o.at->x - l.here->x) + std::fabs(o.at->y - l.here->y) < 120.f) { h = &o; break; }
+            if (!h)
+            {
+                if (hubs.size() >= 2)
+                    continue;
+                hubs.push_back(Hub{ l.here, {} });
+                h = &hubs.back();
+            }
+            if (std::find(h->to.begin(), h->to.end(), l.to) == h->to.end())
+                h->to.push_back(l.to);
+        }
+        fact = std::string(zeppelin ? "Zeppelin towers" : "Docks") + " on this continent, nearest first: ";
+        for (size_t i = 0; i < hubs.size(); ++i)
+        {
+            Hub const& h = hubs[i];
+            std::string dest;
+            for (size_t k = 0; k < h.to.size(); ++k)
+                dest += (k ? (k + 1 == h.to.size() ? " and " : ", ") : "") + h.to[k];
+            fact += (i ? "; " : "") + std::string("one ") + WhereIs(asker, h.at->map, h.at->x, h.at->y, h.at->z) + " - " + what + "s to " + dest;
+        }
+        fact += ".";
+        return true;
+    }
+
+    static std::string CapWords(std::string s)
+    {
+        bool up = true;
+        for (char& c : s)
+        {
+            if (up && c >= 'a' && c <= 'z') c = char(c - 32);
+            up = (c == ' ' || c == '-');
+        }
+        return s;
+    }
+
+    // A place by name: the teleport table knows towns, camps and landmarks with a position
+    // (written without spaces there: "razorhill"); an area name from the map data at least
+    // says which zone it belongs to.
+    static bool PlaceFact(Player* asker, std::string const& what, std::string& fact)
+    {
+        std::string key = what;
+        key.erase(std::remove(key.begin(), key.end(), ' '), key.end());
+        GameTele const* t = sObjectMgr.GetGameTele(key);
+        if (t && LowerStr(t->name) != key)
+            t = nullptr; // only an exact name, not the first that merely contains it
+        if (t)
+        {
+            fact = CapWords(what) + " is " + WhereIs(asker, t->mapId, t->x, t->y, t->z) +
+                   (t->mapId != asker->GetMapId() ? ", on another continent" : "") + ".";
+            // A transport whose far station stands near that place, leaving from this map.
+            bool hinted = false;
+            for (TransportRoute const& rt : TransportRoutes())
+                for (int side = 0; side < 2 && !hinted; ++side)
+                {
+                    TransportStation const& here = side ? rt.b : rt.a;
+                    TransportStation const& there = side ? rt.a : rt.b;
+                    if (here.map != asker->GetMapId() || there.map != t->mapId)
+                        continue;
+                    if (std::fabs(there.x - t->x) + std::fabs(there.y - t->y) > 1500.f)
+                        continue;
+                    fact += std::string(" The ") + (rt.zeppelin ? "zeppelin from the tower " : "ship from the dock ") +
+                            WhereIs(asker, here.map, here.x, here.y, here.z) + " goes there.";
+                    hinted = true;
+                }
+            return true;
+        }
+        for (auto itr = sAreaStorage.begin<AreaEntry>(); itr < sAreaStorage.end<AreaEntry>(); ++itr)
+        {
+            AreaEntry const* a = *itr;
+            if (!a || !a->Name || LowerStr(a->Name) != what)
+                continue;
+            std::string const zone = a->ZoneId ? AreaName(a->ZoneId) : std::string();
+            fact = std::string(a->Name) + " is " + (zone.empty() ? std::string("a region of its own") : "a part of " + zone) +
+                   (a->MapId == asker->GetMapId() ? "" : ", on another continent") + ".";
+            return true;
         }
         return false;
     }
@@ -1630,18 +1944,22 @@ namespace
         uint32 flags = 0; std::string sub, name, thing; bool mailbox = false;
         if (!LocationQuery(lower, flags, sub, name, thing, mailbox))
             return BuildLoreFact(asker, lower, fact); // not a place: maybe an item or a quest
+        if (name == "@zeppelin" || name == "@ship")
+            return TransportFact(asker, lower, name == "@zeppelin", fact);
+        if (!name.empty() && PlaceFact(asker, name, fact))
+            return true;
         float const R = 600.f;
         WorldObject* found = nullptr; float bestD = R + 1.f; std::string label;
         if (mailbox)
         {
             std::list<GameObject*> gos;
-            MailboxCheck chk{ asker, R };
+            MailboxCheck chk{ asker, R, sub };
             MaNGOS::GameObjectListSearcher<MailboxCheck> srch(gos, chk);
             Cell::VisitGridObjects(asker, srch, R);
             for (GameObject* go : gos)
             {
                 float const d = asker->GetDistance(go);
-                if (d < bestD) { bestD = d; found = go; label = "a mailbox"; }
+                if (d < bestD) { bestD = d; found = go; label = sub.empty() ? std::string("a mailbox") : "a " + sub; }
             }
         }
         else
@@ -1664,7 +1982,55 @@ namespace
         }
         if (!found)
         {
-            fact = "There is no " + thing + " within " + std::to_string(int(R)) + " yards of " + asker->GetName() + " right now.";
+            // Nothing in the loaded grids around the asker: the spawn data of the whole map
+            // knows where the nearest one stands, wherever that is (static, no despawn check).
+            float const bx = asker->GetPositionX(), by = asker->GetPositionY();
+            uint32 const map = asker->GetMapId();
+            float fx = 0.f, fy = 0.f, fz = 0.f, fd = 1.0e18f; std::string flabel;
+            if (mailbox)
+            {
+                auto worker = [&](GameObjectDataPair const& p) -> bool
+                {
+                    GameObjectData const& d = p.second;
+                    if (d.position.mapId != map) return false;
+                    GameObjectInfo const* gi = sObjectMgr.GetGameObjectInfo(d.id);
+                    if (!gi) return false;
+                    if (sub.empty() ? gi->type != GAMEOBJECT_TYPE_MAILBOX : LowerStr(gi->name).find(sub) == std::string::npos) return false;
+                    float const dx = d.position.x - bx, dy = d.position.y - by, dd = dx * dx + dy * dy;
+                    if (dd < fd) { fd = dd; fx = d.position.x; fy = d.position.y; fz = d.position.z; flabel = sub.empty() ? std::string("a mailbox") : "a " + sub; }
+                    return false;
+                };
+                sObjectMgr.DoGOData(worker);
+            }
+            else
+            {
+                auto worker = [&](CreatureDataPair const& p) -> bool
+                {
+                    CreatureData const& d = p.second;
+                    if (d.position.mapId != map) return false;
+                    CreatureInfo const* ci = sObjectMgr.GetCreatureTemplate(d.creature_id[0]);
+                    if (!ci) return false;
+                    if (flags && !(ci->npc_flags & flags)) return false;
+                    if (!sub.empty() && LowerStr(ci->subname).find(sub) == std::string::npos) return false;
+                    if (!name.empty() && LowerStr(ci->name).find(name) == std::string::npos &&
+                        LowerStr(ci->subname).find(name) == std::string::npos) return false;
+                    float const dx = d.position.x - bx, dy = d.position.y - by, dd = dx * dx + dy * dy;
+                    if (dd < fd)
+                    {
+                        fd = dd; fx = d.position.x; fy = d.position.y; fz = d.position.z; flabel = ci->name;
+                        if (!ci->subname.empty()) flabel += " (" + ci->subname + ")";
+                    }
+                    return false;
+                };
+                sObjectMgr.DoCreatureData(worker);
+            }
+            if (!flabel.empty())
+            {
+                fact = (name.empty() ? "The nearest " + thing + " is " : std::string()) + flabel + ", " + WhereIs(asker, map, fx, fy, fz) + ".";
+                return true;
+            }
+            fact = "There is no " + thing + " anywhere on this continent, as far as " + asker->GetName() +
+                   " could walk. (Say only that you know of none; do not name another place or person instead.)";
             return true;
         }
         std::string const area = AreaName(found->GetAreaId());
@@ -1679,6 +2045,68 @@ namespace
     {
         return " FACT (trust this over your own memory and over any rule about places): " + fact +
                " Answer with the fact - who or what, direction and rough distance - in one short line, in character.";
+    }
+
+    // How likely a resident answers an ordinary channel line, by what it is - Kith's ladder:
+    // a jab or "anyone here?" 75-80, a greeting 70, a question 60, a plain remark 25, noise 0.
+    static uint32 ChannelTalkChance(std::string const& lower, char const*& kind)
+    {
+        std::string s = lower;
+        while (!s.empty() && (s.back() == ' ' || s.back() == '!' || s.back() == '.' || s.back() == ','))
+            s.pop_back();
+        if (s.size() < 2) { kind = "noise"; return 0; }
+        std::string first = s.substr(0, s.find(' '));
+        while (!first.empty() && (first.back() == '!' || first.back() == ',' || first.back() == '?' || first.back() == '.'))
+            first.pop_back();
+        static char const* const kCheck[] = { "anyone alive", "anyone there", "anyone here", "anybody here", "is anyone", "dead server",
+                                              "nobody here", "no one here", "empty server", "are you bots", "you all bots", "all bots", "hello?" };
+        for (char const* c : kCheck)
+            if (s.find(c) != std::string::npos) { kind = "check"; return 80; }
+        static char const* const kGreet[] = { "hi", "hello", "hey", "yo", "hallo", "moin", "servus", "hola", "sup", "greetings",
+                                              "hiya", "howdy", "gm", "good morning", "good evening", "good day", "o/", "ahoy", "salutations" };
+        for (char const* g : kGreet)
+            if (first == g || s == g || s.rfind(std::string(g) + " ", 0) == 0) { kind = "greeting"; return 70; }
+        static char const* const kJab[] = { "noob", "idiot", "stupid", "sucks", "trash", "scrub", "loser", "shut up", "a bot", "bots?",
+                                            "npc?", "fake", "boring", "lame", "useless", "pathetic" };
+        for (char const* j : kJab)
+            if (s.find(j) != std::string::npos) { kind = "jab"; return 75; }
+        static char const* const kLfg[] = { "lfg", "lfm", "lf1m", "lf2m", "lf tank", "lf heal", "looking for group", "need tank", "need heal", "anyone up for" };
+        for (char const* l : kLfg)
+            if (s.find(l) != std::string::npos) { kind = "lfg"; return 30; }
+        bool q = s.find('?') != std::string::npos;
+        static char const* const kQ[] = { "what", "who", "when", "where", "why", "how", "anyone", "any ", "is ", "are ", "does ", "do ",
+                                          "can ", "should ", "which ", "will ", "did ", "whats", "hows" };
+        for (char const* w : kQ)
+            if (!q && s.rfind(w, 0) == 0) q = true;
+        if (q) { kind = "question"; return 65; }
+        kind = "remark";
+        return 40;
+    }
+
+    // The instruction that goes with an ordinary channel line, by its kind.
+    static std::string ChannelTalkClause(char const* kind)
+    {
+        if (strcmp(kind, "greeting") == 0) return " Greet them back in your own words, one short line; you may ask what they are up to.";
+        if (strcmp(kind, "check") == 0)    return " They wonder whether anyone is around: let them know you are, in one short line, in character.";
+        if (strcmp(kind, "jab") == 0)      return " They are needling: answer with your own attitude in one short line - take it in stride, tease back or shrug it off, never break character.";
+        if (strcmp(kind, "lfg") == 0)      return " They look for company for something: say in one short line whether that is for you right now (usually you are busy with your own affairs).";
+        if (strcmp(kind, "question") == 0) return " Answer in one short line from what your character would know or think; if you cannot know it, say what you reckon or ask back - never invent places or facts.";
+        return " React to it in one short line as your character would - agree, disagree, joke, or add your own two coppers.";
+    }
+
+    // A resident of that faction to talk in a channel: up, hands free, at random.
+    static Player* ResidentToTalkOfTeam(Team team, uint32 excludeLow)
+    {
+        std::vector<Player*> any;
+        for (uint32 low : g_turtleResidents)
+        {
+            if (low == excludeLow) continue;
+            Player* res = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+            if (!res || !res->IsInWorld() || res->GetTeam() != team) continue;
+            if (res->GetTradeData() || g_cooking.count(low)) continue;
+            any.push_back(res);
+        }
+        return any.empty() ? nullptr : any[urand(0, uint32(any.size()) - 1)];
     }
 
     // ---- Channels (#152): residents listen and speak in Trade and World ----
@@ -1711,6 +2139,44 @@ namespace
         if (b->GetSession())
             sWorld.LogChat(b->GetSession(), "Chan", line, nullptr, 0, name.c_str());
         return true;
+    }
+
+    // A sleeping resident speaks in a channel by guid alone - no session, no Join: the core
+    // carries a channel line for any character guid and the client resolves the name, the
+    // way Kith let its shadows talk. The line is logged by the caller (chat.log needs a session).
+    static bool ShadowSayInChannel(uint32 low, Team team, std::string const& name, std::string const& line)
+    {
+        ChannelMgr* mgr = channelMgr(team);
+        if (!mgr)
+            return false;
+        Channel* chn = mgr->GetOrCreateChannel(name);
+        if (!chn)
+            return false;
+        chn->AsyncSay(ObjectGuid(HIGHGUID_PLAYER, low), line.c_str(), LANG_UNIVERSAL, true);
+        return true;
+    }
+
+    // Who a sleeping resident is, for its prompt.
+    struct ShadowInfo { uint32 low = 0; std::string name; uint8 race = 0; uint8 cls = 0; uint32 level = 1; std::string city; Team team = HORDE; };
+
+    static std::string ShadowSystemPrompt(ShadowInfo const& s, std::string const& channel)
+    {
+        std::string const& pers = PersonalityFor(s.low);
+        return std::string("You are ") + s.name + ", a " + PersonalityDesc(pers) + " level " + std::to_string(s.level) + " " +
+               RaceWord(s.race) + " " + ClassWord(s.cls) + " who lives in " + (s.city.empty() ? std::string("a capital") : s.city) +
+               " in World of Warcraft (vanilla era, Turtle WoW server). Right now you are out in the world on your own business, "
+               "away from the city, following the " + channel + " channel. Speak as this character in plain English: one short line, "
+               "under 20 words, varied phrasing, stay in the era. No emotes, no asterisks, no quotation marks, no name prefixes, "
+               "never mention being an AI.";
+    }
+
+    static void QueueLlmShadowChannel(ShadowInfo const& s, std::string const& user, std::string const& channel,
+                                      uint32 notBeforeMs, char const* tag, uint32 targetGuid)
+    {
+        QueueLlmRaw(s.low, ShadowSystemPrompt(s, channel), user, std::string(), LLM_CHANNEL, targetGuid, notBeforeMs, tag, 2, 0);
+        g_llmJobs.back().channel = channel;
+        g_llmJobs.back().shadowName = s.name;
+        g_llmJobs.back().shadowTeam = uint32(s.team);
     }
 
     // A clickable item link in the vanilla format (quality colour, item:entry:0:0:0).
@@ -2007,11 +2473,64 @@ namespace
     }
 
     static void MaybeAnswerLine(Player* speaker, std::string const& line, uint8 depth, uint32 preferLow);
+    static void ChannelReplyTo(uint32 speakerLow, std::string const& speakerName, uint32 team, std::string const& channel,
+                               std::string const& line, uint8 depth, char const* kind, uint32 preferLow); // after the chat script
+
+    // Item links reduced to their bracketed name, for a prompt.
+    static std::string PlainText(std::string s)
+    {
+        for (;;)
+        {
+            std::string::size_type const c = s.find("|c");
+            if (c == std::string::npos) break;
+            std::string::size_type const h = s.find("|h[", c);
+            std::string::size_type const e = h == std::string::npos ? std::string::npos : s.find("]|h|r", h);
+            if (e == std::string::npos) { s.erase(c, 2); continue; }
+            std::string const name = s.substr(h + 2, e - (h + 2) + 1);
+            s.replace(c, e + 5 - c, name);
+        }
+        return s;
+    }
+
+    // What a delivered channel line may set off: a Trade call draws interest, a World line
+    // an answer, an answer one more turn.
+    static void ChannelReplyAfter(LlmJob const& j, std::string const& name, uint32 team, std::string const& line)
+    {
+        if (j.mode != LLM_CHANNEL)
+            return;
+        if (strcmp(j.tag, "market") == 0)
+            ChannelReplyTo(j.botGuid, name, team, j.channel, PlainText(line), 0, "market", 0);
+        else if (strcmp(j.tag, "worldtalk") == 0)
+            ChannelReplyTo(j.botGuid, name, team, j.channel, line, 0, "world", 0);
+        else if (strcmp(j.tag, "worldreply") == 0 || strcmp(j.tag, "marketreply") == 0)
+            ChannelReplyTo(j.botGuid, name, team, j.channel, line, j.depth, "world", j.partnerGuid);
+    }
 
     // Finished line -> the world: /say or whisper, conversation memory, stats, log,
     // and possibly a neighbour's answer (dialogue).
     static void DeliverLlmLine(LlmJob const& j, std::string line, char const* how)
     {
+        if (!j.shadowName.empty())
+        {
+            // A sleeping resident: the line goes out by guid, the bookkeeping is the same.
+            line = CleanLine(line, j.shadowName.c_str());
+            if (line.empty() || !ShadowSayInChannel(j.botGuid, Team(j.shadowTeam), j.channel, line))
+                return;
+            if (j.targetGuid)
+                ConvoPush(j.botGuid, j.targetGuid, true, line);
+            ++g_llmStat.delivered;
+            if (j.off) { ++g_llmStat.off; how = "off"; }
+            else if (strcmp(how, "ok") == 0) { ++g_llmStat.ok; g_llmStat.sumMs += j.res->ms; }
+            else if (strcmp(how, "timeout") == 0) ++g_llmStat.timeout;
+            else ++g_llmStat.empty;
+            if (g_llmLog)
+                sLog.outString("[mod-turtlebots] llm %s/channel %s (asleep): %s (%u ms, %s)", j.tag, j.shadowName.c_str(), line.c_str(), j.res->ms, how);
+            if (strcmp(j.tag, "market") != 0)
+                g_lastLine[j.botGuid] = line;
+            if (!j.off)
+                ChannelReplyAfter(j, j.shadowName, j.shadowTeam, line);
+            return;
+        }
         Player* b = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, j.botGuid));
         if (!b || !b->IsInWorld())
             return;
@@ -2074,6 +2593,10 @@ namespace
                            b->GetName(), line.c_str(), j.res->ms, how);
         if (!j.off && (strcmp(j.tag, "ambient") == 0 || strcmp(j.tag, "dialogue") == 0))
             MaybeAnswerLine(b, line, j.depth, j.partnerGuid);
+        if (j.mode == LLM_CHANNEL && strcmp(j.tag, "market") != 0)
+            g_lastLine[j.botGuid] = line;
+        if (!j.off)
+            ChannelReplyAfter(j, b->GetName(), uint32(b->GetTeam()), line);
     }
 
     // Ambient small talk within the city-wide budget: at most AmbientPerMinute lines a
@@ -2354,6 +2877,7 @@ namespace
     }
 
     void ReplayOffer(Player* seller, std::string const& channel, std::string const& msg); // defined after the chat script
+    void ChannelSelfTestTick(uint32 nowMs);                                                // same
 
     static void HandOverItems(Player* caster, Player* plr, uint32 itemId, uint32 count)
     {
@@ -2428,6 +2952,38 @@ namespace
             _tradeWantTeam = team;
         }
 
+        // A sleeping resident of that faction (a TBOT resident or an off-shift adventurer of
+        // the pool) with what its prompt needs; false when there is none.
+        bool ShadowInfoFor(uint32 low, Team team, ShadowInfo& out)
+        {
+            QueryResult* r = CharacterDatabase.PQuery("SELECT name, race, class, level FROM characters WHERE guid = %u", low);
+            if (!r)
+                return false;
+            Field* f = r->Fetch();
+            out.low = low; out.name = f[0].GetCppString(); out.race = uint8(f[1].GetUInt32());
+            out.cls = uint8(f[2].GetUInt32()); out.level = f[3].GetUInt32(); out.team = team;
+            delete r;
+            uint32 const ci = CityOfRace(out.race);
+            out.city = ci < kCityCount ? g_cities[ci].name : "";
+            return true;
+        }
+
+        bool PickShadow(Team team, uint32 excludeLow, ShadowInfo& out)
+        {
+            std::vector<uint32> lows;
+            for (auto const& kv : _charByIndex)
+                if (TeamOfIndex(kv.first) == team && kv.second != excludeLow &&
+                    !sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, kv.second)))
+                    lows.push_back(kv.second);
+            for (PoolChar const& pc : _pool)
+                if (Player::TeamForRace(pc.race) == team && pc.low != excludeLow &&
+                    !sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, pc.low)))
+                    lows.push_back(pc.low);
+            if (lows.empty())
+                return false;
+            return ShadowInfoFor(lows[urand(0, uint32(lows.size()) - 1)], team, out);
+        }
+
         void OnStartup() override
         {
             _enabled   = sConfig.GetBoolDefault("mod-turtlebots.Enable", true);
@@ -2460,6 +3016,7 @@ namespace
             ReadLlmConfig();
             ReadTownCities();
             ResolveCityZones();
+            TransportRoutes();
             {
                 std::string names;
                 for (uint32 ci : g_cityEnabled)
@@ -2875,6 +3432,10 @@ namespace
             // Chatter budget: refill the city-wide ambient tokens (AmbientPerMinute per minute, capped).
             g_ambientTokens = std::min(float(g_llmAmbientPerMin),
                                        g_ambientTokens + float(g_llmAmbientPerMin) * float(diff) / 60000.f);
+            g_chanTalkTokens = std::min(float(g_llmChannelPerMin),
+                                        g_chanTalkTokens + float(g_llmChannelPerMin) * float(diff) / 60000.f);
+            if (!g_chanTestLines.empty())
+                ChannelSelfTestTick(WorldTimer::getMSTime());
 
             // Gestures back, after their human beat.
             if (!g_pendingEmotes.empty())
@@ -3804,8 +4365,66 @@ namespace
         // item link at a market price; a player answering with a link runs into the
         // normal buy flow. Only while somebody can hear it (a real player online) or the
         // city is forced awake for observation.
+        // Now and then a resident says something in the World channel to nobody in particular
+        // (an opinion, a rumour, a question) and another may answer: the channel lives even
+        // while the cities sleep, since sleeping residents may speak there. Only while a real
+        // player can read it (or a city is forced awake for observation).
+        void WorldTalk(uint32 nowMs)
+        {
+            if (!g_llmWorldTalkMinutes || !g_llmEnabled || !g_llmAmbient || !g_llmChannelTalk)
+                return;
+            if (!g_realPlayersOnline && _townForceAwake.empty())
+                return;
+            if (g_nextWorldTalkMs && int32(g_nextWorldTalkMs - nowMs) > 0)
+                return;
+            g_nextWorldTalkMs = nowMs + g_llmWorldTalkMinutes * 60000u + urand(0, 60000u);
+            if (g_chanTalkTokens < 1.f)
+                return;
+            std::vector<Team> teams;
+            for (auto const& kv : sWorld.GetAllSessions())
+            {
+                WorldSession* sess = kv.second;
+                if (!sess || sess->IsHeadless()) continue;
+                Player* p = sess->GetPlayer();
+                if (p && p->IsInWorld() && std::find(teams.begin(), teams.end(), p->GetTeam()) == teams.end())
+                    teams.push_back(p->GetTeam());
+            }
+            if (teams.empty())
+                teams.push_back(HORDE);
+            static char const* const kWorld[] = {
+                "share an opinion about a zone you have travelled through", "pass on a rumour you heard on the road",
+                "ask everyone a short question about a class or a craft", "complain about prices at the auction house",
+                "boast a little about a fight you had recently", "give newcomers one piece of advice",
+                "make a joke at the other faction's expense", "ask whether anyone has seen a rare beast lately",
+                "grumble about the weather where you are", "wonder aloud which dungeon to try next",
+                "ask if anyone is selling a thing your craft needs", "tell a short tale from your home city" };
+            for (Team team : teams)
+            {
+                if (g_chanTalkTokens < 1.f)
+                    break;
+                Player* b = ResidentToTalkOfTeam(team, 0);
+                ShadowInfo shadow;
+                if (!b && (!g_llmShadowVoices || !PickShadow(team, 0, shadow)))
+                    continue;
+                uint32 const low = b ? b->GetGUIDLow() : shadow.low;
+                std::string usr = std::string("Say one short line in the World channel of your faction, to nobody in particular: ") +
+                                  kWorld[urand(0, 11)] + ".";
+                auto ll = g_lastLine.find(low);
+                if (ll != g_lastLine.end() && !ll->second.empty())
+                    usr += " Do not repeat or rephrase your previous line (" + ll->second + ").";
+                g_chanTalkTokens -= 1.f;
+                if (b)
+                    QueueLlmChannel(b, ResidentSystemPrompt(b), usr, std::string(), "World", std::string(), nowMs + urand(0, 3000), "worldtalk", 0);
+                else
+                    QueueLlmShadowChannel(shadow, usr, "World", nowMs + urand(0, 3000), "worldtalk", 0);
+                g_llmJobs.back().depth = 0;
+                sLog.outString("[mod-turtlebots] world talk: %s%s opens a line in World.", b ? b->GetName() : shadow.name.c_str(), b ? "" : " (asleep)");
+            }
+        }
+
         void MarketCall(uint32 nowMs)
         {
+            WorldTalk(nowMs);
             if (!g_llmMarketMinutes || !g_llmEnabled || !g_llmAmbient)
                 return;
             if (!g_realPlayersOnline && _townForceAwake.empty())
@@ -4723,39 +5342,120 @@ public:
         {
             std::string const lower = LowerStr(msg);
             uint32 f = 0; std::string a, b, c; bool mb = false;
-            bool const question = LocationQuery(lower, f, a, b, c, mb);
-            Player* res = question ? BestResidentFor(from) : nullptr;
+            bool const location = LocationQuery(lower, f, a, b, c, mb);
+            Player* res = location ? BestResidentFor(from) : nullptr;
+            bool named = false;
             if (!res)
                 for (uint32 low : g_turtleResidents)
                     if (Player* r = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low)))
                         if (r != from && r->IsInWorld() && lower.find(LowerStr(r->GetName())) != std::string::npos)
                         {
-                            res = r; // called by name
+                            res = r; named = true; // called by name
                             break;
                         }
-            if (!question && !res)
-                return; // ordinary channel chatter
-            if (res)
-            {
-                auto ra = g_chanAnswerAt.find(from->GetGUIDLow());
-                if (ra != g_chanAnswerAt.end() && int32(ra->second - nowMs) > 0)
-                    return; // one answer per player per 20 s
-                g_chanAnswerAt[from->GetGUIDLow()] = nowMs + 20000u;
-                std::string usr = std::string(from->GetName()) + " asks in the " + channel + " channel: " + msg;
-                std::string fact;
-                if (BuildFact(from, lower, fact))
-                {
-                    usr += FactClause(fact);
-                    sLog.outString("[mod-turtlebots] fact for %s (%s): %s", from->GetName(), channel, fact.c_str());
-                }
-                else
-                    usr += " Answer in the channel in one short line.";
-                QueueLlmChannel(res, ResidentSystemPrompt(res), usr, std::string(), channel, std::string(),
-                                nowMs + urand(2000, 4000), "channel", from->GetGUIDLow());
+            uint32 const playerLow = from->GetGUIDLow();
+            // A conversation in progress (a resident answered this player within 90 s) goes on
+            // with the same resident and skips the per-player pause.
+            auto lt = g_chanTalkers.find(playerLow);
+            bool const followUp = lt != g_chanTalkers.end() && nowMs - lt->second.atMs < 90000u;
+            if (followUp && nowMs - lt->second.atMs < 3000u)
                 return;
+            auto ra = g_chanAnswerAt.find(playerLow);
+            if (!followUp && ra != g_chanAnswerAt.end() && int32(ra->second - nowMs) > 0)
+                return; // one answer per player per 20 s
+            // What kind of line it is decides whether and how often it is answered: a place
+            // or lore question and a resident called by name always; ordinary chatter (a
+            // greeting, a question, a remark, a jab) sometimes, the way Kith did it, within
+            // the channel budget.
+            char const* kind = location ? "location" : named ? "named" : "";
+            uint32 chance = 100;
+            std::string fact; bool haveFact = false;
+            if (location)
+                haveFact = BuildFact(from, lower, fact);
+            else if (!named)
+            {
+                if (!g_llmChannelTalk || !g_llmEnabled)
+                    return;
+                chance = ChannelTalkChance(lower, kind);
+                if (!chance)
+                    return;
+                if (strcmp(kind, "question") == 0 && BuildFact(from, lower, fact)) { haveFact = true; kind = "lore"; chance = 100; }
+                else if (followUp) { kind = "followup"; chance = 85; if (urand(1, 100) > chance) return; }
+                else if (g_chanTalkTokens < 1.f || urand(1, 100) > chance)
+                    return;
             }
+            bool const chatter = !location && !named && !haveFact;
+            // Who answers: a resident that is up (the same zone as the asker first, else any of
+            // the faction); while the city sleeps, a sleeping resident may speak in its own name.
+            Player* talker = nullptr;
+            ShadowInfo shadow;
+            if (followUp)
+            {
+                if (!lt->second.shadow)
+                    talker = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, lt->second.low));
+                if (talker && !talker->IsInWorld())
+                    talker = nullptr;
+                if (!talker && (!g_llmShadowVoices || !g_worldScript || !g_worldScript->ShadowInfoFor(lt->second.low, Team(lt->second.team), shadow)))
+                    talker = res ? res : ResidentToTalk(from);
+            }
+            else
+                talker = res ? res : ResidentToTalk(from);
+            if (!talker && !shadow.low && (!g_llmShadowVoices || !g_worldScript || !g_worldScript->PickShadow(from->GetTeam(), 0, shadow)))
+                return; // nobody to answer
+            g_chanAnswerAt[playerLow] = nowMs + 20000u;
+            if (chatter && strcmp(kind, "followup") != 0)
+                g_chanTalkTokens -= 1.f;
+            g_chanTalkers[playerLow] = ChanTalker{ talker ? talker->GetGUIDLow() : shadow.low, talker == nullptr,
+                                                   talker ? std::string(talker->GetName()) : shadow.name,
+                                                   uint32(talker ? talker->GetTeam() : shadow.team), nowMs };
+            std::string usr = std::string(from->GetName()) + (haveFact ? " asks in the " : " wrote in the ") + channel + " channel: " + msg;
+            if (haveFact)
+            {
+                usr += FactClause(fact);
+                sLog.outString("[mod-turtlebots] fact for %s (%s): %s", from->GetName(), channel, fact.c_str());
+            }
+            else if (named)
+                usr += " They are talking to you by name: answer them in one short line.";
+            else if (strcmp(kind, "followup") == 0)
+                usr += " They are continuing the conversation with you (maybe correcting you): reply in one short line; if they correct you, take it graciously.";
+            else
+                usr += ChannelTalkClause(kind);
+            ConvoPush(talker ? talker->GetGUIDLow() : shadow.low, playerLow, false, msg);
+            sLog.outString("[mod-turtlebots] chat: %s in %s (%s, %u%%) -> %s%s", from->GetName(), channel, kind, chance,
+                           talker ? talker->GetName() : shadow.name.c_str(), talker ? "" : " (asleep)");
+            char const* tag = chatter ? "chat" : "channel";
+            if (talker)
+                QueueLlmChannel(talker, ResidentSystemPrompt(talker), ConvoContext(talker, from) + usr, std::string(), channel, std::string(),
+                                nowMs + urand(2000, 5000), tag, playerLow);
+            else
+                QueueLlmShadowChannel(shadow, ConvoContextLow(shadow.low, from) + usr, channel, nowMs + urand(3000, 7000), tag, playerLow);
+            // A second voice now and then (a question 35 %, a jab or "anyone here?" 60 %):
+            // another resident adds its own angle a few seconds later.
+            if (chatter && g_chanTalkTokens >= 1.f)
+            {
+                uint32 const second = strcmp(kind, "jab") == 0 || strcmp(kind, "check") == 0 ? 60 : strcmp(kind, "question") == 0 ? 35 : 0;
+                if (second && urand(1, 100) <= second)
+                {
+                    uint32 const firstLow = talker ? talker->GetGUIDLow() : shadow.low;
+                    Player* other = ResidentToTalk(from, firstLow);
+                    ShadowInfo shadow2;
+                    bool const haveShadow2 = !other && g_llmShadowVoices && g_worldScript && g_worldScript->PickShadow(from->GetTeam(), firstLow, shadow2);
+                    if (other || haveShadow2)
+                    {
+                        g_chanTalkTokens -= 1.f;
+                        std::string const usr2 = usr + " " + (talker ? std::string(talker->GetName()) : shadow.name) +
+                                                 " is answering too: add your own angle, agree, disagree or tease, briefly.";
+                        if (other)
+                            QueueLlmChannel(other, ResidentSystemPrompt(other), usr2, std::string(), channel, std::string(),
+                                            nowMs + urand(7000, 12000), "chat", playerLow);
+                        else
+                            QueueLlmShadowChannel(shadow2, usr2, channel, nowMs + urand(8000, 14000), "chat", playerLow);
+                    }
+                }
+            }
+            return;
         }
-        // Nobody is up.
+        // An offer while nobody is up: wake a resident that can trade, and replay it.
         if (!g_worldScript)
             return;
         for (auto const& po : g_pendingOffers)
@@ -4763,8 +5463,8 @@ public:
                 return; // one at a time per player
         g_pendingOffers.push_back({ from->GetGUIDLow(), std::string(msg), nowMs, entry, std::string(channel) });
         g_worldScript->RequestTradeResponder(entry, from->GetTeam());
-        sLog.outString("[mod-turtlebots] trade: %s spoke in %s while the city sleeps (%s) - waking a resident.",
-                       from->GetName(), channel, entry ? "an offer" : "a question");
+        sLog.outString("[mod-turtlebots] trade: %s spoke in %s while the city sleeps (an offer) - waking a resident.",
+                       from->GetName(), channel);
     }
 
 private:
@@ -4862,6 +5562,23 @@ private:
             if (d < bestD) { bestD = d; best = res; }
         }
         return best;
+    }
+
+    // A resident to chat with the player: up, of the faction, the same zone as the player if
+    // any is there, else anywhere; picked at random for variety, hands free.
+    Player* ResidentToTalk(Player* from, uint32 excludeLow = 0)
+    {
+        std::vector<Player*> same, any;
+        for (uint32 low : g_turtleResidents)
+        {
+            if (low == excludeLow) continue;
+            Player* res = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, low));
+            if (!res || res == from || !res->IsInWorld() || res->GetTeam() != from->GetTeam()) continue;
+            if (res->GetTradeData() || g_cooking.count(low)) continue;
+            (res->GetZoneId() == from->GetZoneId() ? same : any).push_back(res);
+        }
+        std::vector<Player*>& pool = same.empty() ? any : same;
+        return pool.empty() ? nullptr : pool[urand(0, uint32(pool.size()) - 1)];
     }
 
     // Any resident that is up and in the world, wherever it stands (channel offers).
@@ -5080,6 +5797,81 @@ namespace
     {
         if (g_chatScript)
             g_chatScript->OnChatChannel(seller, channel.c_str(), msg.c_str());
+    }
+
+    // Another resident answers a line in a channel - a Trade call: interest or haggling; a
+    // World line: an opinion back - one that is up, else one asleep. The one the line
+    // answered (preferLow) gets the next turn, so it reads as a dialogue; two turns, then rest.
+    static void ChannelReplyTo(uint32 speakerLow, std::string const& speakerName, uint32 team, std::string const& channel,
+                               std::string const& line, uint8 depth, char const* kind, uint32 preferLow)
+    {
+        if (!g_llmEnabled || !g_llmAmbient || !g_llmChannelTalk || !g_worldScript || !g_chatScript)
+            return;
+        bool const market = strcmp(kind, "market") == 0;
+        if (!market && depth >= 2)
+            return;
+        uint32 const chance = market ? g_llmMarketReplyChance : depth == 0 ? 60u : 40u;
+        if (!chance || urand(1, 100) > chance || g_chanTalkTokens < 1.f)
+            return;
+        Player* other = nullptr;
+        ShadowInfo shadow;
+        if (preferLow)
+        {
+            other = sObjectAccessor.FindPlayer(ObjectGuid(HIGHGUID_PLAYER, preferLow));
+            if (other && (!other->IsInWorld() || other->GetTradeData()))
+                other = nullptr;
+            if (!other && !(g_llmShadowVoices && g_worldScript->ShadowInfoFor(preferLow, Team(team), shadow)))
+                preferLow = 0;
+        }
+        if (!preferLow)
+        {
+            other = ResidentToTalkOfTeam(Team(team), speakerLow);
+            if (!other && (!g_llmShadowVoices || !g_worldScript->PickShadow(Team(team), speakerLow, shadow)))
+                return;
+        }
+        g_chanTalkTokens -= 1.f;
+        std::string usr = "In the " + channel + " channel, " + speakerName + " just said: " + line;
+        if (market)
+            usr += " Answer in the channel in one short line as yourself: you have some of it to sell, or you haggle about the price, or you comment on it, or you ask a question - stay in character.";
+        else if (depth == 0)
+            usr += " Answer in the channel in one short line as yourself - agree, disagree, add a story of your own, tease, or ask back.";
+        else
+            usr += " Answer once more in one short line, then let it rest.";
+        uint32 const nowMs = WorldTimer::getMSTime();
+        char const* const tag = market ? "marketreply" : "worldreply";
+        if (other)
+            QueueLlmChannel(other, ResidentSystemPrompt(other), usr, std::string(), channel, std::string(), nowMs + urand(8000, 25000), tag, 0);
+        else
+            QueueLlmShadowChannel(shadow, usr, channel, nowMs + urand(10000, 30000), tag, 0);
+        g_llmJobs.back().depth = uint8(depth + 1);
+        g_llmJobs.back().partnerGuid = speakerLow;
+        sLog.outString("[mod-turtlebots] %s reply: %s%s answers %s in %s.", market ? "market" : "world",
+                       other ? other->GetName() : shadow.name.c_str(), other ? "" : " (asleep)", speakerName.c_str(), channel.c_str());
+    }
+
+    // Debug.ChannelSelfTest: the queued lines go through the channel handler in the name of
+    // the first real player in the world (there is no client here to type them).
+    void ChannelSelfTestTick(uint32 nowMs)
+    {
+        if (g_chanTestLines.empty() || int32(g_chanTestLines.front().atMs - nowMs) > 0)
+            return;
+        ChanTestLine const t = g_chanTestLines.front();
+        g_chanTestLines.erase(g_chanTestLines.begin());
+        Player* real = nullptr;
+        for (auto const& kv : sWorld.GetAllSessions())
+        {
+            WorldSession* sess = kv.second;
+            if (!sess || sess->IsHeadless()) continue;
+            Player* p = sess->GetPlayer();
+            if (p && p->IsInWorld()) { real = p; break; }
+        }
+        if (!real || !g_chatScript)
+        {
+            sLog.outString("[mod-turtlebots] channel self-test: no real player in the world - skipped '%s'.", t.msg.c_str());
+            return;
+        }
+        sLog.outString("[mod-turtlebots] channel self-test: feeding '%s' in %s as %s.", t.msg.c_str(), t.channel.c_str(), real->GetName());
+        g_chatScript->OnChatChannel(real, t.channel.c_str(), t.msg.c_str());
     }
 }
 

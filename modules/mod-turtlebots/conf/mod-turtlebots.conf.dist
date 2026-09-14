@@ -127,10 +127,66 @@ mod-turtlebots.Debug.FactSelfTest = 0
 #        Every N minutes (city-wide) one resident calls out in Trade what its craft is buying,
 #        with a real item link and a market price (a player answering with a link sells to
 #        it). Only while a real player is online, or the city is forced awake. 0 = no calls.
-#        Default: 5
+#        Default: 3
 ###################################################################################################
 
-mod-turtlebots.LLM.MarketCallMinutes = 5
+mod-turtlebots.LLM.MarketCallMinutes = 3
+
+###################################################################################################
+# CHANNEL SMALL TALK
+#
+#    Ordinary lines in World, General and Trade (a greeting, a question, a remark, a jab) get an
+#    answer sometimes, the way a populated channel behaves: a greeting 70 %, a question 60 %, a
+#    remark 25 %, a jab or "anyone here?" 75-80 %, capped city-wide per minute. Place and lore
+#    questions (places by name via the teleport table, crafts without the word "trainer", the
+#    nearest one anywhere on the map) and a resident called by name are always answered.
+#    A resident that is up answers (the asker's zone first); while the city sleeps a resident
+#    answers from its sleep - the line goes out in its name without waking it. Now and then a
+#    second resident adds its own angle (a question 35 %, a jab 60 %).
+#
+#    mod-turtlebots.LLM.ChannelTalk
+#        Answer ordinary channel chatter at all. Default: 1
+#
+#    mod-turtlebots.LLM.ChannelPerMinute
+#        City-wide cap on such answers per minute (place, lore and by-name answers do not
+#        count). Default: 6
+#
+#    mod-turtlebots.LLM.ShadowVoices
+#        Sleeping residents may answer in channels, in their own name, without logging in.
+#        Default: 1
+#
+#    mod-turtlebots.Debug.ChannelSelfTest
+#        On the config reload that switches it on, four channel lines (a greeting, two place
+#        questions, an opinion question) are fed through the handler in the name of the first
+#        real player in the world, 23 s apart, and logged. Set it back to 0 afterwards. Default: 0
+###################################################################################################
+
+mod-turtlebots.LLM.ChannelTalk = 1
+mod-turtlebots.LLM.ChannelPerMinute = 6
+mod-turtlebots.LLM.ShadowVoices = 1
+mod-turtlebots.Debug.ChannelSelfTest = 0
+
+###################################################################################################
+# CHANNEL LIFE
+#
+#    The channels live on their own, not only when a player speaks: a resident opens a line in
+#    World now and then (an opinion, a rumour, a question), another answers (60 %), the first
+#    replies once more (40 %). A Trade call draws a second resident's interest or haggling, and
+#    the caller answers back (40 %). Sleeping residents take part in all of it, so the channels
+#    are populated whether a city is awake or not. A player who was answered in a channel is
+#    answered again by the same resident when they reply within 90 s (85 %, no pause) - a
+#    conversation, corrections included. Only while a real player is online.
+#
+#    mod-turtlebots.LLM.WorldTalkMinutes
+#        Every N minutes (plus up to a minute of jitter) a resident opens a line in World.
+#        0 = off. Default: 4
+#
+#    mod-turtlebots.LLM.MarketReplyChance
+#        Chance (%) that another resident answers a Trade call in the channel. Default: 60
+###################################################################################################
+
+mod-turtlebots.LLM.WorldTalkMinutes = 4
+mod-turtlebots.LLM.MarketReplyChance = 60
 
 ###################################################################################################
 # GROUP, GUILD, EMOTES
